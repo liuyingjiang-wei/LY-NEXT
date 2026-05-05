@@ -1,0 +1,120 @@
+server:
+  host: "127.0.0.1"
+  port: 8000
+  reload: false
+  log_level: "info"
+
+cors:
+  origins:
+    - "*"
+
+api:
+  auto_load: true
+  api_dir: "ly_next/apis"
+
+llm:
+  default_provider: "openai"
+  request_timeout: 60
+
+openai_llm:
+  model: "gpt-4o-mini"
+  api_key: "${OPENAI_API_KEY}"
+  base_url: ""
+
+anthropic_llm:
+  model: "claude-3-5-haiku-20241022"
+  api_key: "${ANTHROPIC_API_KEY}"
+  base_url: ""
+
+ollama_llm:
+  model: "qwen2.5"
+  base_url: "http://localhost:11434"
+
+openai_compat_llm:
+  model: "qwen2.5"
+  api_key: "not-needed"
+  base_url: "http://localhost:8000/v1"
+  auth_mode: "bearer"
+
+agent:
+  enabled: true
+  max_steps: 6
+  max_tools: 40
+  verbose: false
+  reasoning_mode: "react"
+  stream_output: true
+  context:
+    enabled: true
+    examples_path: ""
+    top_k: 3
+    min_similarity: 0.15
+    use_embeddings: true
+  rag:
+    enabled: true
+    documents_path: ""
+    top_k: 5
+    chunk_size: 900
+    chunk_overlap: 120
+    min_similarity: 0.12
+    use_embeddings: true
+    embedding:
+      model: "text-embedding-3-small"
+      config_ref: "openai_compat_llm"
+
+tools:
+  built_in:
+    - "calculator"
+    - "format_json"
+    - "http_fetch"
+    - "web_search"
+    - "web_scrape"
+  web_search:
+    provider: "duckduckgo"
+    api_key: ""
+  mcp:
+    enabled: true
+    transport: "sse"
+    path: "/mcp"
+    remote:
+      enabled: false
+      mcpServers: []
+
+database:
+  host: "localhost"
+  port: 5432
+  username: "postgres"
+  password: "${POSTGRES_PASSWORD}"
+  database: "ly_next"
+  pool_size: 10
+  max_overflow: 20
+  sql_echo: false
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: "${REDIS_PASSWORD}"
+  db: 0
+  cache_ttl: 3600
+
+services:
+  stop_managed_on_exit: true
+
+logging:
+  level: "info"
+  file: "logs/app.log"
+  max_bytes: 10485760
+  backup_count: 5
+
+auth:
+  enabled: true
+  api_key: "${LY_NEXT_API_KEY}"
+  header_name: "X-API-Key"
+  cookie_name: "ly_api_key"
+  whitelist:
+    - "/docs"
+    - "/openapi.json"
+    - "/redoc"
+    - "/api/health"
+    - "/api/info"
+    - "/ly/login"
+    - "/ly/static/*"

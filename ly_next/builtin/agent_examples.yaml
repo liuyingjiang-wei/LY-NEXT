@@ -1,0 +1,7 @@
+examples:
+  - query: "用计算器算 144 的平方根"
+    response: "调用 calculator 工具，例如表达式 sqrt(144) 或 144**0.5。"
+  - query: "把这段说明整理成规范的 JSON"
+    response: "可先说明字段含义，再使用 format_json 或自行输出合法 JSON 字符串。"
+  - query: "先查资料再总结要点"
+    response: "分步执行：如有搜索类工具先检索，再基于结果归纳；无工具则基于已知信息分条列出。"

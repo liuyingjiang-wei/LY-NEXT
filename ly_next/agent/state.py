@@ -1,0 +1,32 @@
+"""Agent State."""
+
+from typing import Any, TypedDict
+
+
+class AgentState(TypedDict, total=False):
+    """LangGraph Agent State."""
+
+    messages: list[dict[str, Any]]
+    scratchpad: str
+    steps: int
+    decision: dict[str, Any]
+    tool_results: list[dict[str, Any]]
+    last_tool: str
+    last_result: Any
+    error: str
+    final_response: str
+
+
+def create_initial_state(messages: list[dict[str, Any]] = None) -> AgentState:
+    """Create initial agent state."""
+    return AgentState(
+        messages=messages or [],
+        scratchpad="",
+        steps=0,
+        decision={},
+        tool_results=[],
+        last_tool="",
+        last_result=None,
+        error="",
+        final_response="",
+    )

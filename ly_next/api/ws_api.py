@@ -1,0 +1,247 @@
+"""WebSocket API."""
+
+from typing import Any
+
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
+
+from ly_next.agent.deps import create_agent_deps
+from ly_next.agent.factory import AgentFactory
+from ly_next.agent.prompt_augment import augment_messages_async
+from ly_next.api.bridge import (
+    SUPPORTED_CHANNELS,
+    emit_channel_event,
+    is_supported_channel,
+    update_device_session,
+)
+from ly_next.api.websocket import get_task_broadcaster, get_ws_manager
+from ly_next.core.config import config
+from ly_next.core.task_manager import get_task_manager
+from ly_next.tools import get_tool_registry
+
+router = APIRouter(tags=["websocket"])
+public_router = APIRouter(tags=["websocket"])
+
+ws_manager = get_ws_manager()
+
+
+async def _ws_auth_ok(websocket: WebSocket) -> bool:
+    if not config.get("auth.enabled", True):
+        return True
+    key = config.get("auth.api_key", "")
+    if not key:
+        return True
+    header_name = config.get("auth.header_name", "X-API-Key")
+    cookie_name = config.get("auth.cookie_name", "ly_api_key")
+    provided = (
+        websocket.headers.get(header_name)
+        or websocket.cookies.get(cookie_name)
+        or websocket.query_params.get("api_key")
+    )
+    if provided == key:
+        return True
+    if websocket.client_state != WebSocketState.CONNECTED:
+        await websocket.accept()
+    await websocket.send_json({"type": "error", "message": "Unauthorized"})
+    await websocket.close(code=1008)
+    return False
+
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, group: str | None = Query(None)):
+    if not await _ws_auth_ok(websocket):
+        return
+    await ws_manager.connect(websocket, group=group)
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            await handle_ws_message(websocket, data)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await ws_manager.disconnect(websocket)
+
+
+@router.websocket("/ws/stdin")
+@public_router.websocket("/ws/stdin")
+async def websocket_stdin(websocket: WebSocket):
+    if not await _ws_auth_ok(websocket):
+        return
+    await ws_manager.connect(websocket, group="tasks")
+    await websocket.send_json({"type": "stdin_connected", "group": "tasks"})
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if data.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await ws_manager.disconnect(websocket)
+
+
+@router.websocket("/ws/{channel}")
+@public_router.websocket("/ws/{channel}")
+async def websocket_channel_bridge(websocket: WebSocket, channel: str):
+    if not is_supported_channel(channel):
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": f"Unsupported channel: {channel}"})
+        await websocket.close(code=1003)
+        return
+    if not await _ws_auth_ok(websocket):
+        return
+    await ws_manager.connect(websocket, group=channel)
+    await websocket.send_json(
+        {
+            "type": "channel_connected",
+            "channel": channel,
+            "supported_channels": sorted(SUPPORTED_CHANNELS),
+        }
+    )
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type", "")
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong", "channel": channel})
+                continue
+
+            if channel == "device":
+                if msg_type == "register_device":
+                    device_id = str(data.get("device_id") or "").strip()
+                    if not device_id:
+                        await websocket.send_json(
+                            {"type": "error", "message": "device_id required"}
+                        )
+                        continue
+                    session = update_device_session(
+                        device_id,
+                        channel=channel,
+                        status="online",
+                        meta=data.get("meta") or {},
+                    )
+                    await websocket.send_json({"type": "device_registered", "session": session})
+                    await emit_channel_event("device", "device_online", {"session": session})
+                    continue
+                if msg_type == "device_heartbeat":
+                    device_id = str(data.get("device_id") or "").strip()
+                    if device_id:
+                        session = update_device_session(device_id, status="online")
+                        await websocket.send_json(
+                            {"type": "device_heartbeat_ack", "session": session}
+                        )
+                    continue
+                if msg_type == "device_status":
+                    device_id = str(data.get("device_id") or "").strip()
+                    if device_id:
+                        session = update_device_session(
+                            device_id,
+                            status=data.get("status", "online"),
+                            state=data.get("state") or {},
+                        )
+                        await emit_channel_event("device", "device_status", {"session": session})
+                    continue
+
+            if msg_type == "publish":
+                await emit_channel_event(
+                    channel,
+                    data.get("event", f"{channel}_event"),
+                    {
+                        "source": data.get("source", "ws"),
+                        "payload": data.get("payload") or {},
+                        "device_id": data.get("device_id"),
+                    },
+                )
+                await websocket.send_json({"type": "published", "channel": channel})
+                continue
+
+            await websocket.send_json({"type": "error", "message": f"Unknown: {msg_type}"})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await ws_manager.disconnect(websocket)
+
+
+async def handle_ws_message(websocket: WebSocket, data: dict[str, Any]):
+    msg_type = data.get("type", "")
+
+    if msg_type == "ping":
+        await websocket.send_json({"type": "pong"})
+    elif msg_type == "chat":
+        await handle_chat(websocket, data)
+    elif msg_type == "join_group":
+        group = data.get("group")
+        if group:
+            await ws_manager.join_group(websocket, group)
+    elif msg_type == "leave_group":
+        group = data.get("group")
+        if group:
+            await ws_manager.leave_group(websocket, group)
+    else:
+        await websocket.send_json({"type": "error", "message": f"Unknown: {msg_type}"})
+
+
+async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
+    messages = data.get("messages", [])
+    if not messages:
+        await websocket.send_json({"type": "error", "message": "No messages"})
+        return
+
+    manager = get_task_manager()
+    task_id = await manager.create_task(name="WebSocket Chat")
+    await manager.update(task_id, status="running")
+
+    broadcaster = get_task_broadcaster()
+    await broadcaster.task_started(task_id, "WebSocket Chat")
+
+    await websocket.send_json({"type": "chat_started", "task_id": task_id})
+
+    try:
+        messages = await augment_messages_async(list(messages))
+        deps = create_agent_deps(provider=data.get("provider"), model=data.get("model"))
+        deps.temperature = data.get("temperature", 0.7)
+        deps.max_tokens = data.get("max_tokens", 2048)
+        deps.tool_registry = get_tool_registry()
+
+        agent = AgentFactory.create_agent(mode=data.get("mode", "react"), deps=deps)
+
+        full_response = ""
+        use_stream = data.get("stream")
+        if use_stream is None:
+            use_stream = bool(config.get("agent.stream_output", True))
+        if use_stream:
+            async for event in agent.run_stream(messages):
+                if event["type"] == "chunk":
+                    content = event.get("content", "")
+                    if content:
+                        full_response += content
+                        await websocket.send_json({"type": "chat_chunk", "content": content})
+                elif event["type"] == "node":
+                    await websocket.send_json({"type": "chat_node", "node": event.get("node")})
+                elif event["type"] == "final":
+                    c = event.get("content") or ""
+                    if c:
+                        full_response = c
+                        await websocket.send_json({"type": "chat_chunk", "content": c})
+        else:
+            full_response = await agent.run(messages)
+
+        await manager.complete(task_id, result=full_response)
+        await broadcaster.task_completed(task_id, full_response)
+        await websocket.send_json(
+            {"type": "chat_complete", "task_id": task_id, "response": full_response}
+        )
+    except Exception as e:
+        await manager.fail(task_id, str(e))
+        await broadcaster.task_failed(task_id, str(e))
+        await websocket.send_json({"type": "chat_error", "task_id": task_id, "error": str(e)})
