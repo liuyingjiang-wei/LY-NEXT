@@ -23,6 +23,10 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 ## Ubuntu / Debian
 
+使用仓库内 `install/install.sh`（Ubuntu/Debian）时，脚本会尝试安装与当前集群主版本匹配的 `postgresql-<ver>-pgvector` 并在库 `ly_next` 中启用扩展；若你的环境未走该脚本，可手动执行：
+
+自检接口依赖应用能连上 PostgreSQL：请在 `data/ly_next/config.yaml`（或 `LY_NEXT_CONFIG_DIR`）里配置 `database.password`，或设置环境变量 `POSTGRES_PASSWORD`。密码为空时，LY-NEXT 会按配置依次尝试 TCP 与本机 Unix socket（`database.try_unix_socket`，默认开启）。
+
 以 PostgreSQL 16 为例（版本按你的 PostgreSQL 主版本调整）：
 
 ```bash

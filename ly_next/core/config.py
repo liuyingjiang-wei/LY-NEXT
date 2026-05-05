@@ -2,10 +2,12 @@
 
 import copy
 import os
+import platform
 import re
 import shutil
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 
@@ -137,6 +139,7 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "username": "postgres",
             "password": "",
             "database": "ly_next",
+            "try_unix_socket": True,
             "pool_size": 10,
             "max_overflow": 20,
             "sql_echo": False,
@@ -277,13 +280,51 @@ class Config:
     def to_dict(self) -> dict:
         return copy.deepcopy(self._config)
 
+    def iter_database_urls(self) -> list[str]:
+        db = self.get("database", {})
+        user = quote(str(db.get("username", "postgres")), safe="")
+        pw = str(db.get("password", "") or "")
+        host = str(db.get("host", "localhost"))
+        port = int(db.get("port", 5432))
+        dbname = quote(str(db.get("database", "ly_next")), safe="")
+
+        urls: list[str] = []
+        if pw:
+            urls.append(
+                f"postgresql+asyncpg://{user}:{quote(pw, safe='')}@{host}:{port}/{dbname}"
+            )
+        else:
+            urls.append(f"postgresql+asyncpg://{user}@{host}:{port}/{dbname}")
+
+        try_unix = bool(db.get("try_unix_socket", True))
+        if try_unix and not pw and host in ("localhost", "127.0.0.1", "::1"):
+            sockets = ["/var/run/postgresql", "/tmp"]
+            if platform.system() == "Darwin":
+                sockets = ["/tmp", "/var/run/postgresql"]
+            seen_sk = set()
+            for sock in sockets:
+                if sock in seen_sk:
+                    continue
+                seen_sk.add(sock)
+                urls.append(
+                    f"postgresql+asyncpg://{user}@/{dbname}?host={quote(sock, safe='')}"
+                )
+
+        out: list[str] = []
+        seen: set[str] = set()
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out
+
+    def iter_asyncpg_dsn(self) -> list[str]:
+        return [u.replace("postgresql+asyncpg://", "postgresql://", 1) for u in self.iter_database_urls()]
+
     @property
     def database_url(self) -> str:
-        db = self.get("database", {})
-        return (
-            f"postgresql+asyncpg://{db.get('username', 'postgres')}:{db.get('password', '')}"
-            f"@{db.get('host', 'localhost')}:{db.get('port', 5432)}/{db.get('database', 'ly_next')}"
-        )
+        urls = self.iter_database_urls()
+        return urls[0] if urls else "postgresql+asyncpg://postgres@localhost:5432/ly_next"
 
     @property
     def redis_url(self) -> str:

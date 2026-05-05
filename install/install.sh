@@ -22,6 +22,48 @@ detect_linux_id() {
   fi
 }
 
+_ubuntu_setup_pgvector() {
+  local PG_VER
+  PG_VER="$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $1 ~ /^[0-9]+$/ { print $1; exit }')"
+  if [ -z "$PG_VER" ]; then
+    PG_VER="$(psql --version 2>/dev/null | sed -n 's/.* \([0-9][0-9]*\)\.[0-9].*/\1/p' | head -1)"
+  fi
+  if [ -z "$PG_VER" ]; then
+    warn "无法检测 PostgreSQL 主版本，跳过 postgresql-*-pgvector 安装；可手动执行 install/pgvector.md"
+    return 0
+  fi
+  info "检测到 PostgreSQL 主版本: $PG_VER"
+  if apt-get install -y "postgresql-${PG_VER}-pgvector" 2>/dev/null; then
+    ok "已安装 postgresql-${PG_VER}-pgvector"
+  else
+    warn "未找到软件包 postgresql-${PG_VER}-pgvector（需换源或参考 install/pgvector.md 使用 PGDG）"
+  fi
+  if command -v psql >/dev/null 2>&1; then
+    if ! sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'ly_next'" 2>/dev/null | grep -q 1; then
+      sudo -u postgres createdb ly_next 2>/dev/null || warn "创建数据库 ly_next 失败，请检查 PostgreSQL 与本地连接方式"
+    fi
+    if sudo -u postgres psql -d ly_next -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null; then
+      ok "已在库 ly_next 中启用 vector 扩展（pgvector）"
+    else
+      warn "未能执行 CREATE EXTENSION vector；请确认已安装 postgresql-${PG_VER}-pgvector 且库 ly_next 可访问"
+    fi
+  fi
+}
+
+_ubuntu_redis_password_hint() {
+  if ! command -v redis-cli >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! systemctl is-active --quiet redis-server 2>/dev/null && ! systemctl is-active --quiet redis 2>/dev/null; then
+    return 0
+  fi
+  local rp
+  rp="$(redis-cli CONFIG GET requirepass 2>/dev/null | tail -n1 | tr -d '\r')"
+  if [ -n "$rp" ] && [ "$rp" != "(nil)" ] && [ "$rp" != '""' ]; then
+    info "当前 Redis 已设置 requirepass。首次启动 LY-NEXT 时会尝试把密码同步到 config 中的 redis.password；也可手工编辑 data/ly_next/config.yaml"
+  fi
+}
+
 install_linux() {
   need_root
   local id
@@ -32,6 +74,8 @@ install_linux() {
       apt-get install -y redis-server postgresql postgresql-contrib
       systemctl enable --now redis-server || true
       systemctl enable --now postgresql || true
+      _ubuntu_setup_pgvector
+      _ubuntu_redis_password_hint
       ;;
     fedora)
       dnf install -y redis postgresql-server postgresql-contrib

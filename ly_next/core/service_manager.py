@@ -15,6 +15,7 @@ from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# GitHub proxy for China network
 GITHUB_PROXY = "https://gh-proxy.com/"
 
 
@@ -232,20 +233,39 @@ class ServiceManager:
 
         return config
 
+    def _detect_redis_requirepass_live(self, host: str, port: int) -> str:
+        """Read requirepass from a running Redis via CONFIG GET (matches runtime, not only redis.conf)."""
+        candidates = [
+            ["redis-cli", "-h", host, "-p", str(port), "CONFIG", "GET", "requirepass"],
+            ["redis-cli", "CONFIG", "GET", "requirepass"],
+        ]
+        for cmd in candidates:
+            try:
+                r = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if r.returncode != 0:
+                    continue
+                lines = [x.strip() for x in r.stdout.strip().splitlines() if x.strip()]
+                if len(lines) >= 2 and lines[0].lower() == "requirepass":
+                    val = lines[1].strip().strip('"').strip("'")
+                    if val and val not in ("(nil)", "nil"):
+                        return val
+            except Exception:
+                continue
+        return ""
+
     def _detect_redis_config(self) -> dict:
-        """Detect Redis configuration from installed instance.
+        """Detect Redis host/port/password from config file + live CONFIG GET."""
+        out = {"host": "127.0.0.1", "port": 6379, "password": "", "db": 0}
 
-        Returns:
-            Dictionary with detected configuration
-        """
-        config = {"host": "127.0.0.1", "port": 6379, "password": "", "db": 0}
-
-        # Try to detect from redis.conf
         redis_server = shutil.which("redis-server")
         if not redis_server:
-            return config
+            return out
 
-        # Common Redis config locations
         possible_paths = [
             Path("C:/Redis/redis.windows.conf"),
             Path("C:/Program Files/Redis/redis.windows.conf"),
@@ -258,20 +278,64 @@ class ServiceManager:
                 try:
                     with open(conf_file) as f:
                         for line in f:
-                            line = line.strip()
-                            if line.startswith("port") and not line.startswith("#"):
-                                parts = line.split()
+                            raw = line.strip()
+                            if raw.startswith("#"):
+                                continue
+                            if raw.startswith("bind"):
+                                parts = raw.split()
+                                if len(parts) >= 2 and parts[1] not in ("", "*", "::"):
+                                    out["host"] = parts[1].split(",")[0].strip()
+                            elif raw.startswith("port"):
+                                parts = raw.split()
                                 if len(parts) >= 2 and parts[1].isdigit():
-                                    config["port"] = int(parts[1])
-                            elif line.startswith("requirepass") and not line.startswith("#"):
-                                parts = line.split()
+                                    out["port"] = int(parts[1])
+                            elif raw.startswith("requirepass"):
+                                parts = raw.split(maxsplit=1)
                                 if len(parts) >= 2:
-                                    config["password"] = parts[1]
+                                    out["password"] = parts[1].strip().strip('"').strip("'")
                 except Exception:
                     pass
                 break
 
-        return config
+        live_pw = self._detect_redis_requirepass_live(out["host"], out["port"])
+        if live_pw:
+            out["password"] = live_pw
+        return out
+
+    def _sync_detected_redis_to_config(self, detected: dict[str, str | int]) -> bool:
+        """If config has empty redis.password but Redis uses requirepass, persist detected values."""
+        if not isinstance(detected, dict):
+            return False
+        cur = config.get("redis", {})
+        if not isinstance(cur, dict):
+            cur = {}
+
+        pw = str(cur.get("password", "") or "").strip()
+        changed = False
+        if not pw and detected.get("password"):
+            config.set("redis.password", str(detected["password"]), save=False)
+            changed = True
+            logger.info("已将检测到的 Redis requirepass 写入 redis.password（本地配置文件）。")
+
+        cfg_port = cur.get("port", 6379)
+        det_port = detected.get("port")
+        if det_port is not None and cfg_port == 6379 and int(det_port) != int(cfg_port):
+            config.set("redis.port", int(det_port), save=False)
+            changed = True
+
+        if changed:
+            config.save()
+            config.load()
+        return changed
+
+    def _redis_error_needs_auth(self, msg: str) -> bool:
+        m = msg.lower()
+        return (
+            "noauth" in m
+            or "authentication required" in m
+            or "wrongpass" in m
+            or "invalid password" in m
+        )
 
     async def auto_configure_services(self) -> dict:
         """Auto-configure services based on installed instances.
@@ -288,7 +352,11 @@ class ServiceManager:
                 f"Found Redis {redis_info.get('version', 'unknown')} at {redis_info['path']}"
             )
             redis_config = self._detect_redis_config()
-            logger.info(f"Detected Redis config: port={redis_config['port']}")
+            logger.info(
+                f"Detected Redis: host={redis_config.get('host')} port={redis_config.get('port')} "
+                f"has_password={'yes' if redis_config.get('password') else 'no'}"
+            )
+            self._sync_detected_redis_to_config(redis_config)
             results["redis"] = True
 
         # Check and configure PostgreSQL
@@ -375,14 +443,21 @@ PostgreSQL Installation Guide (Linux/macOS):
             else None
         )
 
-        try:
-            if password:
-                client = redis.Redis(host=host, port=port, password=password, decode_responses=True)
-            else:
-                client = redis.Redis(host=host, port=port, decode_responses=True)
+        async def _ping(pw: str) -> None:
+            cl = redis.Redis(
+                host=host,
+                port=port,
+                password=pw or None,
+                decode_responses=True,
+            )
+            try:
+                await cl.ping()
+            finally:
+                await cl.close()
 
-            await client.ping()
-            await client.close()
+        try:
+            await _ping(password)
+
             return ServiceInfo(
                 name="Redis",
                 status=ServiceStatus.RUNNING,
@@ -393,7 +468,26 @@ PostgreSQL Installation Guide (Linux/macOS):
             )
         except Exception as e:
             error_msg = str(e)
-            # Determine if Redis is not running or just has wrong config
+            if (not password) and self._redis_error_needs_auth(error_msg):
+                det = self._detect_redis_config()
+                det_pw = str(det.get("password") or "").strip()
+                if det_pw:
+                    try:
+                        await _ping(det_pw)
+                        config.set("redis.password", det_pw, save=True)
+                        config.load()
+                        logger.info("已根据 Redis requirepass 自动同步 redis.password。")
+                        return ServiceInfo(
+                            name="Redis",
+                            status=ServiceStatus.RUNNING,
+                            message=f"Connected to {host}:{port} (password synced from Redis)",
+                            port=port,
+                            install_status=install_status,
+                            install_guide=install_guide,
+                        )
+                    except Exception as e2:
+                        error_msg = str(e2)
+
             if "Connection refused" in error_msg or "ECONNREFUSED" in error_msg:
                 return ServiceInfo(
                     name="Redis",
@@ -403,32 +497,24 @@ PostgreSQL Installation Guide (Linux/macOS):
                     install_status=install_status,
                     install_guide=install_guide,
                 )
-            else:
-                return ServiceInfo(
-                    name="Redis",
-                    status=ServiceStatus.UNAVAILABLE,
-                    message=f"Redis error: {error_msg}",
-                    port=port,
-                    install_status=install_status,
-                    install_guide=install_guide,
-                )
+            return ServiceInfo(
+                name="Redis",
+                status=ServiceStatus.UNAVAILABLE,
+                message=f"Redis error: {error_msg}",
+                port=port,
+                install_status=install_status,
+                install_guide=install_guide,
+            )
 
     async def check_postgres(self) -> ServiceInfo:
-        """Check if PostgreSQL is available.
-
-        Returns:
-            ServiceInfo with current PostgreSQL status
-        """
+        """Check if PostgreSQL is available."""
         import asyncpg
 
         db_config = config.get("database", {})
         host = db_config.get("host", "localhost")
         port = db_config.get("port", 5432)
-        user = db_config.get("username", "postgres")
-        password = db_config.get("password", "")
         database = db_config.get("database", "ly_next")
 
-        # Check installation status
         install_status = self._check_service_installed("postgresql")
         install_guide = (
             self._get_install_guide("postgresql")
@@ -436,39 +522,40 @@ PostgreSQL Installation Guide (Linux/macOS):
             else None
         )
 
-        try:
-            conn = await asyncpg.connect(
-                host=host, port=port, user=user, password=password, database=database
-            )
-            await conn.close()
+        last_err: Exception | None = None
+        for dsn in config.iter_asyncpg_dsn():
+            try:
+                conn = await asyncpg.connect(dsn=dsn)
+                await conn.close()
+                return ServiceInfo(
+                    name="PostgreSQL",
+                    status=ServiceStatus.RUNNING,
+                    message=f"Connected to {host}:{port}/{database}",
+                    port=port,
+                    install_status=install_status,
+                    install_guide=install_guide,
+                )
+            except Exception as e:
+                last_err = e
+
+        error_msg = str(last_err) if last_err else "PostgreSQL connection failed"
+        if "Connection refused" in error_msg or "ECONNREFUSED" in error_msg:
             return ServiceInfo(
                 name="PostgreSQL",
-                status=ServiceStatus.RUNNING,
-                message=f"Connected to {host}:{port}/{database}",
+                status=ServiceStatus.STOPPED,
+                message=f"PostgreSQL not running at {host}:{port}",
                 port=port,
                 install_status=install_status,
                 install_guide=install_guide,
             )
-        except Exception as e:
-            error_msg = str(e)
-            if "Connection refused" in error_msg or "ECONNREFUSED" in error_msg:
-                return ServiceInfo(
-                    name="PostgreSQL",
-                    status=ServiceStatus.STOPPED,
-                    message=f"PostgreSQL not running at {host}:{port}",
-                    port=port,
-                    install_status=install_status,
-                    install_guide=install_guide,
-                )
-            else:
-                return ServiceInfo(
-                    name="PostgreSQL",
-                    status=ServiceStatus.UNAVAILABLE,
-                    message=f"PostgreSQL error: {error_msg}",
-                    port=port,
-                    install_status=install_status,
-                    install_guide=install_guide,
-                )
+        return ServiceInfo(
+            name="PostgreSQL",
+            status=ServiceStatus.UNAVAILABLE,
+            message=f"PostgreSQL error: {error_msg}",
+            port=port,
+            install_status=install_status,
+            install_guide=install_guide,
+        )
 
     async def _start_redis(self) -> bool:
         """Attempt to start Redis server (like Yunzai).
@@ -660,6 +747,12 @@ PostgreSQL Installation Guide (Linux/macOS):
             info = await self.check_redis()
 
             if info.status == ServiceStatus.RUNNING:
+                return info
+
+            im = (info.message or "").lower()
+            if info.status == ServiceStatus.UNAVAILABLE and any(
+                x in im for x in ("noauth", "wrongpass", "authentication required", "invalid password")
+            ):
                 return info
 
             # Try to start if stopped or unavailable (not installed)

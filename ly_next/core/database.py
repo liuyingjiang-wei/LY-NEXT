@@ -117,17 +117,40 @@ class Database:
     async def connect(self) -> None:
         if self._engine is not None:
             return
-        url = config.database_url
-        self._engine = create_async_engine(
-            url,
-            pool_size=config.get("database.pool_size", 10),
-            max_overflow=config.get("database.max_overflow", 20),
-            echo=bool(config.get("database.sql_echo", False)),
-        )
-        self._session_factory = async_sessionmaker(
-            self._engine, class_=AsyncSession, expire_on_commit=False
-        )
-        logger.info("Database connected")
+        pool_size = config.get("database.pool_size", 10)
+        max_overflow = config.get("database.max_overflow", 20)
+        echo = bool(config.get("database.sql_echo", False))
+        last_exc: Exception | None = None
+        urls = config.iter_database_urls()
+        for idx, url in enumerate(urls):
+            eng = None
+            try:
+                eng = create_async_engine(
+                    url,
+                    pool_size=pool_size,
+                    max_overflow=max_overflow,
+                    echo=echo,
+                )
+                async with eng.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+                self._engine = eng
+                self._session_factory = async_sessionmaker(
+                    self._engine, class_=AsyncSession, expire_on_commit=False
+                )
+                eng = None
+                if idx > 0:
+                    logger.info("Database connected (fallback candidate #%s)", idx)
+                else:
+                    logger.info("Database connected")
+                return
+            except Exception as e:
+                last_exc = e
+            finally:
+                if eng is not None:
+                    await eng.dispose()
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No database URLs configured")
 
     async def disconnect(self) -> None:
         if self._engine:

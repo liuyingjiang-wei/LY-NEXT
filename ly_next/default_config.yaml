@@ -85,6 +85,7 @@ database:
   username: "postgres"
   password: "${POSTGRES_PASSWORD}"
   database: "ly_next"
+  try_unix_socket: true
   pool_size: 10
   max_overflow: 20
   sql_echo: false
