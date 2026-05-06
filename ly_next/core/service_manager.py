@@ -645,6 +645,34 @@ PostgreSQL Installation Guide (Linux/macOS):
             logger.error(f"Failed to start Redis: {e}")
             return False
 
+    async def _init_postgres(self) -> None:
+        """Initialize PostgreSQL data directory with initdb when missing."""
+        pg_data_dir = self.data_dir / "postgres"
+        if (pg_data_dir / "PG_VERSION").exists():
+            return
+        initdb = shutil.which("initdb")
+        if not initdb:
+            logger.error("initdb not found in PATH; cannot initialize PostgreSQL data directory.")
+            raise FileNotFoundError("initdb")
+
+        cmd = [initdb, "-D", str(pg_data_dir), "--encoding=UTF8", "--locale=C"]
+        logger.info(f"Initializing PostgreSQL data directory: {' '.join(cmd)}")
+
+        def _run_initdb() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+
+        completed = await asyncio.to_thread(_run_initdb)
+        if completed.returncode != 0:
+            err = (completed.stderr or completed.stdout or "")[:800]
+            logger.error(f"initdb failed (exit {completed.returncode}): {err}")
+            raise RuntimeError("initdb failed")
+
     async def _start_postgres(self) -> bool:
         """Attempt to start PostgreSQL server (like Yunzai).
 

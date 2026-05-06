@@ -41,19 +41,6 @@ uv run ly --reload
 uv run ly --host 127.0.0.1 --port 8000
 ```
 
-## 构建/开发 Web 工作台（可选）
-
-工作台源码在 `.workbench-src/`，构建产物输出到 `www/`，后端通过 `/ly/` 与 `/ly/static/*` 提供静态资源。
-
-```bash
-pnpm install
-pnpm run build:workbench
-```
-
-```bash
-# 本地开发预览（Vite）
-pnpm run dev:workbench
-```
 
 ## 安装（可选：Redis / PostgreSQL / pgvector）
 

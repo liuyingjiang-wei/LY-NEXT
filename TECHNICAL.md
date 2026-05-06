@@ -62,9 +62,3 @@ POST /api/chat
 4. RAG 层：看 rag/* 是否回退 lexical，embedding 是否可用。
 5. 基础设施层：看 core/logger.py、数据库/Redis 状态与任务记录。
 
-## 前端阅读入口（工作台）
-
-1. .workbench-src/src/App.jsx：控制台主结构与 Tab。
-2. .workbench-src/src/ChatPanel.jsx：对话 UI 与 WS/HTTP 发包逻辑。
-3. .workbench-src/src/SettingsPanel.jsx：配置读写页面。
-4. .workbench-src/src/LiquidGlass.jsx + liquidGlassCore.js：液态玻璃实现。
