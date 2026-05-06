@@ -36,6 +36,7 @@ dependencies = [
     "duckduckgo-search>=7.0.0",
     "selectolax>=0.3.0",
     "websockets>=12.0",
+    "lancedb>=0.10.0",
 ]
 
 [project.optional-dependencies]

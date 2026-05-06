@@ -37,6 +37,8 @@ class AgentDeps:
     tool_deny_tools: list[str] = field(default_factory=list)
     tool_allow_categories: list[str] | None = None
     tool_max_tier: str = "network"
+    native_tool_calls: bool = True
+    tool_call_mode: str = "auto"  # auto | native | compat
 
     def __post_init__(self):
         if self.llm_client is None:
@@ -76,6 +78,33 @@ class AgentDeps:
                 return choices[0].get("message", {}).get("content", "")
 
         return str(response)
+
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        *,
+        tool_choice: str | None = None,
+    ) -> dict[str, Any]:
+        """Chat Completions request with OpenAI-style ``tools`` (function calling)."""
+        if self._custom_llm_call:
+            raise RuntimeError("Tool calling requires a standard LLM client")
+
+        if self.llm_client is None:
+            raise RuntimeError("No LLM client configured")
+
+        if self.verbose:
+            logger.debug(
+                "[agent] chat_with_tools messages=%s tools=%s", len(messages), len(tools or [])
+            )
+
+        return await self.llm_client.chat_complete(
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
 
     async def call_llm_limited(
         self, prompt: str, *, max_tokens: int, temperature: float = 0.25
@@ -178,6 +207,15 @@ def create_agent_deps(
 
     tool_max_tier = str(policy.get("max_tier") or "network").strip().lower()
 
+    native_tool_calls = bool(
+        kwargs.get("native_tool_calls", config.get("agent.native_tool_calls", True))
+    )
+    tool_call_mode = str(
+        kwargs.get("tool_call_mode", config.get("agent.tool_call_mode", "auto")) or "auto"
+    ).strip().lower()
+    if tool_call_mode not in ("auto", "native", "compat"):
+        tool_call_mode = "auto"
+
     sp = config.get("agent.scratchpad", {}) or {}
     if not isinstance(sp, dict):
         sp = {}
@@ -208,4 +246,6 @@ def create_agent_deps(
         tool_deny_tools=tool_deny_tools,
         tool_allow_categories=tool_allow_categories,
         tool_max_tier=tool_max_tier,
+        native_tool_calls=native_tool_calls,
+        tool_call_mode=tool_call_mode,
     )

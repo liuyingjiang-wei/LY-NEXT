@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Any
 
 import httpx
@@ -21,6 +22,9 @@ async def fetch_embeddings(
     auth_mode: str | None = None,
     auth_header_name: str | None = None,
     extra_headers: dict[str, Any] | None = None,
+    task: str | None = None,
+    dimensions: int | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> list[list[float]]:
     if not texts:
         return []
@@ -30,10 +34,46 @@ async def fetch_embeddings(
     )
     headers = merge_optional_headers(auth, extra_headers)
     headers.setdefault("Content-Type", "application/json")
+
+    body: dict[str, Any] = {"model": model, "input": texts}
+    if task:
+        body["task"] = task
+    if dimensions is not None and dimensions > 0:
+        body["dimensions"] = dimensions
+    if extra_body:
+        body.update(extra_body)
+
     async with httpx.AsyncClient(base_url=root, headers=headers, timeout=timeout) as client:
-        response = await client.post("/embeddings", json={"model": model, "input": texts})
-        response.raise_for_status()
-        payload: dict[str, Any] = response.json()
+        try:
+            response = await client.post("/embeddings", json=body)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            snippet = ""
+            if e.response is not None:
+                with suppress(Exception):
+                    snippet = (e.response.text or "")[:2000]
+            url = str(e.request.url) if e.request else root
+            raise RuntimeError(
+                f"Embeddings request failed HTTP {e.response.status_code} for {url}: {snippet}"
+            ) from e
+        except httpx.RequestError as e:
+            raise RuntimeError(f"Embeddings transport error to {root}: {e!r}") from e
+
+        try:
+            payload: dict[str, Any] = response.json()
+        except Exception as e:
+            txt = (response.text or "")[:2000]
+            raise RuntimeError(
+                f"Embeddings response is not JSON (status {response.status_code}): {txt}"
+            ) from e
+
     rows = list(payload.get("data") or [])
     rows.sort(key=lambda x: int(x.get("index", 0)))
-    return [list(r["embedding"]) for r in rows if isinstance(r.get("embedding"), list)]
+    out = [list(r["embedding"]) for r in rows if isinstance(r.get("embedding"), list)]
+    if not out and rows:
+        logger.warning(
+            "[embeddings] Response had %s rows but no usable embedding vectors; keys sample=%s",
+            len(rows),
+            list(rows[0].keys()) if rows and isinstance(rows[0], dict) else None,
+        )
+    return out

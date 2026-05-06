@@ -48,7 +48,12 @@ agent:
   max_tools: 40
   verbose: false
   reasoning_mode: "react"
+  native_tool_calls: true
+  tool_call_mode: "auto"  # auto | native | compat
   stream_output: true
+  memory:
+    enabled: true
+    path: "MEMORY.md"
   tool_policy:
     max_tier: network
     allow_categories: []
@@ -79,6 +84,11 @@ agent:
     embedding:
       model: "text-embedding-3-small"
       config_ref: "rag_embedding_llm"
+    vector_store:
+      enabled: true
+      backend: "lancedb"
+      uri: "data/ly_next/lancedb"
+      table: "rag_chunks"
 
 tools:
   built_in:

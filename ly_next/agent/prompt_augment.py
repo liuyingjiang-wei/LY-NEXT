@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ly_next.agent.startup_memory import get_startup_memory_block
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.rag.document_retriever import get_document_retriever
@@ -62,6 +63,11 @@ def merge_system_context(
 async def augment_messages_async(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not messages:
         return messages
+
+    memory_block = get_startup_memory_block()
+    if memory_block:
+        messages = merge_system_context(messages, memory_block)
+
     query = last_user_query(messages)
     if not query:
         return messages
@@ -87,6 +93,15 @@ async def augment_messages_async(messages: list[dict[str, Any]]) -> list[dict[st
                 parts.append("## 知识库片段\n" + rag_block)
         except Exception as e:
             logger.warning("[prompt_augment] RAG retrieve failed: %s", e)
+
+    logger.debug(
+        "[prompt_augment] ctx_on=%s rag_on=%s parts=%s ex=%s rag=%s",
+        ctx_on,
+        rag_on,
+        len(parts),
+        any(p.startswith("## 相似示例") for p in parts),
+        any(p.startswith("## 知识库片段") for p in parts),
+    )
 
     if not parts:
         return messages

@@ -3,7 +3,7 @@
 from typing import Any
 
 from ly_next.agent.chat import ChatAgent
-from ly_next.agent.deps import create_agent_deps
+from ly_next.agent.deps import AgentDeps, create_agent_deps
 from ly_next.agent.plan import PlanAgent
 from ly_next.agent.prompt_augment import augment_messages_async
 from ly_next.agent.react import ReactAgent
@@ -43,6 +43,9 @@ class AgentFactory:
             raise ValueError(f"Unknown agent mode: {mode}. Available: {cls.list_agent_types()}")
 
         agent_class = cls._agent_types[mode]
+        deps = kwargs.pop("deps", None)
+        if isinstance(deps, AgentDeps):
+            return agent_class(deps)
         deps = create_agent_deps(**kwargs)
 
         return agent_class(deps)

@@ -16,6 +16,7 @@ from ly_next.api.bridge import (
 )
 from ly_next.api.websocket import get_task_broadcaster, get_ws_manager
 from ly_next.core.config import config
+from ly_next.core.logger import get_logger
 from ly_next.core.task_manager import get_task_manager
 from ly_next.tools import get_tool_registry
 
@@ -23,6 +24,7 @@ router = APIRouter(tags=["websocket"])
 public_router = APIRouter(tags=["websocket"])
 
 ws_manager = get_ws_manager()
+logger = get_logger(__name__)
 
 
 async def _ws_auth_ok(websocket: WebSocket) -> bool:
@@ -207,11 +209,27 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
     await websocket.send_json({"type": "chat_started", "task_id": task_id})
 
     try:
+        logger.debug(
+            "[ws.chat] task=%s mode=%s stream=%s provider=%s model=%s",
+            task_id,
+            data.get("mode", "react"),
+            data.get("stream"),
+            data.get("provider"),
+            data.get("model"),
+        )
         messages = await augment_messages_async(list(messages))
         deps = create_agent_deps(provider=data.get("provider"), model=data.get("model"))
         deps.temperature = data.get("temperature", 0.7)
         deps.max_tokens = data.get("max_tokens", 2048)
         deps.tool_registry = get_tool_registry()
+        if data.get("tool_call_mode") is not None:
+            deps.tool_call_mode = str(data.get("tool_call_mode") or "").strip().lower() or deps.tool_call_mode
+        logger.debug(
+            "[ws.chat] task=%s registry_tools=%s tool_call_mode=%s",
+            task_id,
+            len(deps.tool_registry),
+            deps.tool_call_mode,
+        )
 
         agent = AgentFactory.create_agent(mode=data.get("mode", "react"), deps=deps)
 
@@ -221,18 +239,57 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             use_stream = bool(config.get("agent.stream_output", True))
         if use_stream:
             async for event in agent.run_stream(messages):
-                if event["type"] == "chunk":
+                et = event.get("type")
+                if et == "chunk":
                     content = event.get("content", "")
                     if content:
                         full_response += content
                         await websocket.send_json({"type": "chat_chunk", "content": content})
-                elif event["type"] == "node":
-                    await websocket.send_json({"type": "chat_node", "node": event.get("node")})
-                elif event["type"] == "final":
+                elif et == "status":
+                    await websocket.send_json(
+                        {
+                            "type": "chat_status",
+                            "phase": event.get("phase"),
+                            "detail": event.get("detail"),
+                            "iteration": event.get("iteration"),
+                            "tool_names": event.get("tool_names"),
+                        }
+                    )
+                elif et == "tool_start":
+                    await websocket.send_json(
+                        {
+                            "type": "chat_tool_start",
+                            "tool": event.get("tool"),
+                            "call_id": event.get("call_id"),
+                            "args_preview": event.get("args_preview"),
+                            "iteration": event.get("iteration"),
+                        }
+                    )
+                elif et == "tool_done":
+                    await websocket.send_json(
+                        {
+                            "type": "chat_tool_done",
+                            "tool": event.get("tool"),
+                            "call_id": event.get("call_id"),
+                            "success": event.get("success"),
+                            "result_preview": event.get("result_preview"),
+                            "iteration": event.get("iteration"),
+                        }
+                    )
+                elif et == "node":
+                    await websocket.send_json(
+                        {
+                            "type": "chat_node",
+                            "node": event.get("node"),
+                            "data": event.get("data"),
+                        }
+                    )
+                elif et == "final":
                     c = event.get("content") or ""
                     if c:
                         full_response = c
                         await websocket.send_json({"type": "chat_chunk", "content": c})
+                    logger.debug("[ws.chat] task=%s final_chars=%s", task_id, len(c))
         else:
             full_response = await agent.run(messages)
 

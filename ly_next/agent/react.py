@@ -8,12 +8,483 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
+from ly_next.agent.prompt_augment import last_user_query
 from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
 from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
 from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+_NATIVE_AGENT_INSTRUCTION = (
+    "You are a helpful assistant with access to function tools registered by the host system. "
+    "When a tool can retrieve facts or perform actions needed to answer the user, call it. "
+    "After receiving tool results, reason briefly if needed and respond in clear natural language."
+)
+
+
+def _tool_result_as_text(result: Any) -> str:
+    if isinstance(result, str):
+        return result
+    try:
+        return json.dumps(result, ensure_ascii=False)
+    except TypeError:
+        return str(result)
+
+
+def _sanitize_dialog_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep messages suitable for Chat Completions (tool loops)."""
+    out: list[dict[str, Any]] = []
+    for m in messages or []:
+        role = (m.get("role") or "user").strip().lower()
+        if role not in ("system", "user", "assistant", "tool"):
+            continue
+        if role == "tool":
+            tcid = m.get("tool_call_id")
+            if not tcid:
+                continue
+            item: dict[str, Any] = {
+                "role": "tool",
+                "tool_call_id": str(tcid),
+                "content": _tool_result_as_text(m.get("content")),
+            }
+            out.append(item)
+            continue
+        content = m.get("content")
+        if isinstance(content, dict):
+            content = json.dumps(content, ensure_ascii=False)
+        elif content is None:
+            content = ""
+        else:
+            content = str(content)
+        item = {"role": role, "content": content}
+        if role == "assistant" and m.get("tool_calls"):
+            item["tool_calls"] = m["tool_calls"]
+        out.append(item)
+    return out
+
+
+def _merge_system_instruction(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    prefix = _NATIVE_AGENT_INSTRUCTION + "\n\n"
+    out: list[dict[str, Any]] = []
+    merged = False
+    for m in messages:
+        if (m.get("role") or "").strip().lower() == "system" and not merged:
+            merged = True
+            prev = m.get("content") or ""
+            prev = json.dumps(prev, ensure_ascii=False) if isinstance(prev, dict) else str(prev)
+            out.append({"role": "system", "content": prefix + prev})
+        else:
+            out.append(dict(m))
+    if not merged:
+        out.insert(0, {"role": "system", "content": prefix.strip()})
+    return out
+
+
+def _assistant_turn_from_response(message: dict[str, Any]) -> dict[str, Any]:
+    turn: dict[str, Any] = {"role": "assistant", "content": message.get("content")}
+    if message.get("tool_calls"):
+        turn["tool_calls"] = message["tool_calls"]
+    return turn
+
+
+def _assistant_message_from_choice(resp: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize Chat Completions choice payloads across gateways."""
+    choices = resp.get("choices") if isinstance(resp, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return None
+    ch0 = choices[0]
+    if not isinstance(ch0, dict):
+        return None
+    msg = ch0.get("message")
+    if isinstance(msg, dict):
+        return msg
+    if ch0.get("role") or ch0.get("content") is not None or ch0.get("tool_calls"):
+        return ch0
+    return None
+
+
+def _parse_openai_completion(
+    resp: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    raw_msg = _assistant_message_from_choice(resp)
+    if raw_msg is None:
+        top = resp.get("message") if isinstance(resp, dict) else None
+        raw_msg = top if isinstance(top, dict) else None
+    if raw_msg is None:
+        return None, []
+    parsed_calls: list[dict[str, Any]] = []
+    for tc in raw_msg.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+        name = (fn.get("name") or "").strip()
+        if not name:
+            continue
+        parsed_calls.append(
+            {
+                "id": str(tc.get("id") or ""),
+                "name": name,
+                "arguments": fn.get("arguments") if isinstance(fn.get("arguments"), str) else "{}",
+            }
+        )
+    return raw_msg, parsed_calls
+
+
+def _inject_tool_manifest(dialog: list[dict[str, Any]], tool_names: list[str]) -> None:
+    """Some gateways drop or ignore the ``tools`` field; keep names in system text so the model still sees them."""
+    if not tool_names:
+        return
+    block = (
+        "\n\n【宿主已注册的工具】以下名称可通过标准 function calling（tool_calls）调用；"
+        "回答用户「有哪些工具」时请罗列这些名称，不要说系统未提供工具。\n" + ", ".join(tool_names)
+    )
+    for i, m in enumerate(dialog):
+        if (m.get("role") or "").strip().lower() != "system":
+            continue
+        c = m.get("content")
+        if isinstance(c, dict):
+            c = json.dumps(c, ensure_ascii=False)
+        elif c is None:
+            c = ""
+        else:
+            c = str(c)
+        dialog[i] = {**m, "content": c + block}
+        return
+    dialog.insert(0, {"role": "system", "content": block.strip()})
+
+
+def _preview_json(value: Any, limit: int = 900) -> str:
+    try:
+        s = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    except TypeError:
+        s = str(value)
+    if len(s) > limit:
+        return s[: limit - 1] + "…"
+    return s
+
+
+def _looks_tool_blind_response(text: str) -> bool:
+    s = (text or "").strip().lower()
+    if not s:
+        return False
+    needles = [
+        "目前没有可用的工具",
+        "cannot access external webpages directly",
+        "tool limitations",
+        "没有可用的工具",
+        "不能访问外部网页",
+        "无法访问外部网页",
+    ]
+    return any(n in s for n in needles)
+
+
+def _build_compat_decision_prompt(
+    *,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    scratchpad: str,
+) -> str:
+    tools_desc = "\n".join([f"- {t['name']}: {t['description']}" for t in tools]) if tools else "(no tools)"
+    tool_names = ", ".join([t["name"] for t in tools]) if tools else ""
+    dialog = _extract_text(messages)
+    return f"""You are a tool-using agent. The host system will execute tools for you.
+
+Available tools:
+{tools_desc}
+
+You MUST output only JSON, no extra text.
+
+When you need to call a tool:
+{{"type":"tool","name":"<tool_name>","args":{{...}}}}
+
+When you can answer directly:
+{{"type":"final","final":"..."}}
+
+Constraints:
+- Only choose from these tools: {tool_names}
+- args must be a JSON object
+
+Conversation:
+{dialog}
+
+Known process (scratchpad):
+{scratchpad}
+"""
+
+
+async def _iter_compat_react(
+    messages: list[dict[str, Any]],
+    deps: AgentDeps,
+) -> AsyncIterator[dict[str, Any]]:
+    """Gateway-agnostic tool loop (XRK-style): model emits JSON decisions; host executes tools."""
+    if not deps.tool_registry:
+        raise RuntimeError("no tool registry")
+
+    objs, _names = filter_tools_for_agent(
+        deps.tool_registry,
+        allow_tools=deps.tool_allow_tools,
+        deny_tools=deps.tool_deny_tools,
+        allow_categories=deps.tool_allow_categories,
+        max_tier=deps.tool_max_tier,
+        max_tools=deps.max_tools,
+    )
+    raw_tools = list_tools_payload(objs)
+    tools = _compact_tools(raw_tools)
+    tool_names = [t["name"] for t in tools]
+
+    if not tools:
+        yield {"type": "status", "phase": "direct", "detail": "当前过滤条件下无可用工具，直接回答"}
+        q = last_user_query(messages) or _extract_text(messages)
+        text = await deps.call_llm(q)
+        yield {"type": "final", "content": text.strip()}
+        return
+
+    scratchpad = ""
+    last_sig = ""
+    same_sig_count = 0
+    fail_streak = 0
+
+    for iteration in range(deps.max_steps):
+        yield {"type": "status", "phase": "llm", "iteration": iteration, "detail": "兼容模式：请求模型输出 JSON 决策"}
+        prompt = _build_compat_decision_prompt(messages=messages, tools=tools, scratchpad=scratchpad)
+        text = (await deps.call_llm(prompt)).strip()
+
+        try:
+            obj = _extract_json_obj(text)
+            kind, payload = _validate_decision(obj, tool_names)
+        except Exception as e:
+            msg = str(e).strip() or repr(e)
+            yield {
+                "type": "status",
+                "phase": "repair",
+                "iteration": iteration,
+                "detail": f"模型输出非 JSON/不合法，尝试修复：{msg}",
+            }
+            repair = (
+                "Fix the following into a valid JSON decision that follows the schema exactly. "
+                "Output JSON only.\n\n"
+                f"Allowed tools: {', '.join(tool_names)}\n\n"
+                f"Bad output:\n{text}"
+            )
+            fixed = (await deps.call_llm(repair)).strip()
+            obj = _extract_json_obj(fixed)
+            kind, payload = _validate_decision(obj, tool_names)
+
+        if kind == "final":
+            yield {"type": "final", "content": str(payload.get("final") or "")}
+            return
+
+        name = str(payload.get("name") or "").strip()
+        args = payload.get("args") or {}
+        if not isinstance(args, dict):
+            args = {}
+
+        yield {
+            "type": "tool_start",
+            "tool": name,
+            "call_id": f"compat_{iteration}_{name}",
+            "iteration": iteration,
+            "args_preview": _preview_json(args, limit=1200),
+        }
+
+        result = await deps.tool_registry.call_tool(name, args)
+
+        ok = not (isinstance(result, dict) and result.get("success") is False)
+        preview = _tool_result_as_text(result)
+        preview = preview if len(preview) <= 2000 else preview[:1999] + "…"
+        yield {
+            "type": "tool_done",
+            "tool": name,
+            "call_id": f"compat_{iteration}_{name}",
+            "iteration": iteration,
+            "success": ok,
+            "result_preview": preview,
+        }
+
+        sig = json.dumps({"name": name, "args": args}, sort_keys=True, ensure_ascii=False)
+        same_sig_count = same_sig_count + 1 if sig == last_sig else 1
+        last_sig = sig
+
+        if isinstance(result, dict) and result.get("success") is False:
+            fail_streak += 1
+        else:
+            fail_streak = 0
+
+        scratchpad += f"\nCALL {name} args={json.dumps(args, ensure_ascii=False)}\nOBS {json.dumps(result, ensure_ascii=False)}\n"
+
+        if same_sig_count >= deps.loop_max_repeat_same_tool:
+            yield {"type": "final", "content": "Stopped: repeated identical tool calls."}
+            return
+        if fail_streak >= deps.loop_max_consecutive_tool_failures:
+            yield {"type": "final", "content": "Stopped: too many consecutive tool failures."}
+            return
+
+    yield {"type": "final", "content": "Maximum steps reached."}
+
+
+async def _iter_native_react(
+    messages: list[dict[str, Any]],
+    deps: AgentDeps,
+) -> AsyncIterator[dict[str, Any]]:
+    """Stream-friendly agent loop: Chat Completions ``tools`` / ``tool_calls`` (OpenAI-style function calling)."""
+    if not deps.tool_registry:
+        raise RuntimeError("no tool registry")
+
+    objs, allowed_names = filter_tools_for_agent(
+        deps.tool_registry,
+        allow_tools=deps.tool_allow_tools,
+        deny_tools=deps.tool_deny_tools,
+        allow_categories=deps.tool_allow_categories,
+        max_tier=deps.tool_max_tier,
+        max_tools=deps.max_tools,
+    )
+    openai_tools = [t.definition.to_openai_format() for t in objs]
+    allowed_set = set(allowed_names)
+
+    dialog = _merge_system_instruction(_sanitize_dialog_messages(list(messages)))
+    logger.debug(
+        "[agent.native] registry_tools=%s visible_tools=%s",
+        len(deps.tool_registry.list_tools()) if deps.tool_registry else 0,
+        len(allowed_names),
+    )
+    if openai_tools:
+        _inject_tool_manifest(dialog, allowed_names)
+        logger.info(
+            "[agent.native] Registered tools exposed to model (%s): %s",
+            len(allowed_names),
+            ", ".join(allowed_names),
+        )
+
+    if not openai_tools:
+        yield {
+            "type": "status",
+            "phase": "direct",
+            "detail": "当前过滤条件下无可用工具，改为直接对话",
+        }
+        q = last_user_query(messages)
+        if not q:
+            q = "\n".join(
+                f"{(m.get('role') or 'user')}: {m.get('content', '')}" for m in (messages or [])
+            ).strip()
+        text = await deps.call_llm(
+            f"{_NATIVE_AGENT_INSTRUCTION}\n\nUser request:\n{q}\n\nAnswer without tools."
+        )
+        yield {"type": "final", "content": text.strip()}
+        return
+
+    last_sig = ""
+    same_sig_count = 0
+    fail_streak = 0
+
+    for iteration in range(deps.max_steps):
+        yield {
+            "type": "status",
+            "phase": "llm",
+            "iteration": iteration,
+            "detail": "请求模型（function calling / tool_calls）",
+        }
+        try:
+            resp = await deps.chat_with_tools(dialog, openai_tools)
+        except Exception as e:
+            logger.warning("[agent.native] chat_with_tools failed: %s", e)
+            raise
+
+        raw_msg, tool_calls = _parse_openai_completion(resp)
+        if raw_msg is None:
+            keys = list(resp.keys()) if isinstance(resp, dict) else []
+            logger.warning(
+                "[agent.native] Unrecognized chat completion shape (top-level keys=%s); "
+                "check gateway compatibility with OpenAI Chat Completions.",
+                keys[:20],
+            )
+            raise RuntimeError("unexpected completion payload")
+
+        if not tool_calls:
+            content = raw_msg.get("content")
+            out = (
+                (content or "").strip() if isinstance(content, str) else str(content or "").strip()
+            )
+            yield {"type": "status", "phase": "answer", "detail": "模型返回最终回答"}
+            yield {"type": "final", "content": out or "No response."}
+            return
+
+        names = [tc["name"] for tc in tool_calls]
+        yield {
+            "type": "status",
+            "phase": "tools",
+            "iteration": iteration,
+            "detail": f"模型发起 {len(tool_calls)} 次函数调用: {', '.join(names)}",
+            "tool_names": names,
+        }
+
+        dialog.append(_assistant_turn_from_response(raw_msg))
+
+        for idx, tc in enumerate(tool_calls):
+            name = tc["name"]
+            raw_args = tc.get("arguments") or "{}"
+            try:
+                args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+                if not isinstance(args, dict):
+                    args = {}
+            except json.JSONDecodeError:
+                args = {}
+
+            tcid = tc.get("id") or f"call_{iteration}_{idx}_{name}"
+            yield {
+                "type": "tool_start",
+                "tool": name,
+                "call_id": str(tcid),
+                "iteration": iteration,
+                "args_preview": _preview_json(args, limit=1200),
+            }
+
+            if allowed_set and name not in allowed_set:
+                result = {"success": False, "error": f"Tool not allowed: {name}"}
+            else:
+                try:
+                    result = await deps.tool_registry.call_tool(name, args)
+                except Exception as e:
+                    logger.error("[agent.native] tool %s failed: %s", name, e)
+                    result = {"success": False, "error": str(e)}
+
+            ok = not (isinstance(result, dict) and result.get("success") is False)
+            preview = _tool_result_as_text(result)
+            preview = preview if len(preview) <= 2000 else preview[:1999] + "…"
+            yield {
+                "type": "tool_done",
+                "tool": name,
+                "call_id": str(tcid),
+                "iteration": iteration,
+                "success": ok,
+                "result_preview": preview,
+            }
+
+            sig = json.dumps({"name": name, "args": args}, sort_keys=True, ensure_ascii=False)
+            same_sig_count = same_sig_count + 1 if sig == last_sig else 1
+            last_sig = sig
+
+            if isinstance(result, dict) and result.get("success") is False:
+                fail_streak += 1
+            else:
+                fail_streak = 0
+
+            if same_sig_count >= deps.loop_max_repeat_same_tool:
+                yield {"type": "final", "content": "Stopped: repeated identical tool calls."}
+                return
+            if fail_streak >= deps.loop_max_consecutive_tool_failures:
+                yield {"type": "final", "content": "Stopped: too many consecutive tool failures."}
+                return
+
+            dialog.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": str(tcid),
+                    "content": _tool_result_as_text(result),
+                }
+            )
+
+    yield {"type": "final", "content": "Maximum steps reached."}
 
 
 def _extract_text(messages: list[dict[str, Any]]) -> str:
@@ -307,30 +778,101 @@ class ReactAgent:
         self.graph = build_react_graph(deps)
         self.app = self.graph.compile()
 
-    async def run(self, messages: list[dict[str, Any]]) -> str:
-        """Run agent with messages."""
+    async def _run_legacy(self, messages: list[dict[str, Any]]) -> str:
         init = create_initial_state(messages)
         current_state = dict(init)
-
         async for chunk in self.app.astream(init):
             for node_name, node_output in chunk.items():
                 if isinstance(node_output, dict):
                     if "decision" in node_output:
                         logger.debug(f"[agent] {node_name}: {node_output['decision']}")
                     current_state.update(node_output)
-
         decision = current_state.get("decision")
         if not decision or not isinstance(decision, dict):
             return "Agent produced no valid decision."
-
-        kind = decision.get("kind")
-        if kind == "final":
+        if decision.get("kind") == "final":
             return str(decision.get("final") or "")
-
         return str(decision.get("final") or "No response generated.")
+
+    async def run(self, messages: list[dict[str, Any]]) -> str:
+        """Run agent with messages."""
+        mode = (self.deps.tool_call_mode or "auto").strip().lower()
+        if mode == "compat" and self.deps.use_tools and not self.deps._custom_llm_call:
+            text_out = ""
+            async for ev in _iter_compat_react(messages, self.deps):
+                if isinstance(ev, dict) and ev.get("type") == "final":
+                    text_out = str(ev.get("content") or "")
+            return text_out or ""
+
+        if (
+            mode in ("auto", "native")
+            and self.deps.native_tool_calls
+            and self.deps.use_tools
+            and not self.deps._custom_llm_call
+        ):
+            try:
+                text_out = ""
+                saw_tool = False
+                async for ev in _iter_native_react(messages, self.deps):
+                    if isinstance(ev, dict) and ev.get("type") == "tool_start":
+                        saw_tool = True
+                    if isinstance(ev, dict) and ev.get("type") == "final":
+                        text_out = str(ev.get("content") or "")
+                if not saw_tool and _looks_tool_blind_response(text_out):
+                    logger.warning(
+                        "[agent] native tool-calling appears tool-blind; fallback to legacy ReAct"
+                    )
+                    if mode == "auto":
+                        logger.warning("[agent] switching to compat tool loop")
+                        async for ev in _iter_compat_react(messages, self.deps):
+                            if isinstance(ev, dict) and ev.get("type") == "final":
+                                return str(ev.get("content") or "")
+                    return await self._run_legacy(messages)
+                return text_out or ""
+            except Exception as e:
+                logger.warning("[agent] native ReAct unavailable, using legacy graph: %s", e)
+        return await self._run_legacy(messages)
 
     async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
         """Run agent with streaming."""
+        mode = (self.deps.tool_call_mode or "auto").strip().lower()
+        if mode == "compat" and self.deps.use_tools and not self.deps._custom_llm_call:
+            async for ev in _iter_compat_react(messages, self.deps):
+                yield ev
+            return
+
+        if (
+            mode in ("auto", "native")
+            and self.deps.native_tool_calls
+            and self.deps.use_tools
+            and not self.deps._custom_llm_call
+        ):
+            try:
+                buffered: list[dict[str, Any]] = []
+                saw_tool = False
+                final_text = ""
+                async for ev in _iter_native_react(messages, self.deps):
+                    if isinstance(ev, dict) and ev.get("type") == "tool_start":
+                        saw_tool = True
+                    if isinstance(ev, dict) and ev.get("type") == "final":
+                        final_text = str(ev.get("content") or "")
+                    buffered.append(ev)
+                if not saw_tool and _looks_tool_blind_response(final_text):
+                    logger.warning(
+                        "[agent] native stream tool-blind; fallback to legacy ReAct stream"
+                    )
+                    if mode == "auto":
+                        logger.warning("[agent] switching to compat tool loop (stream)")
+                        async for ev in _iter_compat_react(messages, self.deps):
+                            yield ev
+                        return
+                else:
+                    for ev in buffered:
+                        yield ev
+                    return
+            except Exception as e:
+                logger.warning("[agent] native ReAct stream fallback: %s", e)
+
         init = create_initial_state(messages)
 
         async for chunk in self.app.astream(init):

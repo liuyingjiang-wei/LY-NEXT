@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
+from ly_next.agent.prompt_augment import last_user_query
 from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
 from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
@@ -18,7 +19,11 @@ logger = get_logger(__name__)
 
 async def _plan_phase(state: AgentState, deps: AgentDeps) -> AgentState:
     """Planning phase: Create execution plan."""
-    question = state.get("messages", [{}])[0].get("content", "") if state.get("messages") else ""
+    msgs = state.get("messages") or []
+    question = last_user_query(msgs)
+    if not question and msgs:
+        c0 = msgs[0].get("content", "")
+        question = c0 if isinstance(c0, str) else json.dumps(c0, ensure_ascii=False)
     if not question:
         return {"plan": [], "error": "No question provided"}
 
@@ -51,7 +56,7 @@ Task: {question}
 
 Output JSON:
 {{"steps": [
-  {{"id": 1, "action": "call_tool" or "answer", "tool": "tool_name" or null, "args": {{}} or null, "description": "step description"}},
+  {{"id": 1, "action": "call_tool" or "answer", "tool": "tool_name" or null, "args": {{}} or null, "description": "what this step does", "answer": "direct reply text when action is answer"}},
   ...
 ]}}"""
 
@@ -92,9 +97,11 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
     action = step.get("action", "")
 
     if action == "answer":
+        raw_ans = step.get("answer") or step.get("description") or ""
+        text = (raw_ans.strip() if isinstance(raw_ans, str) else str(raw_ans).strip()) or "Done"
         return {
             "done": True,
-            "final_response": step.get("answer", "Done"),
+            "final_response": text,
         }
 
     if action == "call_tool" and deps.tool_registry:
@@ -171,10 +178,16 @@ async def _check_plan(state: AgentState, deps: AgentDeps) -> AgentState:
 
     if done or current_step >= len(plan):
         if not state.get("final_response"):
+            plan_list = state.get("plan") or []
             plan_results = state.get("plan_results", [])
-            question = (
-                state.get("messages", [{}])[0].get("content", "") if state.get("messages") else ""
-            )
+            plan_err = state.get("error")
+            if plan_err and not plan_list:
+                return {"final_response": f"Error: {plan_err}", "steps": steps, "done": True}
+
+            question = last_user_query(state.get("messages") or [])
+            if not question:
+                m0 = (state.get("messages") or [{}])[0].get("content", "")
+                question = m0 if isinstance(m0, str) else json.dumps(m0, ensure_ascii=False)
 
             prompt = f"""Based on the following step results, provide a final answer to the user's question.
 
@@ -196,12 +209,17 @@ Output only JSON:
                     if m2:
                         text = m2.group(1)
                 data = json.loads(text)
-                return {"final_response": data.get("answer", "Done"), "steps": steps}
+                return {
+                    "final_response": data.get("answer", "Done"),
+                    "steps": steps,
+                    "done": True,
+                }
             except Exception as e:
                 return {
                     "final_response": "Completed with some errors.",
                     "steps": steps,
                     "error": str(e),
+                    "done": True,
                 }
 
         return {"done": True, "steps": steps}

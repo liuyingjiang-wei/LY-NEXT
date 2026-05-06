@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 from typing import Any
 
 import httpx
@@ -26,19 +28,38 @@ def _provider_and_key() -> tuple[str, str]:
 
 
 async def _search_duckduckgo(query: str, num_results: int) -> list[dict[str, str]]:
-    from duckduckgo_search import AsyncDDGS
+    try:
+        from duckduckgo_search import AsyncDDGS  # type: ignore
 
-    results: list[dict[str, str]] = []
-    async with AsyncDDGS() as ddgs:
-        async for r in ddgs.atext(query, max_results=num_results):
-            results.append(
-                {
-                    "title": r.get("title", "") or "",
-                    "href": r.get("href", "") or "",
-                    "body": r.get("body", "") or "",
-                }
-            )
-    return results
+        results: list[dict[str, str]] = []
+        async with AsyncDDGS() as ddgs:
+            async for r in ddgs.atext(query, max_results=num_results):
+                results.append(
+                    {
+                        "title": r.get("title", "") or "",
+                        "href": r.get("href", "") or "",
+                        "body": r.get("body", "") or "",
+                    }
+                )
+        return results
+    except ImportError:
+        module = importlib.import_module("duckduckgo_search")
+        ddgs_cls = module.DDGS
+
+        def _run_sync() -> list[dict[str, str]]:
+            out: list[dict[str, str]] = []
+            with ddgs_cls() as ddgs:
+                for r in ddgs.text(query, max_results=num_results):
+                    out.append(
+                        {
+                            "title": r.get("title", "") or "",
+                            "href": r.get("href", "") or "",
+                            "body": r.get("body", "") or "",
+                        }
+                    )
+            return out
+
+        return await asyncio.to_thread(_run_sync)
 
 
 async def _search_brave(query: str, num_results: int, api_key: str) -> list[dict[str, str]]:
@@ -175,9 +196,31 @@ async def web_scrape(url: str, query: str = "") -> ToolResult:
     try:
         from selectolax.parser import HTMLParser
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+        async def _fetch(u: str) -> httpx.Response:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                return await client.get(u)
+
+        def _fallback_urls(u: str) -> list[str]:
+            cands: list[str] = []
+            lu = u.lower()
+            if "jina.ai/api-dashboard/embedding" in lu:
+                cands.extend(
+                    [
+                        "https://jina.ai/embeddings/",
+                        "https://jina.ai/models/jina-embeddings-v3/",
+                    ]
+                )
+            return [x for x in cands if x != u]
+
+        response = await _fetch(url)
+        if response.status_code == 404:
+            for alt in _fallback_urls(url):
+                r2 = await _fetch(alt)
+                if r2.status_code < 400:
+                    response = r2
+                    url = alt
+                    break
+        response.raise_for_status()
 
         parser = HTMLParser(response.text)
         content = parser.text()
@@ -202,6 +245,17 @@ async def web_scrape(url: str, query: str = "") -> ToolResult:
 
     except ImportError:
         return ToolResult(success=False, error="请安装 selectolax: pip install selectolax")
+    except httpx.HTTPStatusError as e:
+        code = e.response.status_code if e.response is not None else "?"
+        body = ""
+        try:
+            body = (e.response.text or "")[:240]
+        except Exception:
+            body = ""
+        hint = ""
+        if code == 404 and "jina.ai/api-dashboard/embedding" in (url or "").lower():
+            hint = "（该地址通常会 404，建议改用 https://jina.ai/embeddings/ ）"
+        return ToolResult(success=False, error=f"HTTP {code}: {body}{hint}")
     except Exception as e:
         return ToolResult(success=False, error=str(e))
 

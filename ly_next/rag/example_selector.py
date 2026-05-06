@@ -13,6 +13,8 @@ from ly_next.rag.similarity import cosine_similarity, jaccard_similarity
 
 logger = get_logger(__name__)
 
+_EMBEDDINGS_404_HINT_LOGGED = [False]
+
 
 @dataclass
 class _Example:
@@ -88,7 +90,23 @@ class ExampleSelector:
             try:
                 scored = await self._rank_embedding(user_query)
             except Exception as e:
-                logger.debug("[rag.examples] Embedding rank failed, fallback lexical: %s", e)
+                msg = str(e).strip() or repr(e)
+                if (
+                    "404" in msg
+                    and "embeddings" in msg.lower()
+                    and not _EMBEDDINGS_404_HINT_LOGGED[0]
+                ):
+                    _EMBEDDINGS_404_HINT_LOGGED[0] = True
+                    logger.warning(
+                        "[rag.examples] Embeddings 404（常见于聊天网关未实现 /embeddings）。"
+                        "请把 agent.rag.embedding.config_ref 设为 rag_embedding_llm（Jina），"
+                        "或设置 agent.context.use_embeddings: false。"
+                    )
+                logger.warning(
+                    "[rag.examples] Embedding rank failed, fallback lexical (%s): %s",
+                    type(e).__name__,
+                    msg,
+                )
                 scored = self._rank_lexical(user_query)
         else:
             scored = self._rank_lexical(user_query)
@@ -125,6 +143,17 @@ class ExampleSelector:
         auth_mode = hp["auth_mode"]
         auth_header_name = hp["auth_header_name"]
         extra_h = hp["extra_headers"]
+        task_q = hp.get("task_query")
+        task_p = hp.get("task_passage")
+        dims = hp.get("dimensions")
+        dim_opt: int | None = None
+        if dims is not None:
+            try:
+                di = int(dims)
+                dim_opt = di if di > 0 else None
+            except (TypeError, ValueError):
+                dim_opt = None
+        xbody = hp.get("extra_body") if isinstance(hp.get("extra_body"), dict) else None
 
         if self._vectors is None or len(self._vectors) != len(self._examples):
             texts = [ex.query for ex in self._examples]
@@ -137,6 +166,9 @@ class ExampleSelector:
                 auth_mode=auth_mode,
                 auth_header_name=auth_header_name,
                 extra_headers=extra_h,
+                task=str(task_p) if task_p else None,
+                dimensions=dim_opt,
+                extra_body=xbody,
             )
 
         q_vec_list = await fetch_embeddings(
@@ -148,6 +180,9 @@ class ExampleSelector:
             auth_mode=auth_mode,
             auth_header_name=auth_header_name,
             extra_headers=extra_h,
+            task=str(task_q) if task_q else None,
+            dimensions=dim_opt,
+            extra_body=xbody,
         )
         if not q_vec_list:
             return self._rank_lexical(user_query)
