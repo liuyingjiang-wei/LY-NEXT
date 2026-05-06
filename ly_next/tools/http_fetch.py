@@ -76,6 +76,7 @@ def _normalize_headers(raw: Any) -> dict[str, str]:
         "Use for REST APIs, JSON endpoints, or fetching plain text/HTML. "
         "Private IPs, loopback, and cloud metadata hosts are blocked."
     ),
+    category="network",
     parameters={
         "type": "object",
         "properties": {

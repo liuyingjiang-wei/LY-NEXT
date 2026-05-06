@@ -36,6 +36,12 @@ openai_compat_llm:
   base_url: "http://localhost:8000/v1"
   auth_mode: "bearer"
 
+rag_embedding_llm:
+  model: "text-embedding-3-small"
+  api_key: "${OPENAI_API_KEY}"
+  base_url: ""
+  auth_mode: "bearer"
+
 agent:
   enabled: true
   max_steps: 6
@@ -43,6 +49,19 @@ agent:
   verbose: false
   reasoning_mode: "react"
   stream_output: true
+  tool_policy:
+    max_tier: network
+    allow_categories: []
+    deny_tools: []
+    allow_tools: null
+  scratchpad:
+    max_chars: 12000
+    compress_enabled: true
+    compress_target_chars: 4500
+    compress_max_tokens: 1024
+  loop_guard:
+    max_repeat_same_tool: 3
+    max_consecutive_tool_failures: 4
   context:
     enabled: true
     examples_path: ""
@@ -50,7 +69,7 @@ agent:
     min_similarity: 0.15
     use_embeddings: true
   rag:
-    enabled: true
+    enabled: false
     documents_path: ""
     top_k: 5
     chunk_size: 900
@@ -59,7 +78,7 @@ agent:
     use_embeddings: true
     embedding:
       model: "text-embedding-3-small"
-      config_ref: "openai_compat_llm"
+      config_ref: "rag_embedding_llm"
 
 tools:
   built_in:

@@ -1,4 +1,4 @@
-"""Resolve HTTP settings for embedding requests (may differ from chat LLM)."""
+"""Merge agent.rag.embedding overrides with a referenced config block (default rag_embedding_llm)."""
 
 from __future__ import annotations
 
@@ -8,19 +8,13 @@ from ly_next.core.http_url import ensure_http_base
 
 
 def resolve_embedding_http_config(emb_cfg: dict[str, Any], config_get: Any) -> dict[str, Any]:
-    """
-    Merge ``agent.rag.embedding`` with the referenced LLM block.
-
-    Explicit keys on ``emb_cfg`` override the referenced block: ``base_url``, ``api_key``,
-    ``auth_mode``, ``headers``, ``timeout``.
-    """
-    ref = str(emb_cfg.get("config_ref") or "openai_compat_llm")
+    ref = str(emb_cfg.get("config_ref") or "").strip() or "rag_embedding_llm"
     block: dict[str, Any] = {}
     raw = config_get(ref)
     if isinstance(raw, dict):
         block = raw
 
-    model = str(emb_cfg.get("model") or "text-embedding-3-small")
+    model = str(emb_cfg.get("model") or block.get("model") or "text-embedding-3-small")
     base_raw = (
         emb_cfg.get("base_url")
         or emb_cfg.get("baseUrl")

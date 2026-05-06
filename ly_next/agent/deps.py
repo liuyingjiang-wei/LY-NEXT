@@ -27,6 +27,16 @@ class AgentDeps:
     reasoning_mode: str = "react"
     stream_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     _custom_llm_call: Callable[..., Awaitable[str]] | None = field(default=None, repr=False)
+    scratchpad_max_chars: int = 12000
+    scratchpad_compress_enabled: bool = True
+    scratchpad_compress_target_chars: int = 4500
+    scratchpad_compress_max_tokens: int = 1024
+    loop_max_repeat_same_tool: int = 3
+    loop_max_consecutive_tool_failures: int = 4
+    tool_allow_tools: list[str] | None = None
+    tool_deny_tools: list[str] = field(default_factory=list)
+    tool_allow_categories: list[str] | None = None
+    tool_max_tier: str = "network"
 
     def __post_init__(self):
         if self.llm_client is None:
@@ -57,6 +67,34 @@ class AgentDeps:
             messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
+            stream=False,
+        )
+
+        if isinstance(response, dict):
+            choices = response.get("choices", [])
+            if choices:
+                return choices[0].get("message", {}).get("content", "")
+
+        return str(response)
+
+    async def call_llm_limited(
+        self, prompt: str, *, max_tokens: int, temperature: float = 0.25
+    ) -> str:
+        """Single-shot LLM call with an explicit token budget (summaries, guards)."""
+        if self._custom_llm_call:
+            return await self._custom_llm_call(prompt)
+
+        if self.llm_client is None:
+            raise RuntimeError("No LLM client configured")
+
+        messages = [{"role": "user", "content": prompt}]
+        if self.verbose:
+            logger.debug("[agent] LLM limited call max_tokens=%s", max_tokens)
+
+        response = await self.llm_client.chat(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
             stream=False,
         )
 
@@ -111,6 +149,42 @@ def create_agent_deps(
     **kwargs,
 ) -> AgentDeps:
     """Create AgentDeps with config defaults."""
+    policy = config.get("agent.tool_policy", {}) or {}
+    if not isinstance(policy, dict):
+        policy = {}
+
+    allow_tools_raw = policy.get("allow_tools")
+    if allow_tools_raw is None:
+        tool_allow_tools: list[str] | None = None
+    elif isinstance(allow_tools_raw, list):
+        tool_allow_tools = [str(x).strip() for x in allow_tools_raw if str(x).strip()]
+    else:
+        tool_allow_tools = None
+
+    deny_raw = policy.get("deny_tools") or []
+    tool_deny_tools = (
+        [str(x).strip() for x in deny_raw if isinstance(x, str) and str(x).strip()]
+        if isinstance(deny_raw, list)
+        else []
+    )
+
+    allow_cat_raw = policy.get("allow_categories")
+    if allow_cat_raw is None:
+        tool_allow_categories = None
+    elif isinstance(allow_cat_raw, list):
+        tool_allow_categories = [str(x).strip().lower() for x in allow_cat_raw if str(x).strip()]
+    else:
+        tool_allow_categories = None
+
+    tool_max_tier = str(policy.get("max_tier") or "network").strip().lower()
+
+    sp = config.get("agent.scratchpad", {}) or {}
+    if not isinstance(sp, dict):
+        sp = {}
+    lg = config.get("agent.loop_guard", {}) or {}
+    if not isinstance(lg, dict):
+        lg = {}
+
     return AgentDeps(
         provider=provider or config.get("llm.default_provider", "openai"),
         max_steps=kwargs.get("max_steps", config.get("agent.max_steps", 6)),
@@ -120,4 +194,18 @@ def create_agent_deps(
         verbose=kwargs.get("verbose", config.get("agent.verbose", False)),
         reasoning_mode=kwargs.get("reasoning_mode", config.get("agent.reasoning_mode", "react")),
         tool_registry=tools,
+        scratchpad_max_chars=max(2000, int(sp.get("max_chars", 12000) or 12000)),
+        scratchpad_compress_enabled=bool(sp.get("compress_enabled", True)),
+        scratchpad_compress_target_chars=max(
+            800, int(sp.get("compress_target_chars", 4500) or 4500)
+        ),
+        scratchpad_compress_max_tokens=max(128, int(sp.get("compress_max_tokens", 1024) or 1024)),
+        loop_max_repeat_same_tool=max(1, int(lg.get("max_repeat_same_tool", 3) or 3)),
+        loop_max_consecutive_tool_failures=max(
+            1, int(lg.get("max_consecutive_tool_failures", 4) or 4)
+        ),
+        tool_allow_tools=tool_allow_tools,
+        tool_deny_tools=tool_deny_tools,
+        tool_allow_categories=tool_allow_categories,
+        tool_max_tier=tool_max_tier,
     )

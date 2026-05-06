@@ -212,6 +212,7 @@ web_search_tool = tool(
         "Search the public web. Provider is configured on the server "
         "(tools.web_search: duckduckgo needs no key; brave / serpapi / tavily need api_key)."
     ),
+    category="network",
     parameters={
         "type": "object",
         "properties": {
@@ -225,6 +226,7 @@ web_search_tool = tool(
 web_scrape_tool = tool(
     name="web_scrape",
     description="Fetch a URL and return main text content (HTML stripped).",
+    category="network",
     parameters={
         "type": "object",
         "properties": {

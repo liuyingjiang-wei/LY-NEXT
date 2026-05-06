@@ -92,6 +92,12 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "base_url": "http://localhost:8000/v1",
             "auth_mode": "bearer",
         },
+        "rag_embedding_llm": {
+            "model": "text-embedding-3-small",
+            "api_key": "",
+            "base_url": "",
+            "auth_mode": "bearer",
+        },
         "agent": {
             "enabled": True,
             "max_steps": 6,
@@ -99,6 +105,22 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "verbose": False,
             "reasoning_mode": "react",
             "stream_output": True,
+            "tool_policy": {
+                "max_tier": "network",
+                "allow_categories": [],
+                "deny_tools": [],
+                "allow_tools": None,
+            },
+            "scratchpad": {
+                "max_chars": 12000,
+                "compress_enabled": True,
+                "compress_target_chars": 4500,
+                "compress_max_tokens": 1024,
+            },
+            "loop_guard": {
+                "max_repeat_same_tool": 3,
+                "max_consecutive_tool_failures": 4,
+            },
             "context": {
                 "enabled": True,
                 "examples_path": "",
@@ -107,14 +129,14 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                 "use_embeddings": True,
             },
             "rag": {
-                "enabled": True,
+                "enabled": False,
                 "documents_path": "",
                 "top_k": 5,
                 "chunk_size": 900,
                 "chunk_overlap": 120,
                 "min_similarity": 0.12,
                 "use_embeddings": True,
-                "embedding": {"model": "text-embedding-3-small", "config_ref": "openai_compat_llm"},
+                "embedding": {"model": "text-embedding-3-small", "config_ref": "rag_embedding_llm"},
             },
         },
         "tools": {
@@ -290,9 +312,7 @@ class Config:
 
         urls: list[str] = []
         if pw:
-            urls.append(
-                f"postgresql+asyncpg://{user}:{quote(pw, safe='')}@{host}:{port}/{dbname}"
-            )
+            urls.append(f"postgresql+asyncpg://{user}:{quote(pw, safe='')}@{host}:{port}/{dbname}")
         else:
             urls.append(f"postgresql+asyncpg://{user}@{host}:{port}/{dbname}")
 
@@ -306,9 +326,7 @@ class Config:
                 if sock in seen_sk:
                     continue
                 seen_sk.add(sock)
-                urls.append(
-                    f"postgresql+asyncpg://{user}@/{dbname}?host={quote(sock, safe='')}"
-                )
+                urls.append(f"postgresql+asyncpg://{user}@/{dbname}?host={quote(sock, safe='')}")
 
         out: list[str] = []
         seen: set[str] = set()
@@ -319,7 +337,10 @@ class Config:
         return out
 
     def iter_asyncpg_dsn(self) -> list[str]:
-        return [u.replace("postgresql+asyncpg://", "postgresql://", 1) for u in self.iter_database_urls()]
+        return [
+            u.replace("postgresql+asyncpg://", "postgresql://", 1)
+            for u in self.iter_database_urls()
+        ]
 
     @property
     def database_url(self) -> str:

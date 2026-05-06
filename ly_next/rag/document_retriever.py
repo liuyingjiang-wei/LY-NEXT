@@ -49,7 +49,7 @@ class DocumentRetriever:
                     self._chunks.append(c)
 
     async def retrieve_formatted(self, user_query: str) -> str:
-        if not config.get("agent.rag.enabled", True):
+        if not config.get("agent.rag.enabled", False):
             return ""
         path_cfg = str(config.get("agent.rag.documents_path", "") or "").strip()
         if self._loaded_path != path_cfg:

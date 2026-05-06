@@ -30,9 +30,25 @@ from ly_next.core.database import db
 from ly_next.core.logger import refresh_ly_next_log_level_from_config
 from ly_next.core.task_manager import get_task_manager
 from ly_next.models.factory import LLMFactory
+from ly_next.rag import reset_document_retriever, reset_example_selector
 from ly_next.tools import get_tool_registry
 
 router = APIRouter()
+
+
+def _tool_catalog() -> list[dict[str, Any]]:
+    registry = get_tool_registry()
+    out: list[dict[str, Any]] = []
+    for t in sorted(registry.list_tools(), key=lambda x: x.definition.name):
+        out.append(
+            {
+                "name": t.definition.name,
+                "category": t.definition.category or "general",
+                "description": (t.definition.description or "")[:400],
+            }
+        )
+    return out
+
 
 _SETTINGS_LOG_LEVELS = frozenset({"trace", "debug", "info", "warning", "error", "critical"})
 
@@ -45,6 +61,7 @@ _SETTINGS_EDITABLE_ROOTS = frozenset(
         "anthropic_llm",
         "ollama_llm",
         "openai_compat_llm",
+        "rag_embedding_llm",
         "agent",
         "tools",
     }
@@ -373,6 +390,7 @@ async def get_workbench_settings():
         },
         "llm_providers": LLMFactory.list_providers(),
         "agent_modes": AgentFactory.list_agent_types(),
+        "tool_catalog": _tool_catalog(),
     }
 
 
@@ -405,6 +423,8 @@ async def patch_workbench_settings(body: dict[str, Any]):
     config.load()
     refresh_ly_next_log_level_from_config()
     LLMFactory.clear_cache()
+    reset_document_retriever()
+    reset_example_selector()
     init = config.ensure_initialized()
     full = config.to_dict()
     abs_path = Path(init["path"])
@@ -422,6 +442,7 @@ async def patch_workbench_settings(body: dict[str, Any]):
             "exists": init["exists"],
             "parent_writable": init["parent_writable"],
         },
+        "tool_catalog": _tool_catalog(),
     }
 
 

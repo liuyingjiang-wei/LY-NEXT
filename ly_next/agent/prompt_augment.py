@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.rag.document_retriever import get_document_retriever
 from ly_next.rag.example_selector import get_example_selector
@@ -65,20 +66,27 @@ async def augment_messages_async(messages: list[dict[str, Any]]) -> list[dict[st
     if not query:
         return messages
 
-    parts: list[str] = []
-    try:
-        ex_block = await get_example_selector().select_formatted(query)
-        if ex_block:
-            parts.append("## 相似示例\n" + ex_block)
-    except Exception as e:
-        logger.warning("[prompt_augment] Example selection failed: %s", e)
+    rag_on = bool(config.get("agent.rag.enabled", False))
+    ctx_on = bool(config.get("agent.context.enabled", True))
+    if not rag_on and not ctx_on:
+        return messages
 
-    try:
-        rag_block = await get_document_retriever().retrieve_formatted(query)
-        if rag_block:
-            parts.append("## 知识库片段\n" + rag_block)
-    except Exception as e:
-        logger.warning("[prompt_augment] RAG retrieve failed: %s", e)
+    parts: list[str] = []
+    if ctx_on:
+        try:
+            ex_block = await get_example_selector().select_formatted(query)
+            if ex_block:
+                parts.append("## 相似示例\n" + ex_block)
+        except Exception as e:
+            logger.warning("[prompt_augment] Example selection failed: %s", e)
+
+    if rag_on:
+        try:
+            rag_block = await get_document_retriever().retrieve_formatted(query)
+            if rag_block:
+                parts.append("## 知识库片段\n" + rag_block)
+        except Exception as e:
+            logger.warning("[prompt_augment] RAG retrieve failed: %s", e)
 
     if not parts:
         return messages

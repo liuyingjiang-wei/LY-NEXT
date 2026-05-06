@@ -13,6 +13,7 @@ from ly_next.tools.web_search import web_scrape_tool, web_search_tool
 @tool(
     name="calculator",
     description="Perform mathematical calculations.",
+    category="safe",
     parameters={
         "type": "object",
         "properties": {
@@ -72,6 +73,7 @@ async def calculator(expression: str) -> ToolResult:
 @tool(
     name="format_json",
     description="Format and validate JSON data.",
+    category="safe",
     parameters={
         "type": "object",
         "properties": {
@@ -94,6 +96,7 @@ async def format_json(data: str, indent: int = 2) -> ToolResult:
 @tool(
     name="text_process",
     description="Process and transform text.",
+    category="general",
     parameters={
         "type": "object",
         "properties": {
@@ -143,6 +146,7 @@ async def text_process(text: str, operation: str) -> ToolResult:
 @tool(
     name="regex_extract",
     description="Extract text using regex patterns.",
+    category="general",
     parameters={
         "type": "object",
         "properties": {
@@ -172,6 +176,7 @@ async def regex_extract(text: str, pattern: str, group: int = 0) -> ToolResult:
 @tool(
     name="get_current_time",
     description="Get current date and time.",
+    category="general",
     parameters={
         "type": "object",
         "properties": {
@@ -215,6 +220,7 @@ async def get_current_time(
 @tool(
     name="url_parse",
     description="Parse and extract components from a URL.",
+    category="general",
     parameters={"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
 )
 async def url_parse(url: str) -> ToolResult:

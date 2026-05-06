@@ -751,7 +751,8 @@ PostgreSQL Installation Guide (Linux/macOS):
 
             im = (info.message or "").lower()
             if info.status == ServiceStatus.UNAVAILABLE and any(
-                x in im for x in ("noauth", "wrongpass", "authentication required", "invalid password")
+                x in im
+                for x in ("noauth", "wrongpass", "authentication required", "invalid password")
             ):
                 return info
 

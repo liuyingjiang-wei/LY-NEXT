@@ -15,6 +15,9 @@ class AgentState(TypedDict, total=False):
     last_result: Any
     error: str
     final_response: str
+    last_tool_signature: str
+    repeat_tool_calls: int
+    tool_fail_streak: int
 
 
 def create_initial_state(messages: list[dict[str, Any]] = None) -> AgentState:
@@ -29,4 +32,7 @@ def create_initial_state(messages: list[dict[str, Any]] = None) -> AgentState:
         last_result=None,
         error="",
         final_response="",
+        last_tool_signature="",
+        repeat_tool_calls=0,
+        tool_fail_streak=0,
     )

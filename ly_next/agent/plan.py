@@ -8,7 +8,9 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
+from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
+from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
 from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -23,8 +25,15 @@ async def _plan_phase(state: AgentState, deps: AgentDeps) -> AgentState:
     tools = []
     if deps.use_tools and deps.tool_registry:
         try:
-            raw_tools = deps.tool_registry.get_tools_for_llm()
-            for t in raw_tools[: deps.max_tools]:
+            objs, _ = filter_tools_for_agent(
+                deps.tool_registry,
+                allow_tools=deps.tool_allow_tools,
+                deny_tools=deps.tool_deny_tools,
+                allow_categories=deps.tool_allow_categories,
+                max_tier=deps.tool_max_tier,
+                max_tools=deps.max_tools,
+            )
+            for t in list_tools_payload(objs):
                 tools.append({"name": t.get("name", ""), "description": t.get("description", "")})
         except Exception as e:
             logger.warning(f"[plan] Failed to get tools: {e}")
@@ -97,6 +106,17 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
 
         try:
             result = await deps.tool_registry.call_tool(tool_name, args)
+            sig = json.dumps({"name": tool_name, "args": args}, sort_keys=True, ensure_ascii=False)
+            prev_sig = str(state.get("last_tool_signature") or "")
+            repeat = int(state.get("repeat_tool_calls") or 0)
+            repeat = repeat + 1 if sig == prev_sig else 1
+
+            fail_streak = int(state.get("tool_fail_streak") or 0)
+            if isinstance(result, dict) and result.get("success") is False:
+                fail_streak += 1
+            else:
+                fail_streak = 0
+
             plan_results = state.get("plan_results", [])
             plan_results.append(
                 {
@@ -111,10 +131,23 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
                 "plan_results": plan_results,
                 "scratchpad": state.get("scratchpad", "")
                 + f"\n[Step {current_step + 1}] {tool_name}: {json.dumps(result, ensure_ascii=False)}",
+                "last_tool_signature": sig,
+                "repeat_tool_calls": repeat,
+                "tool_fail_streak": fail_streak,
             }
         except Exception as e:
             logger.error(f"[execute] Step {current_step + 1} failed: {e}")
-            return {"error": f"Step {current_step + 1}: {str(e)}"}
+            sig = json.dumps({"name": tool_name, "args": args}, sort_keys=True, ensure_ascii=False)
+            prev_sig = str(state.get("last_tool_signature") or "")
+            repeat = int(state.get("repeat_tool_calls") or 0)
+            repeat = repeat + 1 if sig == prev_sig else 1
+            fail_streak = int(state.get("tool_fail_streak") or 0) + 1
+            return {
+                "error": f"Step {current_step + 1}: {str(e)}",
+                "last_tool_signature": sig,
+                "repeat_tool_calls": repeat,
+                "tool_fail_streak": fail_streak,
+            }
 
     return {"current_step": current_step + 1}
 
@@ -126,6 +159,12 @@ async def _check_plan(state: AgentState, deps: AgentDeps) -> AgentState:
     done = state.get("done", False)
     error = state.get("error", "")
     steps = state.get("steps", 0) + 1
+
+    if int(state.get("repeat_tool_calls") or 0) >= deps.loop_max_repeat_same_tool:
+        return {"done": True, "final_response": "Stopped: repeated identical tool calls."}
+
+    if int(state.get("tool_fail_streak") or 0) >= deps.loop_max_consecutive_tool_failures:
+        return {"done": True, "final_response": "Stopped: too many consecutive tool failures."}
 
     if steps >= deps.max_steps:
         return {"done": True, "final_response": "Maximum steps reached."}
@@ -169,6 +208,21 @@ Output only JSON:
 
     if error:
         return {"done": True, "final_response": f"Error: {error}"}
+
+    scratch = state.get("scratchpad") or ""
+    if deps.scratchpad_compress_enabled and len(scratch) > deps.scratchpad_max_chars:
+        question = (
+            state.get("messages", [{}])[0].get("content", "") if state.get("messages") else ""
+        )
+        if isinstance(question, dict):
+            question = json.dumps(question, ensure_ascii=False)
+        new_sp = await compress_scratchpad(
+            deps,
+            scratchpad=scratch,
+            task_hint=str(question or ""),
+            target_chars=deps.scratchpad_compress_target_chars,
+        )
+        return {"done": False, "steps": steps, "scratchpad": new_sp}
 
     return {"done": False, "steps": steps}
 
