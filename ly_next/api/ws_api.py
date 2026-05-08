@@ -1,5 +1,3 @@
-"""WebSocket API."""
-
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -7,7 +5,9 @@ from starlette.websockets import WebSocketState
 
 from ly_next.agent.deps import create_agent_deps
 from ly_next.agent.factory import AgentFactory
+from ly_next.agent.model_router import resolve_model_routing
 from ly_next.agent.prompt_augment import augment_messages_async
+from ly_next.agent.vision_precaption import apply_vision_precaption_if_needed
 from ly_next.api.bridge import (
     SUPPORTED_CHANNELS,
     emit_channel_event,
@@ -206,8 +206,6 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
     broadcaster = get_task_broadcaster()
     await broadcaster.task_started(task_id, "WebSocket Chat")
 
-    await websocket.send_json({"type": "chat_started", "task_id": task_id})
-
     try:
         logger.debug(
             "[ws.chat] task=%s mode=%s stream=%s provider=%s model=%s",
@@ -217,13 +215,35 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             data.get("provider"),
             data.get("model"),
         )
-        messages = await augment_messages_async(list(messages))
-        deps = create_agent_deps(provider=data.get("provider"), model=data.get("model"))
+        messages = await apply_vision_precaption_if_needed(list(messages))
+        routed = await resolve_model_routing(
+            messages,
+            request_provider=data.get("provider"),
+            request_model=data.get("model"),
+            router_hint=data.get("router_hint"),
+            enabled_override=data.get("use_model_router"),
+        )
+        await websocket.send_json(
+            {
+                "type": "chat_started",
+                "task_id": task_id,
+                "router": {
+                    "task_kind": routed.task_kind.value,
+                    "via": routed.via,
+                    "provider": routed.provider,
+                    "model": routed.model,
+                },
+            }
+        )
+        messages = await augment_messages_async(messages)
+        deps = create_agent_deps(provider=routed.provider, model=routed.model)
         deps.temperature = data.get("temperature", 0.7)
         deps.max_tokens = data.get("max_tokens", 2048)
         deps.tool_registry = get_tool_registry()
         if data.get("tool_call_mode") is not None:
-            deps.tool_call_mode = str(data.get("tool_call_mode") or "").strip().lower() or deps.tool_call_mode
+            deps.tool_call_mode = (
+                str(data.get("tool_call_mode") or "").strip().lower() or deps.tool_call_mode
+            )
         logger.debug(
             "[ws.chat] task=%s registry_tools=%s tool_call_mode=%s",
             task_id,

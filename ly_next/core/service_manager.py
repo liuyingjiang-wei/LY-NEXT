@@ -1,5 +1,3 @@
-"""Auto-start Redis/PostgreSQL when possible; optional GitHub download proxy."""
-
 import asyncio
 import os
 import platform
@@ -15,35 +13,22 @@ from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# GitHub proxy for China network
 GITHUB_PROXY = "https://gh-proxy.com/"
 
 
 def get_github_url(url: str) -> str:
-    """Get GitHub URL with proxy if needed.
-
-    Args:
-        url: Original GitHub URL
-
-    Returns:
-        Proxied URL if it's a GitHub URL, otherwise original
-    """
     if "github.com" in url or "githubusercontent.com" in url:
         return f"{GITHUB_PROXY}{url}"
     return url
 
 
 class ServiceStatus(Enum):
-    """Service connection status."""
-
     RUNNING = "running"
     STOPPED = "stopped"
     UNAVAILABLE = "unavailable"
 
 
 class InstallStatus(Enum):
-    """Service installation status."""
-
     INSTALLED = "installed"
     NOT_INSTALLED = "not_installed"
     UNKNOWN = "unknown"
@@ -51,8 +36,6 @@ class InstallStatus(Enum):
 
 @dataclass
 class ServiceInfo:
-    """Service information container."""
-
     name: str
     status: ServiceStatus
     message: str
@@ -62,19 +45,9 @@ class ServiceInfo:
 
 
 class ServiceManager:
-    """Manages external services (Redis, PostgreSQL) with auto-start capability.
-
-    Features:
-    - Auto-start services in development mode
-    - Retry with exponential backoff
-    - Support for Windows/Linux/macOS
-    - Docker-aware (respects DOCKER_CONTAINER env var)
-    """
-
-    # Default connection retry settings
     MAX_RETRIES = 3
-    BASE_DELAY = 2  # seconds
-    MAX_DELAY = 10  # seconds
+    BASE_DELAY = 2
+    MAX_DELAY = 10
 
     def __init__(self):
         self._is_docker = os.getenv("DOCKER_CONTAINER") == "1"
@@ -89,33 +62,16 @@ class ServiceManager:
 
     @property
     def data_dir(self) -> Path:
-        """Get data directory for service data."""
         return get_project_root() / "data"
 
     @property
     def logs_dir(self) -> Path:
-        """Get logs directory."""
         return get_project_root() / "logs"
 
     def _should_auto_start(self) -> bool:
-        """Check if services should be auto-started.
-
-        Auto-start is enabled when:
-        - Not in Docker container
-        - Not in production mode
-        - Running in TTY (interactive terminal)
-        """
         return not self._is_docker and not self._is_production
 
     def _check_service_installed(self, service_name: str) -> InstallStatus:
-        """Check if a service is installed on the system.
-
-        Args:
-            service_name: Name of the service (redis, postgresql)
-
-        Returns:
-            InstallStatus indicating if service is installed
-        """
         commands = {
             "redis": ["redis-server", "redis-cli"],
             "postgresql": ["pg_ctl", "psql", "postgres"],
@@ -129,14 +85,6 @@ class ServiceManager:
         return InstallStatus.NOT_INSTALLED
 
     def _get_service_info(self, service_name: str) -> dict:
-        """Get detailed information about installed service.
-
-        Args:
-            service_name: Name of the service (redis, postgresql)
-
-        Returns:
-            Dictionary with service information
-        """
         info = {"installed": False, "version": None, "path": None, "data_dir": None}
 
         if service_name == "redis":
@@ -148,7 +96,6 @@ class ServiceManager:
                     result = subprocess.run(
                         [cmd, "--version"], capture_output=True, text=True, timeout=5
                     )
-                    # Redis server v=7.2.3
                     if "v=" in result.stdout:
                         info["version"] = result.stdout.split("v=")[1].split(" ")[0]
                 except Exception:
@@ -163,14 +110,12 @@ class ServiceManager:
                     result = subprocess.run(
                         [cmd, "--version"], capture_output=True, text=True, timeout=5
                     )
-                    # pg_ctl (PostgreSQL) 17.0
                     if "PostgreSQL" in result.stdout:
                         version_str = result.stdout.split("PostgreSQL")[1].strip()
                         info["version"] = version_str.split(" ")[0]
                 except Exception:
                     pass
 
-                # Try to find data directory
                 for data_dir in [
                     Path.home() / "AppData" / "Local" / "PostgreSQL" / "data",
                     Path("C:/Program Files/PostgreSQL") / (info["version"] or "17") / "data",
@@ -184,11 +129,6 @@ class ServiceManager:
         return info
 
     def _detect_postgres_config(self) -> dict:
-        """Detect PostgreSQL configuration from installed instance.
-
-        Returns:
-            Dictionary with detected configuration
-        """
         config = {
             "host": "localhost",
             "port": 5432,
@@ -197,12 +137,10 @@ class ServiceManager:
             "database": "ly_next",
         }
 
-        # Try to detect from pg_service.conf or postgresql.conf
         pg_ctl = shutil.which("pg_ctl")
         if not pg_ctl:
             return config
 
-        # Common PostgreSQL config locations on Windows
         if self._is_windows:
             possible_paths = [
                 Path.home() / "AppData" / "Local" / "PostgreSQL",
@@ -211,12 +149,10 @@ class ServiceManager:
             ]
             for base_path in possible_paths:
                 if base_path.exists():
-                    # Find version directory
                     for version_dir in sorted(base_path.iterdir(), reverse=True):
                         if version_dir.is_dir() and version_dir.name[0].isdigit():
                             data_dir = version_dir / "data"
                             if data_dir.exists():
-                                # Read postgresql.conf
                                 conf_file = data_dir / "postgresql.conf"
                                 if conf_file.exists():
                                     try:
@@ -234,7 +170,6 @@ class ServiceManager:
         return config
 
     def _detect_redis_requirepass_live(self, host: str, port: int) -> str:
-        """Read requirepass from a running Redis via CONFIG GET (matches runtime, not only redis.conf)."""
         candidates = [
             ["redis-cli", "-h", host, "-p", str(port), "CONFIG", "GET", "requirepass"],
             ["redis-cli", "CONFIG", "GET", "requirepass"],
@@ -259,7 +194,6 @@ class ServiceManager:
         return ""
 
     def _detect_redis_config(self) -> dict:
-        """Detect Redis host/port/password from config file + live CONFIG GET."""
         out = {"host": "127.0.0.1", "port": 6379, "password": "", "db": 0}
 
         redis_server = shutil.which("redis-server")
@@ -303,7 +237,6 @@ class ServiceManager:
         return out
 
     def _sync_detected_redis_to_config(self, detected: dict[str, str | int]) -> bool:
-        """If config has empty redis.password but Redis uses requirepass, persist detected values."""
         if not isinstance(detected, dict):
             return False
         cur = config.get("redis", {})
@@ -338,14 +271,8 @@ class ServiceManager:
         )
 
     async def auto_configure_services(self) -> dict:
-        """Auto-configure services based on installed instances.
-
-        Returns:
-            Dictionary with configuration results
-        """
         results = {"redis": False, "postgresql": False}
 
-        # Check and configure Redis
         redis_info = self._get_service_info("redis")
         if redis_info["installed"]:
             logger.info(
@@ -359,7 +286,6 @@ class ServiceManager:
             self._sync_detected_redis_to_config(redis_config)
             results["redis"] = True
 
-        # Check and configure PostgreSQL
         pg_info = self._get_service_info("postgresql")
         if pg_info["installed"]:
             logger.info(
@@ -372,15 +298,6 @@ class ServiceManager:
         return results
 
     def _get_install_guide(self, service_name: str) -> str:
-        """Get installation guide for a service.
-
-        Args:
-            service_name: Name of the service (redis, postgresql)
-
-        Returns:
-            Installation guide string
-        """
-        # GitHub proxy for China network
         gh_proxy = "https://gh-proxy.com/"
 
         if self._is_windows:
@@ -402,7 +319,7 @@ PostgreSQL Installation Guide (Windows):
 5. Or use winget: winget install PostgreSQL.PostgreSQL.17
 """,
             }
-        else:  # Linux/macOS
+        else:
             guides = {
                 "redis": """
 Redis Installation Guide (Linux/macOS):
@@ -423,11 +340,6 @@ PostgreSQL Installation Guide (Linux/macOS):
         return guides.get(service_name, f"Please install {service_name} manually.")
 
     async def check_redis(self) -> ServiceInfo:
-        """Check if Redis is available.
-
-        Returns:
-            ServiceInfo with current Redis status
-        """
         import redis.asyncio as redis
 
         redis_config = config.get("redis", {})
@@ -435,7 +347,6 @@ PostgreSQL Installation Guide (Linux/macOS):
         port = redis_config.get("port", 6379)
         password = redis_config.get("password", "")
 
-        # Check installation status
         install_status = self._check_service_installed("redis")
         install_guide = (
             self._get_install_guide("redis")
@@ -507,7 +418,6 @@ PostgreSQL Installation Guide (Linux/macOS):
             )
 
     async def check_postgres(self) -> ServiceInfo:
-        """Check if PostgreSQL is available."""
         import asyncpg
 
         db_config = config.get("database", {})
@@ -558,16 +468,10 @@ PostgreSQL Installation Guide (Linux/macOS):
         )
 
     async def _start_redis(self) -> bool:
-        """Attempt to start Redis server (like Yunzai).
-
-        Returns:
-            True if Redis was started successfully, False otherwise
-        """
         if not self._should_auto_start():
             logger.debug("Skipping Redis auto-start (production or Docker mode)")
             return False
 
-        # Check if Redis is installed
         install_status = self._check_service_installed("redis")
         if install_status == InstallStatus.NOT_INSTALLED:
             logger.error("Redis is not installed on this system.")
@@ -578,7 +482,6 @@ PostgreSQL Installation Guide (Linux/macOS):
         host = redis_config.get("host", "127.0.0.1")
         port = redis_config.get("port", 6379)
 
-        # Only auto-start if host is localhost
         if host not in ("127.0.0.1", "localhost"):
             logger.error(f"Redis connection failed at {host}:{port}")
             logger.error(
@@ -586,17 +489,14 @@ PostgreSQL Installation Guide (Linux/macOS):
             )
             return False
 
-        # Ensure data directory exists
         redis_data_dir = self.data_dir / "redis"
         redis_data_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Start Redis like Yunzai: spawn redis-server process
             cmd = ["redis-server", "--port", str(port), "--save", "900", "1", "--save", "300", "10"]
             logger.info(f"Starting Redis: {' '.join(cmd)}")
 
             if self._is_windows:
-                # Windows: start in new process group
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -604,7 +504,6 @@ PostgreSQL Installation Guide (Linux/macOS):
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
             else:
-                # Unix: start in background
                 process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
             for _ in range(10):
@@ -646,7 +545,6 @@ PostgreSQL Installation Guide (Linux/macOS):
             return False
 
     async def _init_postgres(self) -> None:
-        """Initialize PostgreSQL data directory with initdb when missing."""
         pg_data_dir = self.data_dir / "postgres"
         if (pg_data_dir / "PG_VERSION").exists():
             return
@@ -674,16 +572,10 @@ PostgreSQL Installation Guide (Linux/macOS):
             raise RuntimeError("initdb failed")
 
     async def _start_postgres(self) -> bool:
-        """Attempt to start PostgreSQL server (like Yunzai).
-
-        Returns:
-            True if PostgreSQL was started successfully, False otherwise
-        """
         if not self._should_auto_start():
             logger.debug("Skipping PostgreSQL auto-start (production or Docker mode)")
             return False
 
-        # Check if PostgreSQL is installed
         install_status = self._check_service_installed("postgresql")
         if install_status == InstallStatus.NOT_INSTALLED:
             logger.error("PostgreSQL is not installed on this system.")
@@ -694,7 +586,6 @@ PostgreSQL Installation Guide (Linux/macOS):
         host = db_config.get("host", "localhost")
         port = db_config.get("port", 5432)
 
-        # Only auto-start if host is localhost
         if host not in ("127.0.0.1", "localhost"):
             logger.error(f"PostgreSQL connection failed at {host}:{port}")
             logger.error(
@@ -702,15 +593,12 @@ PostgreSQL Installation Guide (Linux/macOS):
             )
             return False
 
-        # Ensure data directory exists
         pg_data_dir = self.data_dir / "postgres"
         pg_data_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Initialize PostgreSQL if needed
             await self._init_postgres()
 
-            # Start PostgreSQL using pg_ctl
             cmd = ["pg_ctl", "start", "-D", str(pg_data_dir), "-o", f"-p {port}"]
             logger.info(f"Starting PostgreSQL: {' '.join(cmd)}")
 
@@ -763,14 +651,6 @@ PostgreSQL Installation Guide (Linux/macOS):
             return False
 
     async def ensure_redis(self, retries: int = MAX_RETRIES) -> ServiceInfo:
-        """Ensure Redis is running, attempting auto-start if needed.
-
-        Args:
-            retries: Number of connection retries
-
-        Returns:
-            ServiceInfo with final Redis status
-        """
         for attempt in range(retries):
             info = await self.check_redis()
 
@@ -784,7 +664,6 @@ PostgreSQL Installation Guide (Linux/macOS):
             ):
                 return info
 
-            # Try to start if stopped or unavailable (not installed)
             if attempt < retries - 1 and info.status in (
                 ServiceStatus.STOPPED,
                 ServiceStatus.UNAVAILABLE,
@@ -802,7 +681,6 @@ PostgreSQL Installation Guide (Linux/macOS):
                     await asyncio.sleep(delay)
                     continue
                 else:
-                    # If start failed, provide installation guide if available
                     if info.install_status == InstallStatus.NOT_INSTALLED and info.install_guide:
                         logger.warning("Redis auto-start failed. Service is not installed.")
                         logger.info(info.install_guide)
@@ -813,21 +691,12 @@ PostgreSQL Installation Guide (Linux/macOS):
         return await self.check_redis()
 
     async def ensure_postgres(self, retries: int = MAX_RETRIES) -> ServiceInfo:
-        """Ensure PostgreSQL is running, attempting auto-start if needed.
-
-        Args:
-            retries: Number of connection retries
-
-        Returns:
-            ServiceInfo with final PostgreSQL status
-        """
         for attempt in range(retries):
             info = await self.check_postgres()
 
             if info.status == ServiceStatus.RUNNING:
                 return info
 
-            # Try to start if stopped or unavailable (not installed)
             if attempt < retries - 1 and info.status in (
                 ServiceStatus.STOPPED,
                 ServiceStatus.UNAVAILABLE,
@@ -845,7 +714,6 @@ PostgreSQL Installation Guide (Linux/macOS):
                     await asyncio.sleep(delay)
                     continue
                 else:
-                    # If start failed, provide installation guide if available
                     if info.install_status == InstallStatus.NOT_INSTALLED and info.install_guide:
                         logger.warning("PostgreSQL auto-start failed. Service is not installed.")
                         logger.info(info.install_guide)
@@ -856,11 +724,6 @@ PostgreSQL Installation Guide (Linux/macOS):
         return await self.check_postgres()
 
     async def check_all_services(self) -> dict[str, ServiceInfo]:
-        """Check all managed services.
-
-        Returns:
-            Dictionary of service name -> ServiceInfo
-        """
         redis_info = await self.check_redis()
         postgres_info = await self.check_postgres()
 
@@ -872,26 +735,14 @@ PostgreSQL Installation Guide (Linux/macOS):
     async def ensure_all_services(
         self, required_services: list[str] | None = None
     ) -> dict[str, ServiceInfo]:
-        """Ensure all required services are running.
-
-        Args:
-            required_services: List of service names that must be running.
-                              If None, all services are checked but not required.
-
-        Returns:
-            Dictionary of service name -> ServiceInfo
-        """
         results = {}
 
-        # Check and start Redis
         redis_info = await self.ensure_redis()
         results["redis"] = redis_info
 
-        # Check and start PostgreSQL
         postgres_info = await self.ensure_postgres()
         results["postgresql"] = postgres_info
 
-        # Check if required services are available
         if required_services:
             unavailable = [
                 name
@@ -905,11 +756,6 @@ PostgreSQL Installation Guide (Linux/macOS):
         return results
 
     async def shutdown_managed_services(self) -> None:
-        """Stop Redis/PostgreSQL if this process started them (dev auto-start).
-
-        Does not stop instances that were already running or remote services.
-        Controlled by ``services.stop_managed_on_exit`` (default True).
-        """
         if not config.get("services.stop_managed_on_exit", True):
             return
         await self._stop_managed_redis()
@@ -957,12 +803,10 @@ PostgreSQL Installation Guide (Linux/macOS):
             logger.warning(f"PostgreSQL stop: {e}")
 
 
-# Singleton instance
 _service_manager: ServiceManager | None = None
 
 
 def get_service_manager() -> ServiceManager:
-    """Get the global ServiceManager instance."""
     global _service_manager
     if _service_manager is None:
         _service_manager = ServiceManager()

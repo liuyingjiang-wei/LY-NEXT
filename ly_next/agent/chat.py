@@ -1,5 +1,3 @@
-"""Chat Agent."""
-
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -10,15 +8,12 @@ logger = get_logger(__name__)
 
 
 class ChatAgent:
-    """Simple Chat Agent without tools."""
-
     def __init__(self, deps: AgentDeps | None = None, **kwargs):
         if deps is None:
             deps = create_agent_deps(**kwargs)
         self.deps = deps
 
     async def run(self, messages: list[dict[str, Any]]) -> str:
-        """Run chat with messages."""
         if not messages:
             return "No messages provided."
 
@@ -33,7 +28,6 @@ class ChatAgent:
             return f"Error: {str(e)}"
 
     async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
-        """Run chat with streaming."""
         if not messages:
             yield {"type": "error", "content": "No messages provided."}
             return
@@ -53,7 +47,6 @@ class ChatAgent:
             yield {"type": "error", "content": str(e)}
 
     def _process_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Process messages for LLM."""
         processed = []
 
         for msg in messages:
@@ -73,7 +66,6 @@ class ChatAgent:
         return processed
 
     def _build_prompt(self, messages: list[dict[str, Any]]) -> str:
-        """Build prompt from messages."""
         parts = []
         for msg in messages:
             role = msg.get("role", "user")

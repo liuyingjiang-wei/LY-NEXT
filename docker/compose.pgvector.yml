@@ -1,0 +1,8 @@
+# 叠加 pgvector 镜像（与 docker-compose.yml 同时使用）：
+#   docker compose -f docker/docker-compose.yml -f docker/compose.pgvector.yml up -d
+#
+# 首次建库后在库中执行：CREATE EXTENSION IF NOT EXISTS vector;
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17

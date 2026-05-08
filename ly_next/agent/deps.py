@@ -1,5 +1,3 @@
-"""Agent Dependencies."""
-
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,10 +12,9 @@ logger = get_logger(__name__)
 
 @dataclass
 class AgentDeps:
-    """Agent Dependencies Container."""
-
     llm_client: BaseLLMClient | None = None
     provider: str = "openai"
+    model: str | None = None
     max_tools: int = 40
     tool_registry: Any | None = None
     max_steps: int = 6
@@ -38,22 +35,23 @@ class AgentDeps:
     tool_allow_categories: list[str] | None = None
     tool_max_tier: str = "network"
     native_tool_calls: bool = True
-    tool_call_mode: str = "auto"  # auto | native | compat
+    tool_call_mode: str = "auto"
 
     def __post_init__(self):
         if self.llm_client is None:
             try:
-                self.llm_client = LLMFactory.get_client(provider=self.provider)
+                kw: dict[str, Any] = {"provider": self.provider}
+                if self.model:
+                    kw["model"] = self.model
+                self.llm_client = LLMFactory.get_client(**kw)
             except Exception as e:
                 logger.warning(f"Failed to create default LLM client: {e}")
 
     @property
     def use_tools(self) -> bool:
-        """Whether to use tools."""
         return self.tool_registry is not None and len(self.tool_registry.list_tools()) > 0
 
     async def call_llm(self, prompt: str) -> str:
-        """Call LLM with prompt."""
         if self._custom_llm_call:
             return await self._custom_llm_call(prompt)
 
@@ -86,7 +84,6 @@ class AgentDeps:
         *,
         tool_choice: str | None = None,
     ) -> dict[str, Any]:
-        """Chat Completions request with OpenAI-style ``tools`` (function calling)."""
         if self._custom_llm_call:
             raise RuntimeError("Tool calling requires a standard LLM client")
 
@@ -109,7 +106,6 @@ class AgentDeps:
     async def call_llm_limited(
         self, prompt: str, *, max_tokens: int, temperature: float = 0.25
     ) -> str:
-        """Single-shot LLM call with an explicit token budget (summaries, guards)."""
         if self._custom_llm_call:
             return await self._custom_llm_call(prompt)
 
@@ -135,7 +131,6 @@ class AgentDeps:
         return str(response)
 
     async def call_llm_stream(self, prompt: str) -> Awaitable[str]:
-        """Call LLM with streaming."""
         if self.llm_client is None:
             raise RuntimeError("No LLM client configured")
 
@@ -177,7 +172,6 @@ def create_agent_deps(
     tools: Any | None = None,
     **kwargs,
 ) -> AgentDeps:
-    """Create AgentDeps with config defaults."""
     policy = config.get("agent.tool_policy", {}) or {}
     if not isinstance(policy, dict):
         policy = {}
@@ -210,11 +204,18 @@ def create_agent_deps(
     native_tool_calls = bool(
         kwargs.get("native_tool_calls", config.get("agent.native_tool_calls", True))
     )
-    tool_call_mode = str(
-        kwargs.get("tool_call_mode", config.get("agent.tool_call_mode", "auto")) or "auto"
-    ).strip().lower()
+    tool_call_mode = (
+        str(kwargs.get("tool_call_mode", config.get("agent.tool_call_mode", "auto")) or "auto")
+        .strip()
+        .lower()
+    )
     if tool_call_mode not in ("auto", "native", "compat"):
         tool_call_mode = "auto"
+
+    resolved_model = model if model is not None else kwargs.get("model")
+    if resolved_model is not None:
+        sm = str(resolved_model).strip()
+        resolved_model = sm if sm else None
 
     sp = config.get("agent.scratchpad", {}) or {}
     if not isinstance(sp, dict):
@@ -223,8 +224,13 @@ def create_agent_deps(
     if not isinstance(lg, dict):
         lg = {}
 
+    resolved_provider = str(provider).strip().lower() if provider else ""
+    if not resolved_provider:
+        resolved_provider = str(config.get("llm.default_provider", "openai") or "openai").strip().lower()
+
     return AgentDeps(
-        provider=provider or config.get("llm.default_provider", "openai"),
+        provider=resolved_provider,
+        model=resolved_model,
         max_steps=kwargs.get("max_steps", config.get("agent.max_steps", 6)),
         max_tools=kwargs.get("max_tools", config.get("agent.max_tools", 40)),
         temperature=kwargs.get("temperature", 0.7),

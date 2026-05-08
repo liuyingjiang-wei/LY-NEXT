@@ -9,6 +9,7 @@ from ly_next.core.logger import get_logger
 from ly_next.rag.chunking import chunk_text
 from ly_next.rag.embedding_config import resolve_embedding_http_config
 from ly_next.rag.embeddings import fetch_embeddings
+from ly_next.rag.retrieval_fusion import bm25_rank, mmr_select_vectors, rrf_fuse
 from ly_next.rag.similarity import cosine_similarity, jaccard_similarity
 
 logger = get_logger(__name__)
@@ -17,6 +18,7 @@ logger = get_logger(__name__)
 class DocumentRetriever:
     def __init__(self) -> None:
         self._chunks: list[str] = []
+        self._sources: list[str] = []
         self._vectors: list[list[float]] | None = None
         self._loaded_path = ""
         self._lancedb_sig = ""
@@ -27,6 +29,7 @@ class DocumentRetriever:
     def configure(self) -> None:
         raw = str(config.get("agent.rag.documents_path", "") or "").strip()
         self._chunks = []
+        self._sources = []
         self._vectors = None
         self._loaded_path = raw
         self._configured_once = True
@@ -44,22 +47,27 @@ class DocumentRetriever:
         if not target.is_absolute():
             target = root / target
 
-        texts: list[str] = []
+        file_units: list[tuple[str, str]] = []
         if target.is_file():
-            texts.append(_read_file(target))
+            file_units.append((target.name, _read_file(target)))
         elif target.is_dir():
             for p in sorted(target.rglob("*")):
                 if p.is_file() and p.suffix.lower() in {".md", ".txt", ".markdown"}:
-                    texts.append(_read_file(p))
+                    try:
+                        rel = str(p.relative_to(target))
+                    except ValueError:
+                        rel = p.name
+                    file_units.append((rel, _read_file(p)))
         else:
             logger.warning("[rag.docs] Path not found: %s", target)
 
         chunk_size = int(config.get("agent.rag.chunk_size", 900) or 900)
         overlap = int(config.get("agent.rag.chunk_overlap", 120) or 120)
-        for t in texts:
+        for src_label, t in file_units:
             for c in chunk_text(t, chunk_size, overlap):
                 if c:
                     self._chunks.append(c)
+                    self._sources.append(src_label)
 
     async def retrieve_formatted(self, user_query: str) -> str:
         if not config.get("agent.rag.enabled", False):
@@ -73,10 +81,19 @@ class DocumentRetriever:
         top_k = int(config.get("agent.rag.top_k", 5) or 5)
         min_sim = float(config.get("agent.rag.min_similarity", 0.12) or 0.0)
         use_emb = bool(config.get("agent.rag.use_embeddings", True))
+        hybrid = bool(config.get("agent.rag.hybrid_enabled", True))
+        rrf_k = int(config.get("agent.rag.rrf_k", 60) or 60)
+        mmr_on = bool(config.get("agent.rag.mmr_enabled", False))
+        mmr_lambda = float(config.get("agent.rag.mmr_lambda", 0.55) or 0.55)
+        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 3) or 3))
+        show_src = bool(config.get("agent.rag.show_source", True))
+
+        q_vec: list[float] | None = None
+        ranked: list[tuple[float, str]] = []
 
         if use_emb:
             try:
-                ranked = await self._rank_embedding(user_query)
+                ranked, q_vec = await self._rank_embedding_with_query_vec(user_query)
             except Exception as e:
                 msg = str(e).strip() or repr(e)
                 logger.warning(
@@ -85,18 +102,64 @@ class DocumentRetriever:
                     msg,
                 )
                 ranked = self._rank_lexical(user_query)
+                q_vec = None
         else:
             ranked = self._rank_lexical(user_query)
 
-        picked = [(s, ch) for s, ch in ranked if s >= min_sim][:top_k]
-        if not picked and ranked and ranked[0][0] > 0:
-            picked = ranked[:1]
+        if hybrid and self._chunks:
+            lex_bm25 = bm25_rank(user_query, self._chunks)
+            lex_jac = self._rank_lexical(user_query)
+            if use_emb and ranked:
+                ranked = rrf_fuse([ranked, lex_bm25], k=rrf_k)
+            else:
+                ranked = rrf_fuse([lex_jac, lex_bm25], k=rrf_k)
+            picked = ranked[:top_k]
+        elif use_emb and ranked:
+            picked = [(s, ch) for s, ch in ranked if s >= min_sim][:top_k]
+            if not picked and ranked and ranked[0][0] > 0:
+                picked = ranked[:1]
+        else:
+            picked = [(s, ch) for s, ch in ranked if s >= min_sim][:top_k]
+            if not picked and ranked and ranked[0][0] > 0:
+                picked = ranked[:1]
+
+        if (
+            mmr_on
+            and q_vec
+            and self._vectors
+            and len(self._vectors) == len(self._chunks)
+            and picked
+        ):
+            pool_n = min(len(ranked), top_k * mult)
+            ranked_pool = ranked[:pool_n] if ranked else picked
+            picked = mmr_select_vectors(
+                ranked_pool,
+                chunks=self._chunks,
+                vectors=self._vectors,
+                query_vec=q_vec,
+                top_k=top_k,
+                pool_size=top_k * mult,
+                lambda_param=mmr_lambda,
+                cosine_fn=cosine_similarity,
+            )
+
         if not picked:
             return ""
 
         parts = []
         for i, (score, ch) in enumerate(picked, 1):
-            parts.append(f"片段{i}（相关度 {score:.2f}）\n{ch}")
+            src = ""
+            if show_src and self._sources and self._chunks:
+                try:
+                    ix = self._chunks.index(ch)
+                    if 0 <= ix < len(self._sources):
+                        src = self._sources[ix]
+                except ValueError:
+                    src = ""
+            head = f"片段{i}（相关度 {score:.3f}）"
+            if src:
+                head += f" · 来源 {src}"
+            parts.append(f"{head}\n{ch}")
         return "\n\n---\n\n".join(parts)
 
     def _rank_lexical(self, user_query: str) -> list[tuple[float, str]]:
@@ -107,6 +170,12 @@ class DocumentRetriever:
         return ranked
 
     async def _rank_embedding(self, user_query: str) -> list[tuple[float, str]]:
+        ranked, _qv = await self._rank_embedding_with_query_vec(user_query)
+        return ranked
+
+    async def _rank_embedding_with_query_vec(
+        self, user_query: str
+    ) -> tuple[list[tuple[float, str]], list[float] | None]:
         emb_cfg = config.get("agent.rag.embedding", {}) or {}
         if not isinstance(emb_cfg, dict):
             emb_cfg = {}
@@ -167,18 +236,18 @@ class DocumentRetriever:
             extra_body=xbody,
         )
         if not q_vecs:
-            return self._rank_lexical(user_query)
+            return (self._rank_lexical(user_query), None)
         qv = q_vecs[0]
 
         ranked_lancedb = self._query_lancedb(qv)
         if ranked_lancedb:
-            return ranked_lancedb
+            return (ranked_lancedb, qv)
 
         ranked: list[tuple[float, str]] = []
         for ch, vec in zip(self._chunks, self._vectors or [], strict=False):
             ranked.append((cosine_similarity(qv, vec), ch))
         ranked.sort(key=lambda x: x[0], reverse=True)
-        return ranked
+        return (ranked, qv)
 
     def _vector_store_cfg(self) -> dict[str, Any]:
         raw = config.get("agent.rag.vector_store", {}) or {}
@@ -248,7 +317,9 @@ class DocumentRetriever:
             return []
 
         db_uri, table_name = self._resolve_lancedb_paths(vs)
-        limit = max(1, int(config.get("agent.rag.top_k", 5) or 5) * 3)
+        top_k = int(config.get("agent.rag.top_k", 5) or 5)
+        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 3) or 3))
+        limit = max(1, top_k * mult)
         try:
             db = lancedb.connect(db_uri)
             table = db.open_table(table_name)

@@ -1,5 +1,3 @@
-"""Configuration management module."""
-
 import copy
 import os
 import platform
@@ -23,12 +21,21 @@ def get_data_root() -> Path:
     return get_project_root() / "data" / "ly_next"
 
 
+def _subst_env_placeholders(s: str) -> str:
+    def repl(m: re.Match[str]) -> str:
+        key = m.group(1)
+        default = m.group(2)
+        raw = os.environ.get(key)
+        if default is not None:
+            return raw if raw else default
+        return raw if raw is not None else ""
+
+    return re.sub(r"\$\{(\w+)(?::-([^}]*))?\}", repl, s)
+
+
 def _resolve_env_vars(value: Any) -> Any:
     if isinstance(value, str):
-        pattern = r"\$\{(\w+)\}"
-        for match in re.findall(pattern, value):
-            value = value.replace(f"${{{match}}}", os.environ.get(match, ""))
-        return value
+        return _subst_env_placeholders(value)
     if isinstance(value, dict):
         return {k: _resolve_env_vars(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -156,7 +163,7 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             },
         },
         "database": {
-            "host": "localhost",
+            "host": "${DATABASE_HOST:-localhost}",
             "port": 5432,
             "username": "postgres",
             "password": "",
@@ -166,7 +173,13 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "max_overflow": 20,
             "sql_echo": False,
         },
-        "redis": {"host": "localhost", "port": 6379, "password": "", "db": 0, "cache_ttl": 3600},
+        "redis": {
+            "host": "${REDIS_HOST:-localhost}",
+            "port": 6379,
+            "password": "",
+            "db": 0,
+            "cache_ttl": 3600,
+        },
         "services": {"stop_managed_on_exit": True},
         "logging": {
             "level": "info",

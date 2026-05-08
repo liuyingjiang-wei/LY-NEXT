@@ -1,5 +1,3 @@
-"""Agent Factory."""
-
 from typing import Any
 
 from ly_next.agent.chat import ChatAgent
@@ -14,8 +12,6 @@ logger = get_logger(__name__)
 
 
 class AgentFactory:
-    """Agent Factory - Create agents by reasoning mode."""
-
     _agent_types: dict[str, type] = {
         "react": ReactAgent,
         "plan": PlanAgent,
@@ -24,18 +20,15 @@ class AgentFactory:
 
     @classmethod
     def register_agent_type(cls, name: str, agent_class: type) -> None:
-        """Register a custom agent type."""
         cls._agent_types[name.lower()] = agent_class
         logger.info(f"Registered agent type: {name}")
 
     @classmethod
     def list_agent_types(cls) -> list[str]:
-        """List available agent types."""
         return list(cls._agent_types.keys())
 
     @classmethod
     def create_agent(cls, mode: str | None = None, **kwargs) -> Any:
-        """Create agent by mode."""
         mode = mode or config.get("agent.reasoning_mode", "react")
         mode = mode.lower()
 
@@ -52,19 +45,16 @@ class AgentFactory:
 
     @classmethod
     def create_react_agent(cls, **kwargs) -> ReactAgent:
-        """Create ReAct agent."""
         deps = create_agent_deps(**kwargs)
         return ReactAgent(deps)
 
     @classmethod
     def create_plan_agent(cls, **kwargs) -> PlanAgent:
-        """Create Plan-then-Act agent."""
         deps = create_agent_deps(**kwargs)
         return PlanAgent(deps)
 
     @classmethod
     def create_chat_agent(cls, **kwargs) -> ChatAgent:
-        """Create Chat agent."""
         deps = create_agent_deps(**kwargs)
         return ChatAgent(deps)
 
@@ -76,7 +66,6 @@ class AgentFactory:
         stream: bool = False,
         **kwargs,
     ) -> Any:
-        """Run agent with messages."""
         messages = await augment_messages_async(list(messages))
         agent = cls.create_agent(mode=mode, **kwargs)
 

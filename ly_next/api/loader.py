@@ -1,5 +1,3 @@
-"""API Loader."""
-
 import importlib
 import importlib.util
 import sys
@@ -14,18 +12,11 @@ logger = get_logger(__name__)
 
 
 class APILoader:
-    """API Loader for auto-discovering and loading APIs."""
-
     def __init__(self):
         self._loaded_modules: dict[str, Any] = {}
         self.registry = APIRegistry()
 
     def _get_api_dir(self) -> Path:
-        """Get API directory from config.
-
-        If the configured path is missing but ``ly_next/apis`` exists (built-in samples),
-        use that path so legacy ``api_dir: apis`` installs still load modules.
-        """
         api_dir = config.get("api.api_dir", "ly_next/apis")
         primary = get_project_root() / api_dir
         if primary.is_dir():
@@ -39,7 +30,6 @@ class APILoader:
         return primary
 
     def _discover_modules(self, api_dir: Path) -> list[Path]:
-        """Discover API modules in directory."""
         if not api_dir.exists():
             logger.info(f"[APILoader] API directory not found: {api_dir}")
             return []
@@ -59,7 +49,6 @@ class APILoader:
         return sorted(modules, key=lambda x: x.name)
 
     def _load_module_from_file(self, file_path: Path) -> Any | None:
-        """Load module from Python file."""
         module_name = file_path.stem
 
         if file_path.suffix == ".py":
@@ -81,7 +70,6 @@ class APILoader:
             return None
 
     def _extract_api_from_module(self, module: Any) -> list[BaseAPI]:
-        """Extract API instances from module."""
         apis: list[BaseAPI] = []
         seen: set[int] = set()
 
@@ -110,7 +98,6 @@ class APILoader:
         return apis
 
     def load_from_directory(self, directory: str | Path) -> APIRegistry:
-        """Load APIs from a specific directory."""
         api_dir = Path(directory)
         if not api_dir.is_absolute():
             api_dir = get_project_root() / api_dir
@@ -131,7 +118,6 @@ class APILoader:
         return self.registry
 
     def load_apis(self) -> APIRegistry:
-        """Load APIs from configured directory."""
         if not config.get("api.auto_load", True):
             logger.info("[APILoader] Auto-load disabled")
             return self.registry
@@ -140,11 +126,9 @@ class APILoader:
         return self.load_from_directory(api_dir)
 
     def reload(self) -> APIRegistry:
-        """Reload all APIs."""
         self._loaded_modules.clear()
         self.registry = APIRegistry()
         return self.load_apis()
 
     def get_registry(self) -> APIRegistry:
-        """Get the API registry."""
         return self.registry

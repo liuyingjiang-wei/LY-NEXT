@@ -1,5 +1,3 @@
-"""First-run setup and dependency checks."""
-
 import os
 import platform
 import shutil
@@ -15,8 +13,6 @@ logger = get_logger(__name__)
 
 
 class DependencyStatus(Enum):
-    """Dependency installation status."""
-
     INSTALLED = "installed"
     MISSING = "missing"
     NEEDS_UPDATE = "needs_update"
@@ -24,8 +20,6 @@ class DependencyStatus(Enum):
 
 @dataclass
 class DependencyInfo:
-    """Dependency information container."""
-
     name: str
     status: DependencyStatus
     version: str | None = None
@@ -34,8 +28,6 @@ class DependencyInfo:
 
 
 class StartupManager:
-    """Manages first-run setup and dependency checking."""
-
     REQUIRED_PACKAGES = [
         "fastapi",
         "redis",
@@ -68,46 +60,23 @@ class StartupManager:
         self._packages_checked = False
 
     def _check_first_run(self) -> bool:
-        """Check if this is the first time running the application.
-
-        Returns:
-            True if first run, False otherwise
-        """
         marker_file = self._project_root / ".ly_next_initialized"
         return not marker_file.exists()
 
     def _mark_initialized(self) -> None:
-        """Mark the application as initialized."""
         marker_file = self._project_root / ".ly_next_initialized"
         marker_file.touch()
 
     def _check_command_available(self, command: str) -> bool:
-        """Check if a command is available in PATH.
-
-        Args:
-            command: Command name to check
-
-        Returns:
-            True if command is available, False otherwise
-        """
         return shutil.which(command) is not None
 
     def _run_command(self, command: list[str], check: bool = True) -> tuple[int, str, str]:
-        """Run a shell command and return the result.
-
-        Args:
-            command: Command and arguments as list
-            check: Whether to raise exception on non-zero exit
-
-        Returns:
-            Tuple of (exit_code, stdout, stderr)
-        """
         try:
             result = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 minutes timeout
+                timeout=300,
             )
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:
@@ -116,22 +85,10 @@ class StartupManager:
             return -1, "", str(e)
 
     async def check_python_package(self, package: str) -> DependencyInfo:
-        """Check if a Python package is installed.
-
-        Args:
-            package: Package name to check
-
-        Returns:
-            DependencyInfo with package status
-        """
-        # If we're in a uv-managed environment with uv.lock, packages should be installed
-        # We use a simple import check instead of pip show
         if self._using_uv:
             try:
-                # Try to import the package to verify it's available
                 import importlib
 
-                # Handle special cases for package names
                 import_name = package.replace("-", "_")
                 importlib.import_module(import_name)
                 return DependencyInfo(
@@ -147,7 +104,6 @@ class StartupManager:
                     message="Not installed in uv environment",
                 )
         else:
-            # Fall back to pip show for non-uv environments
             if self._check_command_available("uv"):
                 code, stdout, stderr = self._run_command(["uv", "pip", "show", package])
             else:
@@ -156,7 +112,6 @@ class StartupManager:
                 )
 
         if code == 0:
-            # Parse version from output
             version = None
             for line in stdout.split("\n"):
                 if line.startswith("Version:"):
@@ -174,15 +129,6 @@ class StartupManager:
             )
 
     def check_external_service(self, service: str) -> DependencyInfo:
-        """Check if an external service command is available.
-
-        Args:
-            service: Service name (postgresql, redis, etc.)
-
-        Returns:
-            DependencyInfo with service status
-        """
-        # Map service names to their commands
         commands = {
             "postgresql": ["psql", "pg_ctl", "postgres"],
             "redis": ["redis-server", "redis-cli"],
@@ -202,11 +148,6 @@ class StartupManager:
         )
 
     async def check_all_dependencies(self) -> dict[str, DependencyInfo]:
-        """Check all Python package dependencies.
-
-        Returns:
-            Dictionary of package name -> DependencyInfo
-        """
         results = {}
 
         for package in self.REQUIRED_PACKAGES + self.OPTIONAL_PACKAGES:
@@ -216,11 +157,6 @@ class StartupManager:
         return results
 
     def check_all_services(self) -> dict[str, DependencyInfo]:
-        """Check all external service dependencies.
-
-        Returns:
-            Dictionary of service name -> DependencyInfo
-        """
         results = {}
 
         for service in self.REQUIRED_SERVICES + self.OPTIONAL_SERVICES:
@@ -230,22 +166,12 @@ class StartupManager:
         return results
 
     async def install_missing_packages(self, packages: list[str]) -> bool:
-        """Install missing Python packages using uv or pip.
-
-        Args:
-            packages: List of package names to install
-
-        Returns:
-            True if installation succeeded, False otherwise
-        """
         if not packages:
             return True
 
         logger.info(f"Installing missing packages: {', '.join(packages)}")
 
-        # Try uv first (preferred), fall back to pip
         if self._check_command_available("uv"):
-            # Use uv directly as a command, not as Python module
             cmd = ["uv", "pip", "install"] + packages
             logger.info(f"Running: {' '.join(cmd)}")
         elif self._check_command_available("pip"):
@@ -265,13 +191,6 @@ class StartupManager:
             return False
 
     async def run_first_time_setup(self) -> None:
-        """Perform first-time setup tasks.
-
-        This method is called on first run and handles:
-        - Environment validation
-        - Creating necessary directories
-        - Initial configuration
-        """
         if not self._is_first_run:
             return
 
@@ -283,7 +202,6 @@ class StartupManager:
         if cfg_init.get("created"):
             logger.info("First-run: created config at %s", cfg_init.get("path"))
 
-        # Create necessary directories
         dirs_to_create = [
             self._project_root / "data" / "ly_next",
             self._project_root / "logs",
@@ -295,10 +213,7 @@ class StartupManager:
             directory.mkdir(parents=True, exist_ok=True)
             logger.debug(f"Ensured directory exists: {directory}")
 
-        # In uv-managed environment, packages are pre-installed
-        # Only check packages in non-uv environments
         if not self._using_uv:
-            # Check for required packages
             missing_required = []
             for package in self.REQUIRED_PACKAGES:
                 info = await self.check_python_package(package)
@@ -314,7 +229,6 @@ class StartupManager:
         else:
             logger.info("Using uv-managed environment - packages pre-installed")
 
-        # Check external services
         for service in self.REQUIRED_SERVICES:
             info = self.check_external_service(service)
             if info.status == DependencyStatus.MISSING:
@@ -329,35 +243,22 @@ class StartupManager:
                     f"Optional service '{service}' not found. LY-Next will run with reduced functionality."
                 )
 
-        # Mark as initialized
         self._mark_initialized()
         logger.info("First-time setup complete")
         logger.info("=" * 60)
 
     async def validate_environment(self) -> list[str]:
-        """Validate the runtime environment.
-
-        Returns:
-            List of validation warnings/errors
-        """
         issues = []
 
-        # Check uv or pip
         if not self._check_command_available("uv") and not self._check_command_available("pip"):
             issues.append("Neither uv nor pip found in PATH")
 
-        # Check project directory is writable
         if not os.access(self._project_root, os.W_OK):
             issues.append(f"Project directory is not writable: {self._project_root}")
 
         return issues
 
     def get_system_info(self) -> dict:
-        """Get system information for debugging.
-
-        Returns:
-            Dictionary with system details
-        """
         return {
             "platform": platform.system(),
             "platform_release": platform.release(),
@@ -372,12 +273,10 @@ class StartupManager:
         }
 
 
-# Singleton instance
 _startup_manager: StartupManager | None = None
 
 
 def get_startup_manager() -> StartupManager:
-    """Get the global StartupManager instance."""
     global _startup_manager
     if _startup_manager is None:
         _startup_manager = StartupManager()

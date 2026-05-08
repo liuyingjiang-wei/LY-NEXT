@@ -1,8 +1,6 @@
-"""LY-Next server entry point."""
-
 import secrets
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 
 import uvicorn
@@ -21,11 +19,16 @@ from ly_next.core.cache import cache
 from ly_next.core.config import config, get_project_root
 from ly_next.core.database import db
 from ly_next.core.logger import (
-    print_xrk_startup_report,
+    print_startup_report,
     refresh_ly_next_log_level_from_config,
     setup_logging,
 )
-from ly_next.core.service_manager import InstallStatus, ServiceStatus, get_service_manager
+from ly_next.core.service_manager import (
+    InstallStatus,
+    ServiceInfo,
+    ServiceStatus,
+    get_service_manager,
+)
 from ly_next.core.startup_manager import get_startup_manager
 from ly_next.core.task_manager import get_task_manager
 from ly_next.mcp.remote_bridge import load_remote_mcp_tools
@@ -41,6 +44,26 @@ _LOGIN_BUILD_MISSING = (
 )
 
 
+async def _ensure_external_service(
+    label: str,
+    check: Callable[[], Awaitable[ServiceInfo]],
+    ensure: Callable[[], Awaitable[ServiceInfo]],
+    *,
+    log_not_installed: bool = False,
+) -> ServiceInfo:
+    info = await check()
+    if info.status == ServiceStatus.RUNNING:
+        logger.debug(info.message)
+        return info
+    if info.status == ServiceStatus.STOPPED:
+        logger.info("%s not running, attempting auto-start...", label)
+        return await ensure()
+    logger.warning("%s: %s", label, info.message)
+    if log_not_installed and info.install_status == InstallStatus.NOT_INSTALLED:
+        logger.info("%s not installed, attempting auto-install...", label)
+    return await ensure()
+
+
 def _auth_exempt_path(path: str) -> bool:
     if path.startswith("/ly/static/"):
         return True
@@ -53,7 +76,6 @@ def _auth_exempt_path(path: str) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """App lifecycle."""
     started_at = time.perf_counter()
 
     refresh_ly_next_log_level_from_config()
@@ -80,27 +102,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("First run detected, auto-configuring services...")
         await service_mgr.auto_configure_services()
 
-    redis_info = await service_mgr.check_redis()
-    if redis_info.status == ServiceStatus.RUNNING:
-        logger.debug(redis_info.message)
-    elif redis_info.status == ServiceStatus.STOPPED:
-        logger.info("Redis not running, attempting auto-start...")
-        redis_info = await service_mgr.ensure_redis()
-    else:
-        logger.warning(f"Redis: {redis_info.message}")
-        redis_info = await service_mgr.ensure_redis()
-
-    postgres_info = await service_mgr.check_postgres()
-    if postgres_info.status == ServiceStatus.RUNNING:
-        logger.debug(postgres_info.message)
-    elif postgres_info.status == ServiceStatus.STOPPED:
-        logger.info("PostgreSQL not running, attempting auto-start...")
-        postgres_info = await service_mgr.ensure_postgres()
-    else:
-        logger.warning(f"PostgreSQL: {postgres_info.message}")
-        if postgres_info.install_status == InstallStatus.NOT_INSTALLED:
-            logger.info("PostgreSQL not installed, attempting auto-install...")
-        postgres_info = await service_mgr.ensure_postgres()
+    redis_info = await _ensure_external_service(
+        "Redis",
+        service_mgr.check_redis,
+        service_mgr.ensure_redis,
+    )
+    postgres_info = await _ensure_external_service(
+        "PostgreSQL",
+        service_mgr.check_postgres,
+        service_mgr.ensure_postgres,
+        log_not_installed=True,
+    )
 
     try:
         await db.connect()
@@ -209,7 +221,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Redis": redis_info.status == ServiceStatus.RUNNING,
         },
     }
-    print_xrk_startup_report(report)
+    print_startup_report(report)
 
     logger.info(f"LY-Next v{__version__} started successfully")
 
@@ -232,7 +244,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    """Create and configure FastAPI application."""
     app = FastAPI(
         title="LY-Next",
         description="FastAPI + LangGraph Agent Framework with MCP support",
@@ -366,11 +377,6 @@ def create_app() -> FastAPI:
 
 
 def run():
-    """Main entry point for starting the server.
-
-    Parses command-line arguments and starts uvicorn.
-    Supports port configuration via CLI argument.
-    """
     import argparse
 
     parser = argparse.ArgumentParser(

@@ -35,6 +35,8 @@ openai_compat_llm:
   api_key: "not-needed"
   base_url: "http://localhost:8000/v1"
   auth_mode: "bearer"
+  # 出站 /chat/completions 前将请求的 model 映射为网关真实 ID（任意供应商；合并保存配置时保留）
+  model_aliases: {}
 
 rag_embedding_llm:
   model: "text-embedding-3-small"
@@ -50,6 +52,7 @@ agent:
   reasoning_mode: "react"
   native_tool_calls: true
   tool_call_mode: "auto"  # auto | native | compat
+  prefer_compat_when_mcp_tools: true
   stream_output: true
   memory:
     enabled: true
@@ -67,6 +70,41 @@ agent:
   loop_guard:
     max_repeat_same_tool: 3
     max_consecutive_tool_failures: 4
+  model_router:
+    enabled: false
+    mode: "hybrid"
+    classifier:
+      provider: "openai_compat"
+      model: ""
+      temperature: 0.1
+      max_tokens: 256
+    routes:
+      reasoning:
+        provider: "openai"
+        model: "gpt-4o"
+      code:
+        provider: "openai"
+        model: "gpt-4o"
+      vision:
+        provider: "openai"
+        model: "gpt-4o"
+      tools:
+        provider: "openai"
+        model: "gpt-4o"
+      chat:
+        provider: "openai"
+        model: "gpt-4o-mini"
+  vision_precaption:
+    enabled: false
+    use_router_vision_model: false
+    provider: "openai"
+    model: ""
+    instruction: ""
+    prefix: "【图像识别】\n"
+    temperature: 0.3
+    max_tokens: 1024
+    max_caption_chars: 16000
+    max_merged_chars: 48000
   context:
     enabled: true
     examples_path: ""
@@ -81,6 +119,12 @@ agent:
     chunk_overlap: 120
     min_similarity: 0.12
     use_embeddings: true
+    hybrid_enabled: true
+    rrf_k: 60
+    mmr_enabled: false
+    mmr_lambda: 0.55
+    retrieve_multiplier: 3
+    show_source: true
     embedding:
       model: "text-embedding-3-small"
       config_ref: "rag_embedding_llm"
@@ -104,12 +148,13 @@ tools:
     enabled: true
     transport: "sse"
     path: "/mcp"
+    langgraph_tool_name_prefix: true
     remote:
       enabled: false
       mcpServers: []
 
 database:
-  host: "localhost"
+  host: "${DATABASE_HOST:-localhost}"
   port: 5432
   username: "postgres"
   password: "${POSTGRES_PASSWORD}"
@@ -120,7 +165,7 @@ database:
   sql_echo: false
 
 redis:
-  host: "localhost"
+  host: "${REDIS_HOST:-localhost}"
   port: 6379
   password: "${REDIS_PASSWORD}"
   db: 0

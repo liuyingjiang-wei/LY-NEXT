@@ -7,6 +7,8 @@
 - `rules/`：仓库级规则块（回复结构、质量门槛、安全边界）
 - `MEMORY.md`：长期记忆（提炼后的要点与经验）
 - `TOOLS.md`：本机工具与常用操作（避免记录明文密钥）
+- `docker/`：`docker-compose.yml`、`Dockerfile`、pgvector 叠加文件与说明（`docker/README.md`）
+- **前端源码不入库**：`.workbench-src/` 在 `.gitignore` 中；说明见根目录 [README.md](README.md)「版本控制与前端源码」。
 
 ## 工作方式
 

@@ -4,7 +4,9 @@ from typing import Any
 
 import httpx
 
+from ly_next.core.config import config
 from ly_next.core.http_url import ensure_http_base
+from ly_next.core.logger import get_logger
 from ly_next.models.base_llm import BaseLLMClient
 from ly_next.models.openai_chat_body import attach_tools, build_openai_chat_completions_body
 from ly_next.models.openai_compat_auth import (
@@ -13,12 +15,32 @@ from ly_next.models.openai_compat_auth import (
     require_remote_api_key,
 )
 
+logger = get_logger(__name__)
+
 
 def _normalize_chat_path(raw: str | None) -> str:
     p = (raw or "").strip() or "/chat/completions"
     if not p.startswith("/"):
         p = "/" + p
     return p
+
+
+def _collect_model_aliases(*sources: Any) -> dict[str, str]:
+    """Later sources override earlier. Values must be non-empty strings."""
+    out: dict[str, str] = {}
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        raw = src.get("model_aliases") or src.get("modelAliases")
+        if not isinstance(raw, dict):
+            continue
+        for k, v in raw.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                continue
+            ks, vs = k.strip(), v.strip()
+            if ks and vs:
+                out[ks] = vs
+    return out
 
 
 class OpenAICompatibleLLMClient(BaseLLMClient):
@@ -59,6 +81,22 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         if tf:
             self._cfg["token_field"] = str(tf).strip().lower()
         self._client: httpx.AsyncClient | None = None
+
+    def _apply_model_aliases(self, body: dict[str, Any]) -> None:
+        """Map outbound `model` via openai_compat_llm.model_aliases (any gateway)."""
+        m_raw = body.get("model")
+        if not isinstance(m_raw, str):
+            return
+        m = m_raw.strip()
+        if not m:
+            return
+
+        block = config.get("openai_compat_llm") or {}
+        aliases = _collect_model_aliases(block if isinstance(block, dict) else {}, self._cfg)
+        rep = aliases.get(m)
+        if rep and rep != m:
+            logger.info("[openai_compat] model_aliases: %s -> %s", m, rep)
+            body["model"] = rep
 
     def _merged_runtime_config(self) -> dict[str, Any]:
         base = dict(self._cfg)
@@ -131,6 +169,12 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             overrides,
             default_model=self.model,
         )
+        self._apply_model_aliases(body)
+        logger.debug(
+            "[openai_compat] POST %s model=%s",
+            self._chat_path,
+            body.get("model"),
+        )
         if stream:
             return self._stream_chat(body)
 
@@ -179,6 +223,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             overrides,
             default_model=self.model,
         )
+        self._apply_model_aliases(body)
         body.pop("stream", None)
         pt = overrides.get("parallel_tool_calls")
         if pt is None:

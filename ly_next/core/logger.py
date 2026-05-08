@@ -1,5 +1,3 @@
-"""Logging: console + rotating file, optional gradient banner helpers."""
-
 import logging
 import sys
 from datetime import datetime
@@ -11,8 +9,6 @@ from ly_next.core.config import config, get_project_root
 
 
 class LogColors:
-    """Terminal color codes."""
-
     RESET = "\033[0m"
     BLACK = "\033[30m"
     RED = "\033[31m"
@@ -27,7 +23,6 @@ class LogColors:
 
     @staticmethod
     def hex(hex_color: str) -> str:
-        """Convert hex color to ANSI escape code."""
         hex_color = hex_color.lstrip("#")
         r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
         return f"\033[38;2;{r};{g};{b}m"
@@ -59,15 +54,6 @@ LOG_STYLES = {
 
 
 def create_gradient_text(text: str, colors: list[str] = None) -> str:
-    """Create gradient colored text.
-
-    Args:
-        text: Text to apply gradient to
-        colors: List of hex colors for gradient
-
-    Returns:
-        Gradient colored text string
-    """
     if not text:
         return text
 
@@ -98,7 +84,6 @@ class EnhancedLogger:
         self._timers: dict[str, float] = {}
 
     def _get_log_header(self) -> str:
-        """Get formatted log header with gradient."""
         header_text = "[LY-Next]"
         return create_gradient_text(header_text, self._scheme)
 
@@ -123,12 +108,10 @@ class EnhancedLogger:
         return f"{header} {LogColors.DIM}[{timestamp}]{LogColors.RESET} {symbol} {message}"
 
     def _log(self, level: str, message: str, *args, **kwargs):
-        """Internal log method."""
         formatted = self._format_message(level, str(message))
         log_method = getattr(self._logger, level if level != "mark" else "info")
         log_method(formatted, *args, **kwargs)
 
-    # Standard log methods
     def debug(self, message: str, *args, **kwargs):
         self._log("debug", message, *args, **kwargs)
 
@@ -148,23 +131,18 @@ class EnhancedLogger:
         self._log("critical", message, *args, **kwargs)
 
     def success(self, message: str, *args, **kwargs):
-        """Log success message."""
         formatted = self._format_message("success", f"{LogColors.GREEN}{message}{LogColors.RESET}")
         self._logger.info(formatted, *args, **kwargs)
 
     def mark(self, message: str, *args, **kwargs):
-        """Log marked/highlighted message."""
         formatted = self._format_message("mark", f"{LogColors.MAGENTA}{message}{LogColors.RESET}")
         self._logger.info(formatted, *args, **kwargs)
 
     def tip(self, message: str, *args, **kwargs):
-        """Log tip message."""
         formatted = self._format_message("tip", f"{LogColors.YELLOW}{message}{LogColors.RESET}")
         self._logger.info(formatted, *args, **kwargs)
 
-    # Rich formatting methods
     def title(self, text: str, color: str = "YELLOW"):
-        """Print a title with decorative borders."""
         header = self._get_log_header()
         timestamp = format_timestamp()
         color_code = getattr(LogColors, color, LogColors.YELLOW)
@@ -177,7 +155,6 @@ class EnhancedLogger:
         print(f"{header} {LogColors.DIM}[{timestamp}]{LogColors.RESET} {color_code}╚{line}╝")
 
     def subtitle(self, text: str, color: str = "CYAN"):
-        """Print a subtitle with decorative borders."""
         header = self._get_log_header()
         timestamp = format_timestamp()
         color_code = getattr(LogColors, color, LogColors.CYAN)
@@ -187,7 +164,6 @@ class EnhancedLogger:
         )
 
     def line(self, char: str = "─", length: int = 40, color: str = "DIM"):
-        """Print a separator line."""
         header = self._get_log_header()
         timestamp = format_timestamp()
         color_code = getattr(LogColors, color, LogColors.DIM)
@@ -197,7 +173,6 @@ class EnhancedLogger:
         )
 
     def box(self, text: str, color: str = "BLUE"):
-        """Print text in a box."""
         header = self._get_log_header()
         timestamp = format_timestamp()
         color_code = getattr(LogColors, color, LogColors.BLUE)
@@ -211,7 +186,6 @@ class EnhancedLogger:
         print(f"{header} {LogColors.DIM}[{timestamp}]{LogColors.RESET} {color_code}└{line}┘")
 
     def progress(self, current: int, total: int, length: int = 30):
-        """Print a progress bar."""
         header = self._get_log_header()
         timestamp = format_timestamp()
 
@@ -223,7 +197,6 @@ class EnhancedLogger:
         print(f"{header} {LogColors.DIM}[{timestamp}]{LogColors.RESET} {message}")
 
     def status(self, message: str, status: str, status_color: str = "GREEN"):
-        """Print status message with icon."""
         header = self._get_log_header()
         timestamp = format_timestamp()
 
@@ -246,7 +219,6 @@ class EnhancedLogger:
         )
 
     def list(self, items: list[str], title: str = None):
-        """Print a list of items."""
         header = self._get_log_header()
         timestamp = format_timestamp()
 
@@ -260,7 +232,6 @@ class EnhancedLogger:
             print(f"{header} {LogColors.DIM}[{timestamp}]{LogColors.RESET}   {bullet} {item}")
 
     def gradient_line(self, char: str = "─", length: int = 50):
-        """Print a gradient colored line."""
         header = self._get_log_header()
         timestamp = format_timestamp()
 
@@ -268,16 +239,12 @@ class EnhancedLogger:
         print(f"{header} {LogColors.DIM}[{timestamp}]{LogColors.RESET} {gradient_text}")
 
     def gradient_text(self, text: str) -> str:
-        """Return gradient colored text."""
         return create_gradient_text(text, self._scheme)
 
-    # Timer methods
     def time(self, label: str = "default"):
-        """Start a timer."""
         self._timers[label] = datetime.now().timestamp()
 
     def time_end(self, label: str = "default"):
-        """End a timer and print duration."""
         if label in self._timers:
             duration = datetime.now().timestamp() - self._timers[label]
             if duration < 1:
@@ -298,12 +265,6 @@ class EnhancedLogger:
 
 
 class ColoredFormatter(logging.Formatter):
-    """Colored formatter for console output.
-
-    Applies color coding based on log level for better readability.
-    """
-
-    # Color scheme for each log level
     LEVEL_COLORS = {
         "DEBUG": LogColors.CYAN,
         "INFO": LogColors.GREEN,
@@ -313,27 +274,17 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format log record with colors and unified header.
-
-        Args:
-            record: Log record to format
-
-        Returns:
-            Formatted log string
-        """
-        # Apply color to level name
         level_color = self.LEVEL_COLORS.get(record.levelname, LogColors.RESET)
         record.levelname = f"{level_color}{record.levelname}{LogColors.RESET}"
 
-        # Format the message
         return super().format(record)
 
 
 class UnifiedHeaderFormatter(logging.Formatter):
     CONSOLE_FORMAT = "%(asctime)s │ %(levelname)-8s │ %(name)s │ %(message)s"
     FILE_FORMAT = "%(asctime)s │ %(levelname)-8s │ %(name)s │ %(filename)s:%(lineno)d │ %(message)s"
-    DATE_FORMAT = "%H:%M:%S"  # Short time for console
-    FILE_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"  # Full timestamp for files
+    DATE_FORMAT = "%H:%M:%S"
+    FILE_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -341,7 +292,6 @@ class UnifiedHeaderFormatter(logging.Formatter):
         self.show_filename = kwargs.get("show_filename", True)
 
 
-# Global enhanced logger instance
 _enhanced_logger: EnhancedLogger | None = None
 
 
@@ -359,24 +309,6 @@ def setup_logging(
     header: str | None = "LY-Next",
     color_scheme: str = "default",
 ) -> EnhancedLogger:
-    """Setup logging with unified header format.
-
-    This function initializes a logger with:
-    - Colored console output with gradient support
-    - Rotating file logs
-    - Consistent header format across all modules
-    - Rich formatting methods
-
-    Args:
-        name: Logger name (usually module name)
-        level: Log level (debug, info, warning, error)
-        log_file: Custom log file path
-        header: Header prefix for startup banner
-        color_scheme: Color scheme for gradient effects
-
-    Returns:
-        Configured EnhancedLogger instance
-    """
     global _enhanced_logger
 
     logger = logging.getLogger(name)
@@ -439,23 +371,11 @@ def _reduce_third_party_log_noise() -> None:
 
 
 def refresh_ly_next_log_level_from_config() -> None:
-    """Apply ``logging.level`` from YAML to the ``ly_next`` logger (no CLI merge)."""
     logging.getLogger("ly_next").setLevel(_std_level_from_name(config.get("logging.level", "info")))
     _reduce_third_party_log_noise()
 
 
 def get_logger(name: str) -> EnhancedLogger:
-    """Get a logger instance for a module.
-
-    This is the preferred way to get loggers in ly_next modules.
-    Each module should use: logger = get_logger(__name__)
-
-    Args:
-        name: Module name (typically __name__)
-
-    Returns:
-        EnhancedLogger instance for the module
-    """
     global _enhanced_logger
 
     if _enhanced_logger:
@@ -465,51 +385,7 @@ def get_logger(name: str) -> EnhancedLogger:
     return EnhancedLogger(logger)
 
 
-def print_banner(version: str, host: str, port: int) -> None:
-    # Use default color scheme for banner
-    scheme = COLOR_SCHEMES["default"]
-
-    # Create gradient lines
-    line_length = 60
-    gradient_line = create_gradient_text("═" * line_length, scheme)
-    gradient_title = create_gradient_text("LY-Next Agent Framework", scheme)
-
-    banner = f"""
-{gradient_line}
-  {LogColors.BRIGHT}{gradient_title}{LogColors.RESET}
-{gradient_line}
-  {LogColors.CYAN}Version:{LogColors.RESET}    {LogColors.YELLOW}{version}{LogColors.RESET}
-  {LogColors.CYAN}Server:{LogColors.RESET}     {LogColors.GREEN}{host}:{port}{LogColors.RESET}
-  {LogColors.CYAN}API Docs:{LogColors.RESET}   {LogColors.CYAN}http://{host}:{port}/docs{LogColors.RESET}
-  {LogColors.CYAN}Workbench:{LogColors.RESET} {LogColors.GREEN}http://{host}:{port}/ly/{LogColors.RESET}
-{gradient_line}
-"""
-    print(banner)
-
-
-def print_service_status(services: dict) -> None:
-    """Print service status information.
-
-    Args:
-        services: Dictionary of service name -> status info
-    """
-    print(f"\n{LogColors.CYAN}{'─' * 40}{LogColors.RESET}")
-
-    for name, info in services.items():
-        if info.status.value == "running":
-            status = f"{LogColors.GREEN}[OK]{LogColors.RESET}"
-        elif info.status.value == "stopped":
-            status = f"{LogColors.YELLOW}[--]{LogColors.RESET}"
-        else:
-            status = f"{LogColors.RED}[XX]{LogColors.RESET}"
-
-        print(f"  {name:<12} {status}")
-
-    print(f"{LogColors.CYAN}{'─' * 40}{LogColors.RESET}\n")
-
-
-def print_xrk_startup_report(report: dict[str, Any]) -> None:
-    """Print startup report."""
+def print_startup_report(report: dict[str, Any]) -> None:
     line = "=" * 65
     print(f"\n{line}")
     print(f"|  {report.get('title', 'LY-Next 启动完成'):<59}|")

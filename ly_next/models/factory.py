@@ -69,7 +69,9 @@ class LLMFactory:
 
     @classmethod
     def get_client(cls, name: str = "default", **kwargs) -> BaseLLMClient:
-        cache_key = f"{name}:{kwargs.get('provider', 'default')}"
+        prov = str(kwargs.get("provider") or "default")
+        mod = str(kwargs.get("model") or "").strip()
+        cache_key = f"{name}:{prov}:{mod}"
         if cache_key not in cls._clients:
             cls._clients[cache_key] = cls.create_client(**kwargs)
         return cls._clients[cache_key]

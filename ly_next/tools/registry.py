@@ -1,5 +1,3 @@
-"""Tool Registry."""
-
 from collections.abc import Callable
 from typing import Any
 
@@ -10,8 +8,6 @@ logger = get_logger(__name__)
 
 
 class ToolRegistry:
-    """Tool Registry - Manage and execute tools."""
-
     def __init__(self):
         self._tools: dict[str, BaseTool] = {}
         self._by_category: dict[str, set[str]] = {}
@@ -24,7 +20,6 @@ class ToolRegistry:
         category: str | None = None,
         aliases: list[str] | None = None,
     ) -> None:
-        """Register a tool."""
         tool_name = name or getattr(tool, "name", None) or tool.__name__
 
         if not hasattr(tool, "definition") or not hasattr(tool, "execute"):
@@ -50,7 +45,6 @@ class ToolRegistry:
         logger.debug(f"[registry] Registered tool: {tool_name} (category: {cat})")
 
     def unregister(self, name: str) -> bool:
-        """Unregister a tool."""
         tool_name = self._aliases.pop(name, name)
 
         if tool_name in self._tools:
@@ -63,33 +57,26 @@ class ToolRegistry:
         return False
 
     def get(self, name: str) -> BaseTool | None:
-        """Get tool by name or alias."""
         tool_name = self._aliases.get(name, name)
         return self._tools.get(tool_name)
 
     def has(self, name: str) -> bool:
-        """Check if tool exists."""
         return self.get(name) is not None
 
     def list_tools(self) -> list[BaseTool]:
-        """List all registered tools."""
         return list(self._tools.values())
 
     def list_tool_names(self) -> list[str]:
-        """List all tool names."""
         return list(self._tools.keys())
 
     def get_by_category(self, category: str) -> list[BaseTool]:
-        """Get tools by category."""
         tool_names = self._by_category.get(category, set())
         return [self._tools[name] for name in tool_names if name in self._tools]
 
     def list_categories(self) -> list[str]:
-        """List all categories."""
         return list(self._by_category.keys())
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Call a tool with arguments."""
         tool = self.get(name)
         if not tool:
             return {"success": False, "error": f"Tool not found: {name}"}
@@ -108,7 +95,6 @@ class ToolRegistry:
             return {"success": False, "error": str(e)}
 
     def get_tools_for_llm(self, category: str | None = None) -> list[dict[str, Any]]:
-        """Get tools formatted for LLM context."""
         tools = self._tools.values() if not category else self.get_by_category(category)
 
         return [
@@ -121,11 +107,9 @@ class ToolRegistry:
         ]
 
     def get_openai_format(self) -> list[dict[str, Any]]:
-        """Get tools in OpenAI function calling format."""
         return [t.definition.to_openai_format() for t in self._tools.values()]
 
     def get_langchain_format(self) -> list[dict[str, Any]]:
-        """Get tools in LangChain format."""
         return [t.definition.to_langchain_format() for t in self._tools.values()]
 
     def __len__(self) -> int:
@@ -139,7 +123,6 @@ _global_registry: ToolRegistry | None = None
 
 
 def get_tool_registry() -> ToolRegistry:
-    """Get global tool registry."""
     global _global_registry
     if _global_registry is None:
         _global_registry = ToolRegistry()
@@ -147,6 +130,5 @@ def get_tool_registry() -> ToolRegistry:
 
 
 def set_tool_registry(registry: ToolRegistry) -> None:
-    """Set global tool registry."""
     global _global_registry
     _global_registry = registry

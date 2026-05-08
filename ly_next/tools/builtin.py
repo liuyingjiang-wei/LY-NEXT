@@ -1,5 +1,3 @@
-"""Built-in Tools."""
-
 import json
 import math
 import re
@@ -26,7 +24,6 @@ from ly_next.tools.web_search import web_scrape_tool, web_search_tool
     },
 )
 async def calculator(expression: str) -> ToolResult:
-    """Calculate mathematical expression."""
     try:
         allowed_names = {
             "abs": abs,
@@ -84,7 +81,6 @@ async def calculator(expression: str) -> ToolResult:
     },
 )
 async def format_json(data: str, indent: int = 2) -> ToolResult:
-    """Format JSON string."""
     try:
         parsed = json.loads(data)
         formatted = json.dumps(parsed, ensure_ascii=False, indent=indent)
@@ -119,7 +115,6 @@ async def format_json(data: str, indent: int = 2) -> ToolResult:
     },
 )
 async def text_process(text: str, operation: str) -> ToolResult:
-    """Process text with various operations."""
     operations = {
         "upper": text.upper,
         "lower": text.lower,
@@ -158,7 +153,6 @@ async def text_process(text: str, operation: str) -> ToolResult:
     },
 )
 async def regex_extract(text: str, pattern: str, group: int = 0) -> ToolResult:
-    """Extract text using regex."""
     try:
         regex = re.compile(pattern)
         matches = regex.findall(text)
@@ -192,7 +186,6 @@ async def regex_extract(text: str, pattern: str, group: int = 0) -> ToolResult:
 async def get_current_time(
     format: str = "%Y-%m-%d %H:%M:%S", timezone: str = "local"
 ) -> ToolResult:
-    """Get current time."""
     try:
         if timezone == "local":
             now = datetime.now()
@@ -224,7 +217,6 @@ async def get_current_time(
     parameters={"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
 )
 async def url_parse(url: str) -> ToolResult:
-    """Parse URL components."""
     try:
         from urllib.parse import urlparse
 

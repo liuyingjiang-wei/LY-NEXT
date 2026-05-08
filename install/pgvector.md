@@ -55,7 +55,13 @@ psql -d ly_next -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
 ## Docker（最省事的开发方式）
 
-如果你用 Docker 跑 PostgreSQL，建议直接使用带 pgvector 的镜像；启动后在库里执行：
+编排文件在仓库 `docker/` 目录。使用 pgvector 镜像示例：
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/compose.pgvector.yml up -d
+```
+
+若只用默认 Postgres 镜像，也可自建库后按下方 SQL 安装扩展。启动后在库里执行：
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;

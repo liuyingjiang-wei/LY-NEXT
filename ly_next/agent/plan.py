@@ -1,5 +1,3 @@
-"""Plan-then-Act Agent."""
-
 import json
 import re
 from collections.abc import AsyncIterator
@@ -18,7 +16,6 @@ logger = get_logger(__name__)
 
 
 async def _plan_phase(state: AgentState, deps: AgentDeps) -> AgentState:
-    """Planning phase: Create execution plan."""
     msgs = state.get("messages") or []
     question = last_user_query(msgs)
     if not question and msgs:
@@ -62,8 +59,6 @@ Output JSON:
 
     try:
         text = (await deps.call_llm(prompt)).strip()
-
-        text = text.strip()
         m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
         if m:
             text = m.group(1).strip()
@@ -86,7 +81,6 @@ Output JSON:
 
 
 async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
-    """Execute current plan step."""
     plan = state.get("plan", [])
     current_step = state.get("current_step", 0)
 
@@ -160,7 +154,6 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
 
 
 async def _check_plan(state: AgentState, deps: AgentDeps) -> AgentState:
-    """Check if plan is complete."""
     plan = state.get("plan", [])
     current_step = state.get("current_step", 0)
     done = state.get("done", False)
@@ -246,15 +239,12 @@ Output only JSON:
 
 
 def _route_after_check(state: AgentState) -> str:
-    """Route after check."""
     if state.get("done", False):
         return END
     return "execute"
 
 
 def build_plan_agent_graph(deps: AgentDeps) -> StateGraph:
-    """Build Plan-then-Act agent graph."""
-
     async def plan_node(state: AgentState) -> AgentState:
         return await _plan_phase(state, deps)
 
@@ -279,8 +269,6 @@ def build_plan_agent_graph(deps: AgentDeps) -> StateGraph:
 
 
 class PlanAgent:
-    """Plan-then-Act Agent."""
-
     def __init__(self, deps: AgentDeps | None = None, **kwargs):
         if deps is None:
             deps = create_agent_deps(**kwargs)
@@ -289,7 +277,6 @@ class PlanAgent:
         self.app = self.graph.compile()
 
     async def run(self, messages: list[dict[str, Any]]) -> str:
-        """Run agent with messages."""
         init = create_initial_state(messages)
 
         final_state = {}
@@ -300,7 +287,6 @@ class PlanAgent:
         return final_state.get("final_response", "No response generated.")
 
     async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
-        """Run agent with streaming."""
         init = create_initial_state(messages)
 
         async for chunk in self.app.astream(init):

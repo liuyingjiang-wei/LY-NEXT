@@ -1,5 +1,3 @@
-"""Core REST API."""
-
 import copy
 import os
 import shutil
@@ -15,7 +13,9 @@ from sqlalchemy import text
 
 from ly_next.agent.deps import create_agent_deps
 from ly_next.agent.factory import AgentFactory
+from ly_next.agent.model_router import resolve_model_routing
 from ly_next.agent.prompt_augment import augment_messages_async
+from ly_next.agent.vision_precaption import apply_vision_precaption_if_needed
 from ly_next.api.bridge import (
     SUPPORTED_CHANNELS,
     emit_channel_event,
@@ -201,6 +201,8 @@ class ChatRequest(BaseModel):
     mode: str = "react"
     temperature: float = 0.7
     max_tokens: int = 2048
+    router_hint: str | None = None
+    use_model_router: bool | None = None
 
 
 class TaskCreateRequest(BaseModel):
@@ -371,7 +373,6 @@ async def get_system_metrics():
 
 @router.get("/system/settings")
 async def get_workbench_settings():
-    """返回可通过工作台修改的配置片段（密钥已遮罩）。"""
     init = config.ensure_initialized()
     full = config.to_dict()
     abs_path = Path(init["path"])
@@ -396,7 +397,6 @@ async def get_workbench_settings():
 
 @router.patch("/system/settings")
 async def patch_workbench_settings(body: dict[str, Any]):
-    """合并更新允许的配置段，写入 yaml 并清空 LLM 客户端缓存。"""
     config.ensure_initialized()
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
@@ -523,17 +523,35 @@ async def chat(request: ChatRequest):
     await manager.update(task_id, status="running")
 
     try:
-        deps = create_agent_deps(provider=request.provider, model=request.model)
+        messages = await apply_vision_precaption_if_needed(list(request.messages))
+        routed = await resolve_model_routing(
+            messages,
+            request_provider=request.provider,
+            request_model=request.model,
+            router_hint=request.router_hint,
+            enabled_override=request.use_model_router,
+        )
+        deps = create_agent_deps(provider=routed.provider, model=routed.model)
         deps.temperature = request.temperature
         deps.max_tokens = request.max_tokens
         deps.tool_registry = get_tool_registry()
 
-        messages = await augment_messages_async(list(request.messages))
+        messages = await augment_messages_async(messages)
         agent = AgentFactory.create_agent(mode=request.mode, deps=deps)
         result = await agent.run(messages)
 
         await manager.complete(task_id, result=result)
-        return {"task_id": task_id, "response": result, "usage": {"total_tokens": 0}}
+        return {
+            "task_id": task_id,
+            "response": result,
+            "usage": {"total_tokens": 0},
+            "router": {
+                "task_kind": routed.task_kind.value,
+                "via": routed.via,
+                "provider": routed.provider,
+                "model": routed.model,
+            },
+        }
     except Exception as e:
         await manager.fail(task_id, str(e))
         raise HTTPException(status_code=500, detail=str(e)) from e

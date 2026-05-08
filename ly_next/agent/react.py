@@ -1,4 +1,4 @@
-"""ReAct Agent."""
+"""ReAct loops (compat JSON / native tool_calls / LangGraph legacy)."""
 
 import json
 import re
@@ -12,9 +12,36 @@ from ly_next.agent.prompt_augment import last_user_query
 from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
 from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
+from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _visible_tools_include_mcp(deps: AgentDeps) -> bool:
+    if not deps.tool_registry or not deps.use_tools:
+        return False
+    try:
+        objs, _ = filter_tools_for_agent(
+            deps.tool_registry,
+            allow_tools=deps.tool_allow_tools,
+            deny_tools=deps.tool_deny_tools,
+            allow_categories=deps.tool_allow_categories,
+            max_tier=deps.tool_max_tier,
+            max_tools=deps.max_tools,
+        )
+    except Exception:
+        return False
+    return any((t.definition.category or "").strip().lower() == "mcp" for t in objs)
+
+
+def _auto_use_compat_first_for_mcp(deps: AgentDeps) -> bool:
+    if (deps.tool_call_mode or "auto").strip().lower() != "auto":
+        return False
+    if not config.get("agent.prefer_compat_when_mcp_tools", True):
+        return False
+    return _visible_tools_include_mcp(deps)
+
 
 _NATIVE_AGENT_INSTRUCTION = (
     "You are a helpful assistant with access to function tools registered by the host system. "
@@ -33,7 +60,6 @@ def _tool_result_as_text(result: Any) -> str:
 
 
 def _sanitize_dialog_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep messages suitable for Chat Completions (tool loops)."""
     out: list[dict[str, Any]] = []
     for m in messages or []:
         role = (m.get("role") or "user").strip().lower()
@@ -89,7 +115,6 @@ def _assistant_turn_from_response(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def _assistant_message_from_choice(resp: dict[str, Any]) -> dict[str, Any] | None:
-    """Normalize Chat Completions choice payloads across gateways."""
     choices = resp.get("choices") if isinstance(resp, dict) else None
     if not isinstance(choices, list) or not choices:
         return None
@@ -132,7 +157,7 @@ def _parse_openai_completion(
 
 
 def _inject_tool_manifest(dialog: list[dict[str, Any]], tool_names: list[str]) -> None:
-    """Some gateways drop or ignore the ``tools`` field; keep names in system text so the model still sees them."""
+    # Gateways may omit tools; mirror names in system text.
     if not tool_names:
         return
     block = (
@@ -185,7 +210,9 @@ def _build_compat_decision_prompt(
     tools: list[dict[str, Any]],
     scratchpad: str,
 ) -> str:
-    tools_desc = "\n".join([f"- {t['name']}: {t['description']}" for t in tools]) if tools else "(no tools)"
+    tools_desc = (
+        "\n".join([f"- {t['name']}: {t['description']}" for t in tools]) if tools else "(no tools)"
+    )
     tool_names = ", ".join([t["name"] for t in tools]) if tools else ""
     dialog = _extract_text(messages)
     return f"""You are a tool-using agent. The host system will execute tools for you.
@@ -217,7 +244,6 @@ async def _iter_compat_react(
     messages: list[dict[str, Any]],
     deps: AgentDeps,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Gateway-agnostic tool loop (XRK-style): model emits JSON decisions; host executes tools."""
     if not deps.tool_registry:
         raise RuntimeError("no tool registry")
 
@@ -246,8 +272,15 @@ async def _iter_compat_react(
     fail_streak = 0
 
     for iteration in range(deps.max_steps):
-        yield {"type": "status", "phase": "llm", "iteration": iteration, "detail": "兼容模式：请求模型输出 JSON 决策"}
-        prompt = _build_compat_decision_prompt(messages=messages, tools=tools, scratchpad=scratchpad)
+        yield {
+            "type": "status",
+            "phase": "llm",
+            "iteration": iteration,
+            "detail": "兼容模式：请求模型输出 JSON 决策",
+        }
+        prompt = _build_compat_decision_prompt(
+            messages=messages, tools=tools, scratchpad=scratchpad
+        )
         text = (await deps.call_llm(prompt)).strip()
 
         try:
@@ -327,7 +360,6 @@ async def _iter_native_react(
     messages: list[dict[str, Any]],
     deps: AgentDeps,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Stream-friendly agent loop: Chat Completions ``tools`` / ``tool_calls`` (OpenAI-style function calling)."""
     if not deps.tool_registry:
         raise RuntimeError("no tool registry")
 
@@ -488,7 +520,6 @@ async def _iter_native_react(
 
 
 def _extract_text(messages: list[dict[str, Any]]) -> str:
-    """Extract text from messages."""
     parts = []
     for m in messages or []:
         role = (m.get("role") or "user").strip()
@@ -506,7 +537,6 @@ def _extract_text(messages: list[dict[str, Any]]) -> str:
 
 
 def _compact_tools(raw_tools: list[dict]) -> list[dict]:
-    """Compact tool list for LLM context."""
     cleaned = []
     for t in raw_tools or []:
         name = t.get("name") or ""
@@ -523,7 +553,6 @@ def _compact_tools(raw_tools: list[dict]) -> list[dict]:
 
 
 def _build_decision_prompt(question: str, tools: list[dict], scratchpad: str) -> str:
-    """Build prompt for LLM decision making."""
     tools_desc = (
         "\n".join([f"- {t['name']}: {t['description']}" for t in tools]) if tools else "(no tools)"
     )
@@ -555,7 +584,6 @@ Known process (for reference, don't repeat):
 
 
 def _extract_json_obj(text: str) -> dict[str, Any]:
-    """Extract JSON object from model output."""
     if not text:
         raise ValueError("empty model output")
     text = text.strip()
@@ -573,7 +601,6 @@ def _extract_json_obj(text: str) -> dict[str, Any]:
 
 
 def _validate_decision(obj: dict[str, Any], tool_names: list[str]) -> tuple[str, dict[str, Any]]:
-    """Validate LLM decision."""
     t = (obj.get("type") or "").strip().lower()
 
     if t == "final":
@@ -592,7 +619,6 @@ def _validate_decision(obj: dict[str, Any], tool_names: list[str]) -> tuple[str,
 
 
 async def _plan_node(state: AgentState, deps: AgentDeps) -> AgentState:
-    """Plan node: Call LLM for decision."""
     question = _extract_text(state.get("messages", []))
     if not question:
         return {"decision": {"kind": "final", "final": "No question provided."}}
@@ -629,7 +655,6 @@ async def _plan_node(state: AgentState, deps: AgentDeps) -> AgentState:
 
 
 async def _act_node(state: AgentState, deps: AgentDeps) -> AgentState:
-    """Act node: Execute tool call."""
     decision = state.get("decision", {})
     if decision.get("kind") != "tool":
         return {}
@@ -687,7 +712,6 @@ async def _act_node(state: AgentState, deps: AgentDeps) -> AgentState:
 
 
 def _route_decision(state: AgentState) -> str:
-    """Route based on decision type."""
     decision = state.get("decision", {})
     kind = decision.get("kind")
 
@@ -697,7 +721,6 @@ def _route_decision(state: AgentState) -> str:
 
 
 async def _check_steps(state: AgentState, deps: AgentDeps) -> AgentState:
-    """Check and increment step count."""
     steps = int(state.get("steps", 0)) + 1
     updates: AgentState = {"steps": steps}
 
@@ -735,7 +758,6 @@ async def _check_steps(state: AgentState, deps: AgentDeps) -> AgentState:
 
 
 def _route_after_check(state: AgentState) -> str:
-    """Route after step check."""
     decision = state.get("decision", {})
     if decision.get("kind") == "final":
         return "final"
@@ -743,8 +765,6 @@ def _route_after_check(state: AgentState) -> str:
 
 
 def build_react_graph(deps: AgentDeps) -> StateGraph:
-    """Build ReAct agent graph."""
-
     async def plan_node(state: AgentState) -> AgentState:
         return await _plan_node(state, deps)
 
@@ -769,8 +789,6 @@ def build_react_graph(deps: AgentDeps) -> StateGraph:
 
 
 class ReactAgent:
-    """ReAct (Reasoning + Acting) Agent."""
-
     def __init__(self, deps: AgentDeps | None = None, **kwargs):
         if deps is None:
             deps = create_agent_deps(**kwargs)
@@ -795,9 +813,19 @@ class ReactAgent:
         return str(decision.get("final") or "No response generated.")
 
     async def run(self, messages: list[dict[str, Any]]) -> str:
-        """Run agent with messages."""
         mode = (self.deps.tool_call_mode or "auto").strip().lower()
         if mode == "compat" and self.deps.use_tools and not self.deps._custom_llm_call:
+            text_out = ""
+            async for ev in _iter_compat_react(messages, self.deps):
+                if isinstance(ev, dict) and ev.get("type") == "final":
+                    text_out = str(ev.get("content") or "")
+            return text_out or ""
+
+        if (
+            _auto_use_compat_first_for_mcp(self.deps)
+            and self.deps.use_tools
+            and not self.deps._custom_llm_call
+        ):
             text_out = ""
             async for ev in _iter_compat_react(messages, self.deps):
                 if isinstance(ev, dict) and ev.get("type") == "final":
@@ -834,9 +862,17 @@ class ReactAgent:
         return await self._run_legacy(messages)
 
     async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
-        """Run agent with streaming."""
         mode = (self.deps.tool_call_mode or "auto").strip().lower()
         if mode == "compat" and self.deps.use_tools and not self.deps._custom_llm_call:
+            async for ev in _iter_compat_react(messages, self.deps):
+                yield ev
+            return
+
+        if (
+            _auto_use_compat_first_for_mcp(self.deps)
+            and self.deps.use_tools
+            and not self.deps._custom_llm_call
+        ):
             async for ev in _iter_compat_react(messages, self.deps):
                 yield ev
             return

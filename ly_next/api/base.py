@@ -1,5 +1,3 @@
-"""Base API."""
-
 import inspect
 from collections.abc import Callable
 from typing import Any
@@ -12,8 +10,6 @@ logger = get_logger(__name__)
 
 
 class BaseAPI:
-    """HTTP API Base Class."""
-
     def __init__(
         self,
         name: str,
@@ -29,15 +25,12 @@ class BaseAPI:
         self._registered = False
 
     def register_routes(self, app: FastAPI) -> None:
-        """Register routes to FastAPI app."""
         logger.warning(f"[BaseAPI] {self.name} does not implement register_routes")
 
     async def init(self, app: FastAPI) -> None:
-        """Initialization hook."""
         pass
 
     async def startup(self, app: FastAPI) -> None:
-        """Called at startup."""
         if not self.enabled:
             logger.info(f"[BaseAPI] {self.name} is disabled, skipping registration")
             return
@@ -52,11 +45,9 @@ class BaseAPI:
             raise
 
     async def shutdown(self, app: FastAPI) -> None:
-        """Shutdown hook."""
         pass
 
     def get_info(self) -> dict[str, Any]:
-        """Get API info."""
         return {
             "name": self.name,
             "description": self.description,
@@ -68,8 +59,6 @@ class BaseAPI:
 
 
 def create_api_from_dict(data: dict[str, Any]) -> BaseAPI:
-    """Create API instance from dictionary config."""
-
     class DictAPI(BaseAPI):
         def __init__(self, data: dict[str, Any]):
             super().__init__(
@@ -137,14 +126,11 @@ def create_api_from_dict(data: dict[str, Any]) -> BaseAPI:
 
 
 class APIRegistry:
-    """API Registry for managing multiple APIs."""
-
     def __init__(self):
         self._apis: list[BaseAPI] = []
         self._by_name: dict[str, BaseAPI] = {}
 
     def register(self, api: BaseAPI | dict[str, Any]) -> None:
-        """Register an API."""
         if isinstance(api, dict):
             api = create_api_from_dict(api)
 
@@ -159,25 +145,20 @@ class APIRegistry:
         self._apis.sort(key=lambda x: x.priority, reverse=True)
 
     def get(self, name: str) -> BaseAPI | None:
-        """Get API by name."""
         return self._by_name.get(name)
 
     def list_apis(self) -> list[BaseAPI]:
-        """List all registered APIs."""
         return list(self._apis)
 
     def list_info(self) -> list[dict[str, Any]]:
-        """List all API info."""
         return [api.get_info() for api in self._apis]
 
     async def startup(self, app: FastAPI) -> None:
-        """Start all APIs."""
         for api in self._apis:
             if api.enabled:
                 await api.startup(app)
 
     async def shutdown(self, app: FastAPI) -> None:
-        """Shutdown all APIs."""
         for api in self._apis:
             if api._registered:
                 await api.shutdown(app)
