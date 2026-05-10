@@ -5,7 +5,7 @@ description = "FastAPI + LangGraph Agent Framework with MCP"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "LY-NEXT", email = "ly@example.com"}]
+authors = [{name = "LY-NEXT"}]
 keywords = ["fastapi", "langgraph", "agent", "llm", "ai", "mcp"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -65,7 +65,7 @@ build-backend = "hatchling.build"
 packages = ["ly_next"]
 
 [tool.hatch.build.targets.sdist]
-include = ["ly_next", "config"]
+include = ["ly_next", "config", "LICENSE", "README.md"]
 
 [tool.ruff]
 line-length = 100

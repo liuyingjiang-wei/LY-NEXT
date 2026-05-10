@@ -1,6 +1,17 @@
+<div align="center">
+
 # LY-NEXT
 
-基于 FastAPI 与 LangGraph 的 Agent 服务，内置 Web 工作台，可选安装 PostgreSQL/pgvector 与 Redis。
+**基于 FastAPI 与 LangGraph 的 Agent 服务，内置 Web 工作台，可选 PostgreSQL/pgvector 与 Redis**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Agent-6366f1.svg)](https://github.com/langchain-ai/langgraph)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Docker-blue.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.1.0-orange.svg)](./pyproject.toml)
+
+</div>
 
 ## 仓库布局
 
@@ -30,8 +41,7 @@
 - **Web 工作台**：`/ly/` 控制台；登录页 `/ly/login`
 - **stdin 桥接**：工作台或 `WS /api/ws/stdin` 发送 `stdin_line`
 
-## stdin 
-
+## stdin
 
 | 去向 | 说明 |
 |------|------|
