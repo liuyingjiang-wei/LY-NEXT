@@ -17,7 +17,6 @@ def create_react_agent_graph(
 ) -> Any:
     from langgraph.prebuilt import create_react_agent
 
-    # mcp_only: cached LC MCP tools only (remote MCP debugging).
     tools = (
         list(get_cached_langchain_mcp_tools())
         if mcp_only

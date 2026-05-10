@@ -1,5 +1,3 @@
-"""LangChain Integration."""
-
 from langchain_core.tools import BaseTool
 
 from ly_next.core.logger import get_logger
@@ -10,7 +8,6 @@ logger = get_logger(__name__)
 
 
 def tool_to_langchain(tool: LyBaseTool, registry: ToolRegistry | None = None) -> type[BaseTool]:
-    """Convert LY-Next tool to LangChain tool."""
     definition = tool.definition
 
     class ConvertedTool(BaseTool):
@@ -32,8 +29,6 @@ def tool_to_langchain(tool: LyBaseTool, registry: ToolRegistry | None = None) ->
 
 
 class LyToolkit:
-    """LangChain toolkit wrapping LY-Next tools."""
-
     def __init__(self, registry: ToolRegistry | None = None):
         self.registry = registry or get_tool_registry()
         self._tools: list[BaseTool] = []

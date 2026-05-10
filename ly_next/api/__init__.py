@@ -1,5 +1,3 @@
-"""API Package."""
-
 from fastapi import APIRouter
 
 from ly_next.api.mcp_api import mcp_router

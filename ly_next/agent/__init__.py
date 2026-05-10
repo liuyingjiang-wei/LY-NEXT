@@ -1,5 +1,3 @@
-"""Agent Package."""
-
 from ly_next.agent.chat import ChatAgent
 from ly_next.agent.coordinator import CoordinatorAgent
 from ly_next.agent.deps import AgentDeps, create_agent_deps

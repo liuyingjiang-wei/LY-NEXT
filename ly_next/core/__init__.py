@@ -1,5 +1,3 @@
-"""Core infrastructure for LY-Next."""
-
 from ly_next.core.config import Config, config, get_data_root, get_project_root
 from ly_next.core.logger import get_logger, setup_logging
 from ly_next.core.service_manager import ServiceManager, ServiceStatus, get_service_manager

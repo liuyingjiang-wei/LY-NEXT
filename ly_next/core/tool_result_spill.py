@@ -1,5 +1,3 @@
-"""Large tool results: optional disk spill + preview; empty-result placeholder."""
-
 from __future__ import annotations
 
 import json

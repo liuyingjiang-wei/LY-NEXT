@@ -61,12 +61,13 @@ pnpm-debug.log*
 .env.local
 .env.*.local
 !.env.example
-!.env.example
 
 # --- 其他 ---
 .DS_Store
 Thumbs.db
+Desktop.ini
 *.tmp
 *.bak
+*.orig
 vcpkg/
 .ly_next_initialized

@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import shutil
 import subprocess
@@ -221,6 +222,14 @@ class DeviceSessionUpdateRequest(BaseModel):
     status: str = "online"
     state: dict[str, Any] = {}
     meta: dict[str, Any] = {}
+
+
+class StdinReplayRequest(BaseModel):
+    record: dict[str, Any] | None = None
+    journal_line: str | None = None
+    log_line: str | None = None
+    line: str | None = None
+    source: str = "http_replay"
 
 
 @router.get("/health")
@@ -576,6 +585,59 @@ async def bridge_emit(channel: str, request: BridgeEmitRequest):
         },
     )
     return {"success": True, "channel": channel, "receivers": receivers}
+
+
+@router.post("/bridge/stdin/replay")
+async def bridge_stdin_replay(request: StdinReplayRequest):
+    from ly_next.core.stdin_journal import extract_line_source, parse_log_line, publish_stdin_line
+
+    def _replay_from_rec(rec: dict[str, Any]) -> tuple[str, str]:
+        pair = extract_line_source(rec)
+        if not pair:
+            raise HTTPException(status_code=400, detail="record has no string line field")
+        return pair
+
+    if request.record:
+        line, src = _replay_from_rec(request.record)
+        receivers = await publish_stdin_line(line, src, replay=True)
+        return {"success": True, "channel": "stdin", "receivers": receivers, "source": src}
+
+    jl = (request.journal_line or "").strip()
+    if jl:
+        try:
+            rec = json.loads(jl)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"journal_line is not JSON: {e}") from e
+        if not isinstance(rec, dict):
+            raise HTTPException(status_code=400, detail="journal_line must be one JSON object")
+        line, src = _replay_from_rec(rec)
+        receivers = await publish_stdin_line(line, src, replay=True)
+        return {"success": True, "channel": "stdin", "receivers": receivers, "source": src}
+
+    raw_log = (request.log_line or "").strip()
+    if raw_log:
+        rec = parse_log_line(raw_log)
+        if not rec:
+            raise HTTPException(
+                status_code=400,
+                detail="log_line must contain legacy LY_NEXT_STDIN payload",
+            )
+        line, src = _replay_from_rec(rec)
+        receivers = await publish_stdin_line(line, src, replay=True)
+        return {"success": True, "channel": "stdin", "receivers": receivers, "source": src}
+
+    if request.line is not None and str(request.line).strip() != "":
+        receivers = await publish_stdin_line(
+            str(request.line).replace("\r\n", "\n").replace("\r", "\n"),
+            request.source.strip() or "http_replay",
+            replay=True,
+        )
+        return {"success": True, "channel": "stdin", "receivers": receivers}
+
+    raise HTTPException(
+        status_code=400,
+        detail="Provide record, journal_line, log_line (legacy), or non-empty line",
+    )
 
 
 @router.get("/bridge/device/sessions")

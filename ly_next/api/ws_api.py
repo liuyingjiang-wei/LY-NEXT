@@ -17,6 +17,7 @@ from ly_next.api.bridge import (
 from ly_next.api.websocket import get_task_broadcaster, get_ws_manager
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
+from ly_next.core.stdin_journal import publish_stdin_line
 from ly_next.core.task_manager import get_task_manager
 from ly_next.tools import get_tool_registry
 
@@ -100,14 +101,8 @@ async def websocket_channel_bridge(websocket: WebSocket, channel: str):
                 if raw is None:
                     raw = data.get("text", "")
                 line = str(raw).replace("\r\n", "\n").replace("\r", "\n")
-                await emit_channel_event(
-                    "stdin",
-                    "stdin_line",
-                    {
-                        "line": line,
-                        "source": str(data.get("source") or "ws").strip() or "ws",
-                    },
-                )
+                src = str(data.get("source") or "ws").strip() or "ws"
+                await publish_stdin_line(line, src, replay=False)
                 await websocket.send_json({"type": "stdin_ack", "channel": channel, "ok": True})
                 continue
 

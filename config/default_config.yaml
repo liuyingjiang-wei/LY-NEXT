@@ -90,6 +90,9 @@ agent:
     reserve_completion_tokens: 2048
     prune_min_tool_chars: 400
     tool_placeholder: "[Earlier tool output removed to fit context window.]"
+  stdin_journal:
+    enabled: true
+    relative_path: "logs/stdin_journal.jsonl"
   coordinator:
     max_agents: 3
     max_steps_per_delegate: 5

@@ -1,5 +1,3 @@
-"""Rough context usage vs configured window; prune old tool message bodies."""
-
 from __future__ import annotations
 
 import json
@@ -60,7 +58,6 @@ def effective_context_window_tokens(model: str | None) -> int:
 def parse_completion_meta(
     resp: dict[str, Any],
 ) -> tuple[int | None, int | None, str | None]:
-    """Best-effort OpenAI-style usage + finish_reason."""
     fr: str | None = None
     choices = resp.get("choices") if isinstance(resp, dict) else None
     if isinstance(choices, list) and choices:
