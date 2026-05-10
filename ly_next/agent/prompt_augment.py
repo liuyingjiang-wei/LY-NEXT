@@ -39,11 +39,7 @@ def merge_system_context(
     context_block = (context_block or "").strip()
     if not context_block:
         return messages
-    prefix = (
-        "【检索与示例上下文】\n"
-        + context_block
-        + "\n\n请结合用户问题与工具能力作答；若上下文无关可忽略。\n\n"
-    )
+    prefix = "【上下文】\n" + context_block + "\n\n结合用户问题作答；无关则忽略。\n\n"
 
     out: list[dict[str, Any]] = []
     merged = False

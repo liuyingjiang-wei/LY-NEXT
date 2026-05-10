@@ -66,18 +66,53 @@ agent:
     max_chars: 12000
     compress_enabled: true
     compress_target_chars: 4500
-    compress_max_tokens: 1024
+    compress_max_tokens: 768
+    compress_prompt_chars: 14000
+    compress_use_llm: true
   loop_guard:
     max_repeat_same_tool: 3
     max_consecutive_tool_failures: 4
+  tool_spill:
+    enabled: true
+    max_inline_chars: 32000
+    preview_head_chars: 2000
+    preview_tail_chars: 500
+    relative_dir: "tool_results"
+  output_token_budget:
+    enabled: true
+    max_completion_tokens_per_run: 500000
+    length_continuation_max: 2
+  context_window:
+    default_tokens: 128000
+    per_model: {}
+    prune_enabled: true
+    prune_dialog_fill_ratio: 0.82
+    reserve_completion_tokens: 2048
+    prune_min_tool_chars: 400
+    tool_placeholder: "[Earlier tool output removed to fit context window.]"
+  coordinator:
+    max_agents: 3
+    max_steps_per_delegate: 5
+    decompose_max_tokens: 768
+    decompose_retries: 1
+    parallel_delegates: true
+    max_parallel_delegates: 4
+    handoff_max_chars: 7000
+    compress_handoff: false
+    handoff_compress_max_tokens: 384
+    synthesize_max_tokens: 2048
+    synthesize_body_max_chars: 24000
   model_router:
     enabled: false
     mode: "hybrid"
+    match_scope: "last_user"
+    match_recent_chars: 8000
+    match_rules: []
     classifier:
       provider: "openai_compat"
       model: ""
       temperature: 0.1
-      max_tokens: 256
+      max_tokens: 128
     routes:
       reasoning:
         provider: "openai"

@@ -1,8 +1,11 @@
 """ReAct loops (compat JSON / native tool_calls / LangGraph legacy)."""
 
+import asyncio
 import json
 import re
+import secrets
 from collections.abc import AsyncIterator
+from functools import partial
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -13,9 +16,30 @@ from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
 from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
 from ly_next.core.config import config
+from ly_next.core.context_budget import (
+    cumulative_budget_limit,
+    effective_context_window_tokens,
+    estimate_dialog_tokens,
+    length_continuation_max,
+    parse_completion_meta,
+    prune_old_tool_message_contents,
+)
 from ly_next.core.logger import get_logger
+from ly_next.core.tool_result_spill import format_tool_result_for_llm
 
 logger = get_logger(__name__)
+
+
+def _length_continuation_user_text() -> str:
+    raw = config.get("agent.output_token_budget", {}) or {}
+    if isinstance(raw, dict):
+        p = raw.get("continuation_prompt")
+        if isinstance(p, str) and p.strip():
+            return p.strip()
+    return (
+        "Your previous reply was truncated by the model output limit. "
+        "Continue from where you stopped; produce only the remaining user-visible text."
+    )
 
 
 def _visible_tools_include_mcp(deps: AgentDeps) -> bool:
@@ -69,10 +93,14 @@ def _sanitize_dialog_messages(messages: list[dict[str, Any]]) -> list[dict[str, 
             tcid = m.get("tool_call_id")
             if not tcid:
                 continue
+            ttxt = _tool_result_as_text(m.get("content"))
+            st = str(ttxt).strip()
+            if not st or st in ("{}", "[]", "null", '""'):
+                ttxt = "(tool completed with no output)"
             item: dict[str, Any] = {
                 "role": "tool",
                 "tool_call_id": str(tcid),
-                "content": _tool_result_as_text(m.get("content")),
+                "content": ttxt,
             }
             out.append(item)
             continue
@@ -267,6 +295,7 @@ async def _iter_compat_react(
         return
 
     scratchpad = ""
+    run_tag_c = secrets.token_hex(6)
     last_sig = ""
     same_sig_count = 0
     fail_streak = 0
@@ -324,8 +353,16 @@ async def _iter_compat_react(
         result = await deps.tool_registry.call_tool(name, args)
 
         ok = not (isinstance(result, dict) and result.get("success") is False)
-        preview = _tool_result_as_text(result)
-        preview = preview if len(preview) <= 2000 else preview[:1999] + "…"
+        obs = await asyncio.to_thread(
+            partial(
+                format_tool_result_for_llm,
+                name,
+                f"compat_{iteration}_{name}",
+                result,
+                run_tag=run_tag_c,
+            )
+        )
+        preview = obs if len(obs) <= 2000 else obs[:1999] + "…"
         yield {
             "type": "tool_done",
             "tool": name,
@@ -344,7 +381,7 @@ async def _iter_compat_react(
         else:
             fail_streak = 0
 
-        scratchpad += f"\nCALL {name} args={json.dumps(args, ensure_ascii=False)}\nOBS {json.dumps(result, ensure_ascii=False)}\n"
+        scratchpad += f"\nCALL {name} args={json.dumps(args, ensure_ascii=False)}\nOBS {obs}\n"
 
         if same_sig_count >= deps.loop_max_repeat_same_tool:
             yield {"type": "final", "content": "Stopped: repeated identical tool calls."}
@@ -408,38 +445,107 @@ async def _iter_native_react(
     last_sig = ""
     same_sig_count = 0
     fail_streak = 0
+    run_tag = secrets.token_hex(6)
+    budget_used = 0
+    cap_ceiling = cumulative_budget_limit()
+    ctx_window = effective_context_window_tokens(deps.model)
 
     for iteration in range(deps.max_steps):
+        if cap_ceiling > 0 and budget_used >= cap_ceiling:
+            yield {
+                "type": "final",
+                "content": "Stopped: cumulative completion-token budget exhausted.",
+            }
+            return
+
         yield {
             "type": "status",
             "phase": "llm",
             "iteration": iteration,
             "detail": "请求模型（function calling / tool_calls）",
         }
+        dialog = prune_old_tool_message_contents(
+            dialog, model=deps.model, max_output_tokens=deps.max_tokens
+        )
+        approx_in = estimate_dialog_tokens(dialog)
+        if approx_in > ctx_window * 0.92:
+            logger.warning(
+                "[agent.native] dialog ~%s est. tokens vs window %s (tool bodies may be pruned)",
+                approx_in,
+                ctx_window,
+            )
+
         try:
-            resp = await deps.chat_with_tools(dialog, openai_tools)
+            cont_i = 0
+            max_len_cont = length_continuation_max()
+            resp: dict[str, Any]
+            raw_msg: dict[str, Any] | None = None
+            tool_calls = []
+
+            while True:
+                resp = await deps.chat_with_tools(dialog, openai_tools)
+                raw_msg, tool_calls = _parse_openai_completion(resp)
+                if raw_msg is None:
+                    keys = list(resp.keys()) if isinstance(resp, dict) else []
+                    logger.warning(
+                        "[agent.native] Unrecognized chat completion shape (top-level keys=%s); "
+                        "check gateway compatibility with OpenAI Chat Completions.",
+                        keys[:20],
+                    )
+                    raise RuntimeError("unexpected completion payload")
+
+                ct, _tt, fr = parse_completion_meta(resp)
+                if ct is not None:
+                    budget_used += ct
+                else:
+                    c0 = raw_msg.get("content")
+                    s = c0 if isinstance(c0, str) else str(c0 or "")
+                    budget_used += max(0, len(s) // 4)
+
+                if cap_ceiling > 0 and budget_used >= cap_ceiling and not tool_calls:
+                    content = raw_msg.get("content")
+                    out = (
+                        (content or "").strip()
+                        if isinstance(content, str)
+                        else str(content or "").strip()
+                    )
+                    yield {"type": "status", "phase": "answer", "detail": "输出预算已达上限"}
+                    yield {
+                        "type": "final",
+                        "content": out or "Stopped: cumulative completion-token budget exhausted.",
+                    }
+                    return
+
+                if tool_calls:
+                    break
+
+                content = raw_msg.get("content")
+                out = (
+                    (content or "").strip()
+                    if isinstance(content, str)
+                    else str(content or "").strip()
+                )
+                if fr in ("length", "max_tokens") and cont_i < max_len_cont:
+                    yield {
+                        "type": "status",
+                        "phase": "llm",
+                        "iteration": iteration,
+                        "detail": f"输出因长度截断，续写 ({cont_i + 1}/{max_len_cont})",
+                    }
+                    dialog.append(_assistant_turn_from_response(raw_msg))
+                    dialog.append({"role": "user", "content": _length_continuation_user_text()})
+                    cont_i += 1
+                    continue
+
+                yield {"type": "status", "phase": "answer", "detail": "模型返回最终回答"}
+                yield {"type": "final", "content": out or "No response."}
+                return
+
+            dialog.append(_assistant_turn_from_response(raw_msg))
+
         except Exception as e:
             logger.warning("[agent.native] chat_with_tools failed: %s", e)
             raise
-
-        raw_msg, tool_calls = _parse_openai_completion(resp)
-        if raw_msg is None:
-            keys = list(resp.keys()) if isinstance(resp, dict) else []
-            logger.warning(
-                "[agent.native] Unrecognized chat completion shape (top-level keys=%s); "
-                "check gateway compatibility with OpenAI Chat Completions.",
-                keys[:20],
-            )
-            raise RuntimeError("unexpected completion payload")
-
-        if not tool_calls:
-            content = raw_msg.get("content")
-            out = (
-                (content or "").strip() if isinstance(content, str) else str(content or "").strip()
-            )
-            yield {"type": "status", "phase": "answer", "detail": "模型返回最终回答"}
-            yield {"type": "final", "content": out or "No response."}
-            return
 
         names = [tc["name"] for tc in tool_calls]
         yield {
@@ -449,8 +555,6 @@ async def _iter_native_react(
             "detail": f"模型发起 {len(tool_calls)} 次函数调用: {', '.join(names)}",
             "tool_names": names,
         }
-
-        dialog.append(_assistant_turn_from_response(raw_msg))
 
         for idx, tc in enumerate(tool_calls):
             name = tc["name"]
@@ -481,8 +585,10 @@ async def _iter_native_react(
                     result = {"success": False, "error": str(e)}
 
             ok = not (isinstance(result, dict) and result.get("success") is False)
-            preview = _tool_result_as_text(result)
-            preview = preview if len(preview) <= 2000 else preview[:1999] + "…"
+            tool_body = await asyncio.to_thread(
+                partial(format_tool_result_for_llm, name, str(tcid), result, run_tag=run_tag)
+            )
+            preview = tool_body if len(tool_body) <= 2000 else tool_body[:1999] + "…"
             yield {
                 "type": "tool_done",
                 "tool": name,
@@ -512,7 +618,7 @@ async def _iter_native_react(
                 {
                     "role": "tool",
                     "tool_call_id": str(tcid),
-                    "content": _tool_result_as_text(result),
+                    "content": tool_body,
                 }
             )
 
@@ -683,7 +789,11 @@ async def _act_node(state: AgentState, deps: AgentDeps) -> AgentState:
             fail_streak = 0
 
         scratch = state.get("scratchpad", "")
-        scratch += f"\nCALL {name} args={json.dumps(args, ensure_ascii=False)}\nOBS {json.dumps(result, ensure_ascii=False)}\n"
+        rt = secrets.token_hex(5)
+        obs = await asyncio.to_thread(
+            partial(format_tool_result_for_llm, str(name), f"lg_{name}_{rt}", result, run_tag=rt)
+        )
+        scratch += f"\nCALL {name} args={json.dumps(args, ensure_ascii=False)}\nOBS {obs}\n"
 
         return {
             "scratchpad": scratch,

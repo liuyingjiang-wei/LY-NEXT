@@ -226,7 +226,9 @@ def create_agent_deps(
 
     resolved_provider = str(provider).strip().lower() if provider else ""
     if not resolved_provider:
-        resolved_provider = str(config.get("llm.default_provider", "openai") or "openai").strip().lower()
+        resolved_provider = (
+            str(config.get("llm.default_provider", "openai") or "openai").strip().lower()
+        )
 
     return AgentDeps(
         provider=resolved_provider,

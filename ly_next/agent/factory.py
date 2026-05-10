@@ -1,6 +1,7 @@
 from typing import Any
 
 from ly_next.agent.chat import ChatAgent
+from ly_next.agent.coordinator import CoordinatorAgent
 from ly_next.agent.deps import AgentDeps, create_agent_deps
 from ly_next.agent.plan import PlanAgent
 from ly_next.agent.prompt_augment import augment_messages_async
@@ -16,6 +17,7 @@ class AgentFactory:
         "react": ReactAgent,
         "plan": PlanAgent,
         "chat": ChatAgent,
+        "coordinator": CoordinatorAgent,
     }
 
     @classmethod

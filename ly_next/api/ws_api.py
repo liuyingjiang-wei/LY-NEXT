@@ -67,27 +67,6 @@ async def websocket_endpoint(websocket: WebSocket, group: str | None = Query(Non
         await ws_manager.disconnect(websocket)
 
 
-@router.websocket("/ws/stdin")
-@public_router.websocket("/ws/stdin")
-async def websocket_stdin(websocket: WebSocket):
-    if not await _ws_auth_ok(websocket):
-        return
-    await ws_manager.connect(websocket, group="tasks")
-    await websocket.send_json({"type": "stdin_connected", "group": "tasks"})
-
-    try:
-        while True:
-            data = await websocket.receive_json()
-            if data.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-    except WebSocketDisconnect:
-        pass
-    except Exception:
-        pass
-    finally:
-        await ws_manager.disconnect(websocket)
-
-
 @router.websocket("/ws/{channel}")
 @public_router.websocket("/ws/{channel}")
 async def websocket_channel_bridge(websocket: WebSocket, channel: str):
@@ -114,6 +93,22 @@ async def websocket_channel_bridge(websocket: WebSocket, channel: str):
 
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong", "channel": channel})
+                continue
+
+            if channel == "stdin" and msg_type == "stdin_line":
+                raw = data.get("line")
+                if raw is None:
+                    raw = data.get("text", "")
+                line = str(raw).replace("\r\n", "\n").replace("\r", "\n")
+                await emit_channel_event(
+                    "stdin",
+                    "stdin_line",
+                    {
+                        "line": line,
+                        "source": str(data.get("source") or "ws").strip() or "ws",
+                    },
+                )
+                await websocket.send_json({"type": "stdin_ack", "channel": channel, "ok": True})
                 continue
 
             if channel == "device":
@@ -223,6 +218,14 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             router_hint=data.get("router_hint"),
             enabled_override=data.get("use_model_router"),
         )
+        logger.info(
+            "[ws.chat] task=%s routed provider=%s model=%s task_kind=%s via=%s",
+            task_id,
+            routed.provider,
+            routed.model,
+            routed.task_kind.value,
+            routed.via,
+        )
         await websocket.send_json(
             {
                 "type": "chat_started",
@@ -235,7 +238,9 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                 },
             }
         )
+        logger.info("[ws.chat] task=%s sent chat_started", task_id)
         messages = await augment_messages_async(messages)
+        logger.info("[ws.chat] task=%s augment_messages done (messages=%s)", task_id, len(messages))
         deps = create_agent_deps(provider=routed.provider, model=routed.model)
         deps.temperature = data.get("temperature", 0.7)
         deps.max_tokens = data.get("max_tokens", 2048)
@@ -252,12 +257,14 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
         )
 
         agent = AgentFactory.create_agent(mode=data.get("mode", "react"), deps=deps)
+        logger.info("[ws.chat] task=%s agent created mode=%s", task_id, data.get("mode", "react"))
 
         full_response = ""
         use_stream = data.get("stream")
         if use_stream is None:
             use_stream = bool(config.get("agent.stream_output", True))
         if use_stream:
+            logger.info("[ws.chat] task=%s run_stream begin", task_id)
             async for event in agent.run_stream(messages):
                 et = event.get("type")
                 if et == "chunk":
@@ -319,6 +326,12 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             {"type": "chat_complete", "task_id": task_id, "response": full_response}
         )
     except Exception as e:
+        logger.exception("[ws.chat] task=%s failed: %s", task_id, e)
         await manager.fail(task_id, str(e))
         await broadcaster.task_failed(task_id, str(e))
-        await websocket.send_json({"type": "chat_error", "task_id": task_id, "error": str(e)})
+        try:
+            await websocket.send_json({"type": "chat_error", "task_id": task_id, "error": str(e)})
+        except Exception as send_err:
+            logger.warning(
+                "[ws.chat] task=%s could not send chat_error to client: %s", task_id, send_err
+            )

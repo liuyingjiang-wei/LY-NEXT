@@ -12,6 +12,8 @@ from ly_next.models.factory import LLMFactory
 
 logger = get_logger(__name__)
 
+_RULE_RE_CACHE: dict[tuple[str, bool], re.Pattern[str]] = {}
+
 
 class TaskKind(str, Enum):
     REASONING = "reasoning"
@@ -97,6 +99,109 @@ def _extract_last_user_payload(messages: list[dict[str, Any]]) -> tuple[str, boo
     return ("\n".join(text_parts).strip(), has_image)
 
 
+def _message_text_for_match(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for p in content:
+            if not isinstance(p, dict):
+                continue
+            if str(p.get("type", "")).lower() == "text":
+                tx = p.get("text")
+                if isinstance(tx, str) and tx.strip():
+                    parts.append(tx.strip())
+        return "\n".join(parts).strip()
+    return str(content).strip()
+
+
+def _concat_recent_for_rules(messages: list[dict[str, Any]], *, max_chars: int) -> str:
+    buf: list[str] = []
+    n = 0
+    for m in reversed(messages[-20:]):
+        role = (m.get("role") or "").strip().lower()
+        if role not in ("user", "assistant"):
+            continue
+        piece = _message_text_for_match(m.get("content"))
+        if not piece:
+            continue
+        line = f"[{role}] {piece}\n"
+        if n + len(line) > max_chars:
+            break
+        buf.append(line)
+        n += len(line)
+    return "".join(reversed(buf))
+
+
+def _compile_rule_pattern(pattern: str, ignore_case: bool) -> re.Pattern[str] | None:
+    key = (pattern, ignore_case)
+    cached = _RULE_RE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        flags = re.MULTILINE | (re.IGNORECASE if ignore_case else 0)
+        compiled = re.compile(pattern, flags)
+        _RULE_RE_CACHE[key] = compiled
+        return compiled
+    except re.error as e:
+        logger.warning("[model_router] invalid match_rules pattern %r: %s", pattern, e)
+        return None
+
+
+def match_config_rules(messages: list[dict[str, Any]]) -> TaskKind | None:
+    """Apply user-defined regex rules from ``agent.model_router.match_rules`` (ordered by priority)."""
+    mr_cfg = config.get("agent.model_router", {}) or {}
+    if not isinstance(mr_cfg, dict):
+        return None
+    raw = mr_cfg.get("match_rules")
+    if not isinstance(raw, list) or not raw:
+        return None
+
+    scope = str(mr_cfg.get("match_scope", "last_user") or "last_user").strip().lower()
+    if scope == "full_recent":
+        haystack = _concat_recent_for_rules(
+            messages, max_chars=int(mr_cfg.get("match_recent_chars", 8000) or 8000)
+        )
+    else:
+        text, _ = _extract_last_user_payload(messages)
+        haystack = text
+
+    if not (haystack or "").strip():
+        return None
+
+    entries: list[tuple[int, int, str, TaskKind, bool]] = []
+    for i, row in enumerate(raw):
+        if not isinstance(row, dict):
+            continue
+        pat = str(row.get("pattern") or "").strip()
+        if not pat:
+            continue
+        tk = _parse_task_label(str(row.get("task") or ""))
+        if tk is None:
+            logger.warning(
+                "[model_router] match_rules[%s] ignored: unknown task %r", i, row.get("task")
+            )
+            continue
+        pri = int(row.get("priority", 0) or 0)
+        ign = bool(row.get("ignore_case", True))
+        entries.append((pri, i, pat, tk, ign))
+
+    entries.sort(key=lambda x: (-x[0], x[1]))
+
+    for pri, _i, pat, tk, ign in entries:
+        rx = _compile_rule_pattern(pat, ign)
+        if rx is None:
+            continue
+        if rx.search(haystack):
+            logger.debug(
+                "[model_router] match_rules hit pattern=%r task=%s priority=%s", pat, tk.value, pri
+            )
+            return tk
+    return None
+
+
 _CODE_HINT = re.compile(
     r"(?m)(```|def\s+\w+\s*\(|class\s+\w+|import\s+\w+|printf?\(|console\.log)",
     re.IGNORECASE,
@@ -157,30 +262,26 @@ async def _llm_classify_task_kind(messages: list[dict[str, Any]]) -> TaskKind:
     fallback_model = _provider_block_default_model(prov)
     effective_model = cls_model or fallback_model
     temperature = float(cls_cfg.get("temperature", 0.1))
-    max_tokens = int(cls_cfg.get("max_tokens", 256) or 256)
+    cfg_mt = int(cls_cfg.get("max_tokens", 128) or 128)
+    max_tokens = max(32, min(cfg_mt, 256))
 
     text, has_image = _extract_last_user_payload(messages)
     if has_image:
         return TaskKind.VISION
 
-    snippet = text[:4000] if text else ""
+    snippet = (text or "")[:2000]
     prompt = (
-        "You route user requests to a task label. Reply JSON only, no markdown.\n"
-        'Schema: {"task":"reasoning|code|vision|tools|chat|general"}\n'
-        "Labels: reasoning=deep analysis; code=programming; vision=images present "
-        "(already handled—use general if unsure); tools=needs web search/tools; "
-        "chat=small talk; general=default.\n"
-        f"User message:\n{snippet}"
+        'Return JSON only: {"task":"reasoning|code|vision|tools|chat|general"}\n'
+        "reasoning=analysis; code=programming; vision=pictures; tools=web/tools; "
+        "chat=greeting/smalltalk; general=else.\n"
+        f"User:\n{snippet}"
     )
 
-    logger.info(
-        "[model_router] classifier request provider=%s effective_model=%s "
-        "(intent_field=%r fallback_%s_llm=%r)",
+    logger.debug(
+        "[model_router] classifier provider=%s model=%s max_tokens=%s",
         prov,
         effective_model or "(none)",
-        cls_model,
-        prov,
-        fallback_model,
+        max_tokens,
     )
 
     client = LLMFactory.get_client(
@@ -234,6 +335,10 @@ async def resolve_task_kind(
     text, has_image = _extract_last_user_payload(messages)
     if has_image:
         return TaskKind.VISION, "vision_guard"
+
+    ruled = match_config_rules(messages)
+    if ruled is not None:
+        return ruled, "match_rules"
 
     if mode == "heuristic":
         return heuristic_task_kind(messages), "heuristic"

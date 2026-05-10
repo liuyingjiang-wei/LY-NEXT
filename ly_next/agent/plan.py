@@ -1,6 +1,9 @@
+import asyncio
 import json
 import re
+import secrets
 from collections.abc import AsyncIterator
+from functools import partial
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -11,6 +14,7 @@ from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
 from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
 from ly_next.core.logger import get_logger
+from ly_next.core.tool_result_spill import format_tool_result_for_llm
 
 logger = get_logger(__name__)
 
@@ -127,11 +131,21 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
                     "result": result,
                 }
             )
+            rt = secrets.token_hex(5)
+            obs = await asyncio.to_thread(
+                partial(
+                    format_tool_result_for_llm,
+                    str(tool_name),
+                    f"plan_{current_step}_{rt}",
+                    result,
+                    run_tag=rt,
+                )
+            )
             return {
                 "current_step": current_step + 1,
                 "plan_results": plan_results,
                 "scratchpad": state.get("scratchpad", "")
-                + f"\n[Step {current_step + 1}] {tool_name}: {json.dumps(result, ensure_ascii=False)}",
+                + f"\n[Step {current_step + 1}] {tool_name}: {obs}",
                 "last_tool_signature": sig,
                 "repeat_tool_calls": repeat,
                 "tool_fail_streak": fail_streak,
