@@ -3,6 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ly_next import __version__
 from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -111,7 +112,7 @@ class MCPProtocol:
                 "resources": {"subscribe": True, "listChanged": True},
                 "prompts": {"listChanged": True},
             },
-            "serverInfo": {"name": "ly-next", "version": "0.1.0"},
+            "serverInfo": {"name": "ly-next", "version": __version__},
         }
 
     async def _handle_shutdown(self, params: dict) -> dict:

@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from starlette.websockets import WebSocketState
 
+from ly_next import __version__
 from ly_next.core.auth_http import extract_api_key_from_websocket
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
@@ -122,7 +123,7 @@ async def mcp_sse():
                             "resources": {"subscribe": True, "listChanged": True},
                             "prompts": {"listChanged": True},
                         },
-                        "serverInfo": {"name": "ly-next", "version": "0.1.0"},
+                        "serverInfo": {"name": "ly-next", "version": __version__},
                     },
                 }
             ),

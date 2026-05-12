@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,6 +37,7 @@ class AgentDeps:
     tool_max_tier: str = "network"
     native_tool_calls: bool = True
     tool_call_mode: str = "auto"
+    stop_event: asyncio.Event | None = None
 
     def __post_init__(self):
         if self.llm_client is None:
@@ -130,7 +132,7 @@ class AgentDeps:
 
         return str(response)
 
-    async def call_llm_stream(self, prompt: str) -> Awaitable[str]:
+    async def call_llm_stream(self, prompt: str) -> str:
         if self.llm_client is None:
             raise RuntimeError("No LLM client configured")
 
@@ -148,6 +150,8 @@ class AgentDeps:
 
         full_response = ""
         async for chunk in response:
+            if self.stop_event and self.stop_event.is_set():
+                break
             content = ""
             if isinstance(chunk, dict):
                 delta = chunk.get("choices", [{}])[0].get("delta", {})
@@ -258,4 +262,5 @@ def create_agent_deps(
         tool_max_tier=tool_max_tier,
         native_tool_calls=native_tool_calls,
         tool_call_mode=tool_call_mode,
+        stop_event=kwargs.get("stop_event"),
     )

@@ -194,9 +194,9 @@ class StartupManager:
         if not self._is_first_run:
             return
 
-        logger.info("=" * 60)
+        logger.info("─" * 44)
         logger.info("First-time setup detected")
-        logger.info("=" * 60)
+        logger.info("─" * 44)
 
         cfg_init = config.ensure_initialized()
         if cfg_init.get("created"):
@@ -245,7 +245,7 @@ class StartupManager:
 
         self._mark_initialized()
         logger.info("First-time setup complete")
-        logger.info("=" * 60)
+        logger.info("─" * 44)
 
     async def validate_environment(self) -> list[str]:
         issues = []

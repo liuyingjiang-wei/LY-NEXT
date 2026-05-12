@@ -25,9 +25,12 @@ def test_trusted_hashes_map_normalizes_keys():
 
 
 def test_load_apis_production_profile_skips_loading():
-    with patch("ly_next.api.loader.security_profile", return_value="production"), patch(
-        "ly_next.api.loader.config.get",
-        side_effect=lambda k, d=None: True if k == "api.auto_load" else d,
+    with (
+        patch("ly_next.api.loader.security_profile", return_value="production"),
+        patch(
+            "ly_next.api.loader.config.get",
+            side_effect=lambda k, d=None: True if k == "api.auto_load" else d,
+        ),
     ):
         loader = APILoader()
         reg = loader.load_apis()
@@ -35,9 +38,12 @@ def test_load_apis_production_profile_skips_loading():
 
 
 def test_load_apis_respects_auto_load_false():
-    with patch("ly_next.api.loader.security_profile", return_value="development"), patch(
-        "ly_next.api.loader.config.get",
-        side_effect=lambda k, d=None: False if k == "api.auto_load" else d,
+    with (
+        patch("ly_next.api.loader.security_profile", return_value="development"),
+        patch(
+            "ly_next.api.loader.config.get",
+            side_effect=lambda k, d=None: False if k == "api.auto_load" else d,
+        ),
     ):
         loader = APILoader()
         reg = loader.load_apis()

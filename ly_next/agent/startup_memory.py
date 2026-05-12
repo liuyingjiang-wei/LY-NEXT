@@ -10,6 +10,12 @@ logger = get_logger(__name__)
 _CACHE = {"path": "", "mtime": 0.0, "text": ""}
 
 
+def invalidate_startup_memory_cache() -> None:
+    _CACHE["path"] = ""
+    _CACHE["mtime"] = 0.0
+    _CACHE["text"] = ""
+
+
 def _memory_path() -> Path:
     raw = str(config.get("agent.memory.path", "MEMORY.md") or "MEMORY.md").strip()
     p = Path(raw)
@@ -38,9 +44,12 @@ def get_startup_memory_block() -> str:
         return ""
     if not text:
         return ""
+    max_chars = int(config.get("agent.memory.max_chars", 8000) or 8000)
+    if max_chars > 0 and len(text) > max_chars:
+        text = text[:max_chars] + "\n\n…（已按 agent.memory.max_chars 截断）"
     block = (
         "【启动记忆（长期规则）】\n"
-        "以下内容来自系统启动时加载的长期记忆，需优先遵守；若与用户当前请求冲突，以用户当前请求为准。\n\n"
+        "以下内容来自长期记忆文件，需优先遵守；若与用户当前请求冲突，以用户当前请求为准。\n\n"
         + text
     )
     _CACHE["path"] = key

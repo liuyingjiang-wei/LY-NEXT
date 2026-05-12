@@ -4,7 +4,7 @@
 
 ## 仓库级规则与记录
 
-- `rules/`：仓库级规则块（回复结构、质量门槛、安全边界）
+- `rules/`：仓库级规则块（`ly-next-project.mdc`、`response-safety.mdc`、`api-trust-and-tools.mdc`；见 `rules/README.md`）
 - `SECURITY.md`：威胁模型、动态 API 加载策略、生产检查项与漏洞报告方式
 - `MEMORY.md`：长期记忆（提炼后的要点与经验）
 - `TOOLS.md`：本机工具与常用操作（避免记录明文密钥）
@@ -30,7 +30,7 @@
 - HTTP/WS 对话入口：`ly_next/api/wei_api.py`、`ly_next/api/ws_api.py`
 - Agent 选择与 deps：`ly_next/agent/factory.py`、`ly_next/agent/deps.py`
 - OpenAI 兼容请求与流式：`ly_next/models/openai_compat.py`
-- RAG：`ly_next/rag/document_retriever.py`、`ly_next/rag/example_selector.py`
+- RAG / 知识库：`ly_next/rag/document_retriever.py`（默认 `data/ly_next/knowledge/`）、`ly_next/rag/example_selector.py`；长期记忆写入工具 `remember_fact`：`ly_next/tools/memory_note.py`
 
 ## 质量门槛（改完必须过）
 

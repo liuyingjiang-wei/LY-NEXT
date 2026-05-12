@@ -30,6 +30,10 @@ from ly_next.core.tool_result_spill import format_tool_result_for_llm
 logger = get_logger(__name__)
 
 
+def _aborted(deps: AgentDeps) -> bool:
+    return deps.stop_event is not None and deps.stop_event.is_set()
+
+
 def _length_continuation_user_text() -> str:
     raw = config.get("agent.output_token_budget", {}) or {}
     if isinstance(raw, dict):
@@ -301,6 +305,9 @@ async def _iter_compat_react(
     fail_streak = 0
 
     for iteration in range(deps.max_steps):
+        if _aborted(deps):
+            yield {"type": "final", "content": "（对话已由用户中断）"}
+            return
         yield {
             "type": "status",
             "phase": "llm",
@@ -310,6 +317,9 @@ async def _iter_compat_react(
         prompt = _build_compat_decision_prompt(
             messages=messages, tools=tools, scratchpad=scratchpad
         )
+        if _aborted(deps):
+            yield {"type": "final", "content": "（对话已由用户中断）"}
+            return
         text = (await deps.call_llm(prompt)).strip()
 
         try:
@@ -451,6 +461,9 @@ async def _iter_native_react(
     ctx_window = effective_context_window_tokens(deps.model)
 
     for iteration in range(deps.max_steps):
+        if _aborted(deps):
+            yield {"type": "final", "content": "（对话已由用户中断）"}
+            return
         if cap_ceiling > 0 and budget_used >= cap_ceiling:
             yield {
                 "type": "final",
@@ -483,6 +496,9 @@ async def _iter_native_react(
             tool_calls = []
 
             while True:
+                if _aborted(deps):
+                    yield {"type": "final", "content": "（对话已由用户中断）"}
+                    return
                 resp = await deps.chat_with_tools(dialog, openai_tools)
                 raw_msg, tool_calls = _parse_openai_completion(resp)
                 if raw_msg is None:
@@ -1022,6 +1038,9 @@ class ReactAgent:
         init = create_initial_state(messages)
 
         async for chunk in self.app.astream(init):
+            if _aborted(self.deps):
+                yield {"type": "final", "content": "（对话已由用户中断）"}
+                return
             for node_name, node_output in chunk.items():
                 yield {"type": "node", "node": node_name, "data": node_output}
 

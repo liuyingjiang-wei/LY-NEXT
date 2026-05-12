@@ -1,4 +1,4 @@
-"""Database (PostgreSQL + optional pgvector)."""
+"""PostgreSQL (sessions/tasks/messages) and pgvector-backed RAG chunks."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -33,6 +33,8 @@ from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+RAG_EMBEDDING_DIM = 1536
+
 
 class Base(DeclarativeBase):
     pass
@@ -63,7 +65,6 @@ class Message(Base, BaseModel):
     role = Column(String(50), nullable=False)
     content = Column(Text, nullable=False)
     metadata_ = Column("metadata", MutableDict.as_mutable(JSONB), default=dict)
-    embedding = Column(Vector(1536), nullable=True)
 
     __table_args__ = (
         Index("ix_messages_session_id", "session_id"),
@@ -89,13 +90,17 @@ class Task(Base, BaseModel):
     )
 
 
-class Document(Base, BaseModel):
-    __tablename__ = "documents"
-    title = Column(String(500), nullable=False)
+class RagChunk(Base, BaseModel):
+    __tablename__ = "rag_chunks"
+    source_path = Column(String(1024), nullable=False)
+    chunk_index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
-    embedding = Column(Vector(1536), nullable=False)
-    metadata_ = Column("metadata", MutableDict.as_mutable(JSONB), default=dict)
-    chunk_index = Column(Integer, default=0)
+    embedding = Column(Vector(RAG_EMBEDDING_DIM), nullable=False)
+
+    __table_args__ = (
+        Index("ix_rag_chunks_source_path", "source_path"),
+        Index("ix_rag_chunks_chunk_index", "chunk_index"),
+    )
 
 
 class Database:
@@ -164,7 +169,6 @@ class Database:
             await self.connect()
         async with self._engine.connect() as conn:
             vector_ok = True
-
             try:
                 await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 await conn.commit()
@@ -173,9 +177,9 @@ class Database:
                 with suppress(Exception):
                     await conn.rollback()
                 logger.warning(
-                    f"pgvector extension not available ({e}). "
-                    "Vector tables will be skipped. "
-                    "Fix: install pgvector on the server, then run `CREATE EXTENSION vector;`."
+                    "pgvector extension not available (%s). RAG vector persistence disabled. "
+                    "Install pgvector and run `CREATE EXTENSION vector;`.",
+                    e,
                 )
 
             async with conn.begin():
@@ -189,9 +193,9 @@ class Database:
                     with suppress(Exception):
                         await conn.execute(text(stmt))
 
+                await conn.run_sync(Message.__table__.create, checkfirst=True)
                 if vector_ok:
-                    await conn.run_sync(Message.__table__.create, checkfirst=True)
-                    await conn.run_sync(Document.__table__.create, checkfirst=True)
+                    await conn.run_sync(RagChunk.__table__.create, checkfirst=True)
 
         logger.info("Database tables ensured")
 
@@ -206,6 +210,42 @@ class Database:
             except Exception:
                 await session.rollback()
                 raise
+
+    async def replace_rag_chunks(self, rows: list[tuple[str, int, str, list[float]]]) -> None:
+        if self._engine is None:
+            await self.connect()
+        async with self.session() as s:
+            await s.execute(delete(RagChunk))
+            for source_path, chunk_index, content, emb in rows:
+                if len(emb) != RAG_EMBEDDING_DIM:
+                    raise ValueError(
+                        f"RAG embedding length {len(emb)} != expected {RAG_EMBEDDING_DIM}"
+                    )
+                s.add(
+                    RagChunk(
+                        source_path=source_path[:1024],
+                        chunk_index=chunk_index,
+                        content=content,
+                        embedding=emb,
+                    )
+                )
+
+    async def search_rag_chunks(
+        self, query_embedding: list[float], limit: int
+    ) -> list[tuple[float, str]]:
+        if len(query_embedding) != RAG_EMBEDDING_DIM:
+            return []
+        async with self.session() as s:
+            dist = func.cosine_distance(RagChunk.embedding, query_embedding)
+            result = await s.execute(select(RagChunk, dist).order_by(dist).limit(limit))
+            out: list[tuple[float, str]] = []
+            for row, d in result.all():
+                try:
+                    dv = float(d)
+                except (TypeError, ValueError):
+                    dv = 1.0
+                out.append((max(0.0, 1.0 - dv), row.content))
+            return out
 
     async def get_session(self, session_id) -> Session | None:
         async with self.session() as s:
@@ -329,19 +369,6 @@ class Database:
                 task.message = message
             await s.flush()
             return task
-
-    async def semantic_search(
-        self, query_embedding: list[float], limit: int = 5, threshold: float = 0.7
-    ) -> list[tuple[Document, float]]:
-        async with self.session() as s:
-            similarity = func.cosine_distance(Document.embedding, query_embedding)
-            result = await s.execute(
-                select(Document, similarity)
-                .where(similarity < (1 - threshold))
-                .order_by(similarity)
-                .limit(limit)
-            )
-            return [(row[0], row[1]) for row in result.all()]
 
 
 db = Database()

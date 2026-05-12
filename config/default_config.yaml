@@ -60,6 +60,13 @@ agent:
   memory:
     enabled: true
     path: "MEMORY.md"
+    max_chars: 8000
+    write:
+      enabled: true
+      min_note_chars: 2
+      max_note_chars: 2000
+      max_appends_per_minute: 24
+      dedupe: true
   tool_policy:
     max_tier: network
     # null = 不按类别白名单；非空列表则仅暴露这些 category（如 safe, general, network, mcp）
@@ -98,6 +105,11 @@ agent:
   stdin_journal:
     enabled: true
     relative_path: "logs/stdin_journal.jsonl"
+  error_recovery:
+    enabled: true
+    max_retries: 2
+    backoff_base_seconds: 0.8
+    retry_status_codes: [429, 502, 503, 504]
   coordinator:
     max_agents: 3
     max_steps_per_delegate: 5
@@ -156,8 +168,8 @@ agent:
     min_similarity: 0.15
     use_embeddings: true
   rag:
-    enabled: false
-    documents_path: ""
+    enabled: true
+    documents_path: "data/ly_next/knowledge"
     top_k: 5
     chunk_size: 900
     chunk_overlap: 120
@@ -172,11 +184,6 @@ agent:
     embedding:
       model: "text-embedding-3-small"
       config_ref: "rag_embedding_llm"
-    vector_store:
-      enabled: true
-      backend: "lancedb"
-      uri: "data/ly_next/lancedb"
-      table: "rag_chunks"
 
 tools:
   # null = 注册全部内置；[] = 不注册任何内置；列表 = 仅注册这些名字
@@ -188,6 +195,7 @@ tools:
     - "get_current_time"
     - "url_parse"
     - "http_fetch"
+    - "remember_fact"
     - "web_search"
     - "web_scrape"
   web_search:
@@ -226,6 +234,7 @@ services:
 logging:
   level: "info"
   file: "logs/app.log"
+  structured_file: true
   max_bytes: 10485760
   backup_count: 5
 

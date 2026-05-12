@@ -87,8 +87,11 @@ class TaskBroadcaster:
     async def task_failed(self, task_id: str, error: str):
         await self._broadcast("task_failed", {"task_id": task_id, "error": error})
 
-    async def task_stopped(self, task_id: str):
-        await self._broadcast("task_stopped", {"task_id": task_id})
+    async def task_stopped(self, task_id: str, result: Any = None):
+        payload: dict[str, Any] = {"task_id": task_id}
+        if result is not None:
+            payload["result"] = result
+        await self._broadcast("task_stopped", payload)
 
 
 _ws_manager: ConnectionManager | None = None

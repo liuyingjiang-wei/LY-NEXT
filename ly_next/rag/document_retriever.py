@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any
 
 from ly_next.core.config import config, get_project_root
+from ly_next.core.database import RAG_EMBEDDING_DIM, db
 from ly_next.core.logger import get_logger
 from ly_next.rag.chunking import chunk_text
 from ly_next.rag.embedding_config import resolve_embedding_http_config
@@ -21,8 +21,8 @@ class DocumentRetriever:
         self._sources: list[str] = []
         self._vectors: list[list[float]] | None = None
         self._loaded_path = ""
-        self._lancedb_sig = ""
-        self._lancedb_disabled = False
+        self._pg_store_sig = ""
+        self._pg_store_disabled = False
         self._warned_empty_path = False
         self._configured_once = False
 
@@ -33,6 +33,8 @@ class DocumentRetriever:
         self._vectors = None
         self._loaded_path = raw
         self._configured_once = True
+        self._pg_store_sig = ""
+        self._pg_store_disabled = False
         if not raw:
             if bool(config.get("agent.rag.enabled", False)) and not self._warned_empty_path:
                 self._warned_empty_path = True
@@ -220,7 +222,7 @@ class DocumentRetriever:
                 all_vec.extend(part)
             self._vectors = all_vec
 
-        self._ensure_lancedb_store()
+        await self._ensure_pgvector_store()
 
         q_vecs = await fetch_embeddings(
             [user_query],
@@ -239,9 +241,9 @@ class DocumentRetriever:
             return (self._rank_lexical(user_query), None)
         qv = q_vecs[0]
 
-        ranked_lancedb = self._query_lancedb(qv)
-        if ranked_lancedb:
-            return (ranked_lancedb, qv)
+        ranked_pg = await self._query_pgvector(qv)
+        if ranked_pg:
+            return (ranked_pg, qv)
 
         ranked: list[tuple[float, str]] = []
         for ch, vec in zip(self._chunks, self._vectors or [], strict=False):
@@ -249,109 +251,7 @@ class DocumentRetriever:
         ranked.sort(key=lambda x: x[0], reverse=True)
         return (ranked, qv)
 
-    def _vector_store_cfg(self) -> dict[str, Any]:
-        raw = config.get("agent.rag.vector_store", {}) or {}
-        return raw if isinstance(raw, dict) else {}
-
-    def _ensure_lancedb_store(self) -> None:
-        if self._lancedb_disabled:
-            return
-        vs = self._vector_store_cfg()
-        if not bool(vs.get("enabled", True)):
-            return
-        backend = str(vs.get("backend") or "lancedb").strip().lower()
-        if backend != "lancedb":
-            return
-        if not self._chunks or not self._vectors:
-            return
-
-        sig = self._build_lancedb_sig()
-        if sig == self._lancedb_sig:
-            return
-
-        try:
-            import lancedb  # type: ignore
-        except Exception as e:
-            logger.warning("[rag.docs] LanceDB unavailable, fallback to in-memory vectors: %s", e)
-            self._lancedb_disabled = True
-            return
-
-        db_uri, table_name = self._resolve_lancedb_paths(vs)
-        Path(db_uri).mkdir(parents=True, exist_ok=True)
-
-        rows = [
-            {"id": idx, "text": ch, "vector": vec}
-            for idx, (ch, vec) in enumerate(zip(self._chunks, self._vectors, strict=False))
-            if isinstance(vec, list) and vec
-        ]
-        if not rows:
-            return
-        try:
-            db = lancedb.connect(db_uri)
-            db.create_table(table_name, data=rows, mode="overwrite")
-            self._lancedb_sig = sig
-            logger.info(
-                "[rag.docs] LanceDB table refreshed: %s (rows=%s, uri=%s)",
-                table_name,
-                len(rows),
-                db_uri,
-            )
-        except Exception as e:
-            logger.warning("[rag.docs] LanceDB write failed, fallback to in-memory vectors: %s", e)
-
-    def _query_lancedb(self, query_vec: list[float]) -> list[tuple[float, str]]:
-        if not query_vec or self._lancedb_disabled:
-            return []
-        vs = self._vector_store_cfg()
-        if not bool(vs.get("enabled", True)):
-            return []
-        backend = str(vs.get("backend") or "lancedb").strip().lower()
-        if backend != "lancedb":
-            return []
-        if not self._lancedb_sig:
-            return []
-        try:
-            import lancedb  # type: ignore
-        except Exception:
-            self._lancedb_disabled = True
-            return []
-
-        db_uri, table_name = self._resolve_lancedb_paths(vs)
-        top_k = int(config.get("agent.rag.top_k", 5) or 5)
-        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 3) or 3))
-        limit = max(1, top_k * mult)
-        try:
-            db = lancedb.connect(db_uri)
-            table = db.open_table(table_name)
-            rows = table.search(query_vec).limit(limit).to_list()
-        except Exception as e:
-            logger.warning("[rag.docs] LanceDB query failed, fallback to in-memory vectors: %s", e)
-            return []
-
-        ranked: list[tuple[float, str]] = []
-        for r in rows or []:
-            text = str(r.get("text") or "")
-            if not text:
-                continue
-            try:
-                d = float(r.get("_distance", 1.0))
-            except (TypeError, ValueError):
-                d = 1.0
-            score = max(0.0, 1.0 - d)
-            ranked.append((score, text))
-        ranked.sort(key=lambda x: x[0], reverse=True)
-        return ranked
-
-    def _resolve_lancedb_paths(self, vs: dict[str, Any]) -> tuple[str, str]:
-        root = get_project_root()
-        uri_raw = str(vs.get("uri") or "data/ly_next/lancedb").strip()
-        p = Path(uri_raw)
-        if not p.is_absolute():
-            p = root / p
-        table_name = str(vs.get("table") or "rag_chunks").strip() or "rag_chunks"
-        return str(p), table_name
-
-    def _build_lancedb_sig(self) -> str:
+    def _build_chunk_store_sig(self) -> str:
         h = hashlib.sha256()
         h.update(str(len(self._chunks)).encode("utf-8"))
         if self._chunks:
@@ -362,6 +262,76 @@ class DocumentRetriever:
         if self._vectors:
             h.update(str(len(self._vectors[0])).encode("utf-8"))
         return h.hexdigest()
+
+    async def _ensure_pgvector_store(self) -> None:
+        if self._pg_store_disabled or not self._chunks or not self._vectors:
+            return
+        sig = self._build_chunk_store_sig()
+        if sig == self._pg_store_sig:
+            return
+        if db._engine is None:
+            try:
+                await db.connect()
+            except Exception as e:
+                logger.warning("[rag.docs] DB unavailable, using in-memory vectors: %s", e)
+                self._pg_store_disabled = True
+                return
+
+        bad = next(
+            (
+                i
+                for i, v in enumerate(self._vectors)
+                if not isinstance(v, list) or len(v) != RAG_EMBEDDING_DIM
+            ),
+            None,
+        )
+        if bad is not None:
+            logger.warning(
+                "[rag.docs] Embedding dim != %s (chunk index %s); using in-memory vectors.",
+                RAG_EMBEDDING_DIM,
+                bad,
+            )
+            self._pg_store_disabled = True
+            return
+
+        rows: list[tuple[str, int, str, list[float]]] = []
+        for i, (src, ch, vec) in enumerate(
+            zip(self._sources, self._chunks, self._vectors or [], strict=False)
+        ):
+            if isinstance(vec, list) and vec:
+                rows.append((src, i, ch, vec))
+
+        if not rows:
+            return
+
+        try:
+            await db.replace_rag_chunks(rows)
+            self._pg_store_sig = sig
+            logger.info("[rag.docs] pgvector store refreshed (%s rows)", len(rows))
+        except Exception as e:
+            logger.warning("[rag.docs] pgvector write failed, using in-memory vectors: %s", e)
+            self._pg_store_disabled = True
+
+    async def _query_pgvector(self, query_vec: list[float]) -> list[tuple[float, str]]:
+        if not query_vec or self._pg_store_disabled:
+            return []
+        if len(query_vec) != RAG_EMBEDDING_DIM:
+            return []
+        if not self._pg_store_sig:
+            return []
+        if db._engine is None:
+            return []
+
+        top_k = int(config.get("agent.rag.top_k", 5) or 5)
+        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 3) or 3))
+        limit = max(1, top_k * mult)
+
+        try:
+            return await db.search_rag_chunks(query_vec, limit)
+        except Exception as e:
+            logger.warning("[rag.docs] pgvector query failed, using in-memory vectors: %s", e)
+            self._pg_store_disabled = True
+            return []
 
 
 def _read_file(path: Path) -> str:

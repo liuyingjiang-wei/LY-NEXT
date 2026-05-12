@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -18,6 +19,28 @@ from ly_next.models.openai_compat_auth import (
 logger = get_logger(__name__)
 
 
+def _error_recovery_cfg() -> dict[str, Any]:
+    raw = config.get("agent.error_recovery", {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _retry_status_codes(rec: dict[str, Any]) -> set[int]:
+    raw = rec.get("retry_status_codes") or rec.get("retry_on_status") or [429, 502, 503, 504]
+    if not isinstance(raw, list):
+        return {429, 502, 503, 504}
+    out: set[int] = set()
+    for x in raw:
+        try:
+            out.add(int(x))
+        except (TypeError, ValueError):
+            continue
+    return out or {429, 502, 503, 504}
+
+
+async def _recovery_sleep(attempt: int, base_delay: float) -> None:
+    await asyncio.sleep(min(12.0, base_delay * (2**attempt)))
+
+
 def _normalize_chat_path(raw: str | None) -> str:
     p = (raw or "").strip() or "/chat/completions"
     if not p.startswith("/"):
@@ -26,7 +49,6 @@ def _normalize_chat_path(raw: str | None) -> str:
 
 
 def _collect_model_aliases(*sources: Any) -> dict[str, str]:
-    """Later sources override earlier. Values must be non-empty strings."""
     out: dict[str, str] = {}
     for src in sources:
         if not isinstance(src, dict):
@@ -83,7 +105,6 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         self._client: httpx.AsyncClient | None = None
 
     def _apply_model_aliases(self, body: dict[str, Any]) -> None:
-        """Map outbound `model` via openai_compat_llm.model_aliases (any gateway)."""
         m_raw = body.get("model")
         if not isinstance(m_raw, str):
             return
@@ -141,6 +162,39 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                 msg = f"{msg}\n{text[:4000]}"
             raise RuntimeError(msg) from None
 
+    async def _post_chat_completions_json(
+        self, client: httpx.AsyncClient, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        rec = _error_recovery_cfg()
+        enabled = bool(rec.get("enabled", False))
+        retries = max(0, int(rec.get("max_retries", 2) or 0)) if enabled else 0
+        codes = _retry_status_codes(rec) if enabled else set()
+        base_delay = max(0.05, float(rec.get("backoff_base_seconds", 0.8) or 0.8))
+
+        for attempt in range(retries + 1):
+            try:
+                response = await client.post(self._chat_path, json=body)
+                if enabled and response.status_code in codes and attempt < retries:
+                    logger.warning(
+                        "[openai_compat] HTTP %s retry %s/%s",
+                        response.status_code,
+                        attempt + 1,
+                        retries,
+                    )
+                    await _recovery_sleep(attempt, base_delay)
+                    continue
+                self._raise_with_body(response)
+                return response.json()
+            except httpx.RequestError as e:
+                if enabled and attempt < retries:
+                    logger.warning(
+                        "[openai_compat] transport retry %s/%s: %s", attempt + 1, retries, e
+                    )
+                    await _recovery_sleep(attempt, base_delay)
+                    continue
+                raise
+        raise RuntimeError("openai_compat: exhausted retries without response")
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -178,9 +232,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         if stream:
             return self._stream_chat(body)
 
-        response = await client.post(self._chat_path, json=body)
-        self._raise_with_body(response)
-        return response.json()
+        return await self._post_chat_completions_json(client, body)
 
     async def _stream_chat(self, body: dict[str, Any]):
         body["stream"] = True
@@ -231,9 +283,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         if pt is None:
             pt = cfg.get("parallelToolCalls")
         attach_tools(body, tools, tool_choice, pt if isinstance(pt, bool) else None)
-        response = await client.post(self._chat_path, json=body)
-        self._raise_with_body(response)
-        return response.json()
+        return await self._post_chat_completions_json(client, body)
 
     @property
     def provider_name(self) -> str:

@@ -16,19 +16,23 @@ from ly_next.agent.deps import create_agent_deps
 from ly_next.agent.factory import AgentFactory
 from ly_next.agent.model_router import resolve_model_routing
 from ly_next.agent.prompt_augment import augment_messages_async
+from ly_next.agent.startup_memory import invalidate_startup_memory_cache
 from ly_next.agent.vision_precaption import apply_vision_precaption_if_needed
 from ly_next.api.bridge import (
     SUPPORTED_CHANNELS,
     emit_channel_event,
-    get_device_session,
     is_supported_channel,
-    list_device_sessions,
-    update_device_session,
 )
 from ly_next.core.cache import cache
 from ly_next.core.config import config
 from ly_next.core.database import db
 from ly_next.core.logger import refresh_ly_next_log_level_from_config
+from ly_next.core.stdin_journal import (
+    extract_line_source,
+    normalize_stdin_line,
+    parse_log_line,
+    publish_stdin_line,
+)
 from ly_next.core.task_manager import get_task_manager
 from ly_next.models.factory import LLMFactory
 from ly_next.rag import reset_document_retriever, reset_example_selector
@@ -217,13 +221,6 @@ class BridgeEmitRequest(BaseModel):
     event: str = "event"
     source: str = "http"
     payload: dict[str, Any] = {}
-    device_id: str | None = None
-
-
-class DeviceSessionUpdateRequest(BaseModel):
-    status: str = "online"
-    state: dict[str, Any] = {}
-    meta: dict[str, Any] = {}
 
 
 class StdinReplayRequest(BaseModel):
@@ -436,6 +433,7 @@ async def patch_workbench_settings(body: dict[str, Any]):
     LLMFactory.clear_cache()
     reset_document_retriever()
     reset_example_selector()
+    invalidate_startup_memory_cache()
     init = config.ensure_initialized()
     full = config.to_dict()
     abs_path = Path(init["path"])
@@ -583,7 +581,6 @@ async def bridge_emit(channel: str, request: BridgeEmitRequest):
         {
             "source": request.source,
             "payload": request.payload,
-            "device_id": request.device_id,
         },
     )
     return {"success": True, "channel": channel, "receivers": receivers}
@@ -591,18 +588,28 @@ async def bridge_emit(channel: str, request: BridgeEmitRequest):
 
 @router.post("/bridge/stdin/replay")
 async def bridge_stdin_replay(request: StdinReplayRequest):
-    from ly_next.core.stdin_journal import extract_line_source, parse_log_line, publish_stdin_line
-
-    def _replay_from_rec(rec: dict[str, Any]) -> tuple[str, str]:
+    def _line_src_from_rec(rec: dict[str, Any]) -> tuple[str, str]:
         pair = extract_line_source(rec)
         if not pair:
             raise HTTPException(status_code=400, detail="record has no string line field")
         return pair
 
-    if request.record:
-        line, src = _replay_from_rec(request.record)
+    def _require_nonempty(raw: str) -> str:
+        n = normalize_stdin_line(raw)
+        if n is None:
+            raise HTTPException(status_code=400, detail="stdin line is empty")
+        return n
+
+    async def _replay(line: str, src: str, *, with_source: bool) -> dict[str, Any]:
         receivers = await publish_stdin_line(line, src, replay=True)
-        return {"success": True, "channel": "stdin", "receivers": receivers, "source": src}
+        out: dict[str, Any] = {"success": True, "channel": "stdin", "receivers": receivers}
+        if with_source:
+            out["source"] = src
+        return out
+
+    if request.record:
+        ln, src = _line_src_from_rec(request.record)
+        return await _replay(_require_nonempty(ln), src, with_source=True)
 
     jl = (request.journal_line or "").strip()
     if jl:
@@ -612,9 +619,8 @@ async def bridge_stdin_replay(request: StdinReplayRequest):
             raise HTTPException(status_code=400, detail=f"journal_line is not JSON: {e}") from e
         if not isinstance(rec, dict):
             raise HTTPException(status_code=400, detail="journal_line must be one JSON object")
-        line, src = _replay_from_rec(rec)
-        receivers = await publish_stdin_line(line, src, replay=True)
-        return {"success": True, "channel": "stdin", "receivers": receivers, "source": src}
+        ln, src = _line_src_from_rec(rec)
+        return await _replay(_require_nonempty(ln), src, with_source=True)
 
     raw_log = (request.log_line or "").strip()
     if raw_log:
@@ -624,46 +630,15 @@ async def bridge_stdin_replay(request: StdinReplayRequest):
                 status_code=400,
                 detail="log_line must contain legacy LY_NEXT_STDIN payload",
             )
-        line, src = _replay_from_rec(rec)
-        receivers = await publish_stdin_line(line, src, replay=True)
-        return {"success": True, "channel": "stdin", "receivers": receivers, "source": src}
+        ln, src = _line_src_from_rec(rec)
+        return await _replay(_require_nonempty(ln), src, with_source=True)
 
-    if request.line is not None and str(request.line).strip() != "":
-        receivers = await publish_stdin_line(
-            str(request.line).replace("\r\n", "\n").replace("\r", "\n"),
-            request.source.strip() or "http_replay",
-            replay=True,
-        )
-        return {"success": True, "channel": "stdin", "receivers": receivers}
+    if request.line is not None:
+        ln = _require_nonempty(str(request.line))
+        src = request.source.strip() or "http_replay"
+        return await _replay(ln, src, with_source=False)
 
     raise HTTPException(
         status_code=400,
         detail="Provide record, journal_line, log_line (legacy), or non-empty line",
     )
-
-
-@router.get("/bridge/device/sessions")
-async def bridge_device_sessions():
-    rows = list_device_sessions()
-    return {"sessions": rows, "count": len(rows)}
-
-
-@router.get("/bridge/device/sessions/{device_id}")
-async def bridge_device_session(device_id: str):
-    row = get_device_session(device_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Device session not found")
-    return row
-
-
-@router.post("/bridge/device/sessions/{device_id}")
-async def bridge_device_session_update(device_id: str, request: DeviceSessionUpdateRequest):
-    session = update_device_session(
-        device_id,
-        status=request.status,
-        state=request.state,
-        meta=request.meta,
-        channel="device",
-    )
-    await emit_channel_event("device", "device_status", {"session": session, "source": "http"})
-    return {"success": True, "session": session}

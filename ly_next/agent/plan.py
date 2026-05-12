@@ -304,6 +304,9 @@ class PlanAgent:
         init = create_initial_state(messages)
 
         async for chunk in self.app.astream(init):
+            if self.deps.stop_event and self.deps.stop_event.is_set():
+                yield {"type": "final", "content": "（对话已由用户中断）"}
+                return
             for node_name, node_output in chunk.items():
                 yield {"type": "node", "node": node_name, "data": node_output}
 

@@ -1,6 +1,12 @@
+import asyncio
+import copy
+import json
 import logging
+import shutil
 import sys
-from datetime import datetime
+import textwrap
+import unicodedata
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -90,7 +96,6 @@ class EnhancedLogger:
     def _format_message(self, level: str, message: str) -> str:
         style = LOG_STYLES.get(level, LOG_STYLES["info"])
         header = self._get_log_header()
-        timestamp = format_timestamp()
 
         color_map = {
             "DIM": LogColors.DIM,
@@ -105,7 +110,7 @@ class EnhancedLogger:
         symbol_color = color_map.get(style["color"], LogColors.RESET)
         symbol = f"{symbol_color}{style['symbol']}{LogColors.RESET}"
 
-        return f"{header} {LogColors.DIM}[{timestamp}]{LogColors.RESET} {symbol} {message}"
+        return f"{header} {symbol} {message}"
 
     def _log(self, level: str, message: str, *args, **kwargs):
         formatted = self._format_message(level, str(message))
@@ -264,6 +269,24 @@ class EnhancedLogger:
             self.warning(f"Timer {label} does not exist")
 
 
+class JsonLineFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        if ts.endswith("+00:00"):
+            ts = ts[:-6] + "Z"
+        payload: dict[str, Any] = {
+            "ts": ts,
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+            "file": getattr(record, "filename", "") or "",
+            "lineno": record.lineno,
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info).strip()
+        return json.dumps(payload, ensure_ascii=False)
+
+
 class ColoredFormatter(logging.Formatter):
     LEVEL_COLORS = {
         "DEBUG": LogColors.CYAN,
@@ -274,14 +297,18 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record: logging.LogRecord) -> str:
-        level_color = self.LEVEL_COLORS.get(record.levelname, LogColors.RESET)
-        record.levelname = f"{level_color}{record.levelname}{LogColors.RESET}"
-
-        return super().format(record)
+        original = record.levelname
+        color = self.LEVEL_COLORS.get(original, LogColors.RESET)
+        padded = f"{original:<8}"
+        record.levelname = f"{color}{padded}{LogColors.RESET}"
+        try:
+            return super().format(record)
+        finally:
+            record.levelname = original
 
 
 class UnifiedHeaderFormatter(logging.Formatter):
-    CONSOLE_FORMAT = "%(asctime)s │ %(levelname)-8s │ %(name)s │ %(message)s"
+    CONSOLE_FORMAT = "%(asctime)s │ %(levelname)s │ %(message)s"
     FILE_FORMAT = "%(asctime)s │ %(levelname)-8s │ %(name)s │ %(filename)s:%(lineno)d │ %(message)s"
     DATE_FORMAT = "%H:%M:%S"
     FILE_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -341,10 +368,14 @@ def setup_logging(
         log_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
     )
     file_handler.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(
-        UnifiedHeaderFormatter.FILE_FORMAT, datefmt=UnifiedHeaderFormatter.FILE_DATE_FORMAT
-    )
-    file_handler.setFormatter(file_formatter)
+    if bool(config.get("logging.structured_file", False)):
+        file_handler.setFormatter(JsonLineFormatter())
+    else:
+        file_handler.setFormatter(
+            logging.Formatter(
+                UnifiedHeaderFormatter.FILE_FORMAT, datefmt=UnifiedHeaderFormatter.FILE_DATE_FORMAT
+            )
+        )
     logger.addHandler(file_handler)
 
     _enhanced_logger = EnhancedLogger(logger, color_scheme)
@@ -375,6 +406,31 @@ def refresh_ly_next_log_level_from_config() -> None:
     _reduce_third_party_log_noise()
 
 
+def get_uvicorn_log_config() -> dict[str, Any]:
+    """Align uvicorn console lines with app logging (time │ level │ message)."""
+    import uvicorn.config as uvconf
+
+    cfg = copy.deepcopy(uvconf.LOGGING_CONFIG)
+    column_fmt = "%(asctime)s │ %(levelname)-8s │ %(message)s"
+    cfg["formatters"]["default"] = {
+        "()": "logging.Formatter",
+        "format": column_fmt,
+        "datefmt": "%H:%M:%S",
+    }
+    cfg["formatters"]["access"] = {
+        "()": "logging.Formatter",
+        "format": "%(asctime)s │ ACCESS   │ %(message)s",
+        "datefmt": "%H:%M:%S",
+    }
+    cfg["handlers"]["default"]["stream"] = "ext://sys.stdout"
+    cfg["loggers"]["uvicorn.error"] = {
+        "handlers": ["default"],
+        "level": "INFO",
+        "propagate": False,
+    }
+    return cfg
+
+
 def get_logger(name: str) -> EnhancedLogger:
     global _enhanced_logger
 
@@ -385,60 +441,196 @@ def get_logger(name: str) -> EnhancedLogger:
     return EnhancedLogger(logger)
 
 
-def print_startup_report(report: dict[str, Any]) -> None:
-    line = "=" * 65
-    print(f"\n{line}")
-    print(f"|  {report.get('title', 'LY-Next 启动完成'):<59}|")
-    print(f"{line}\n")
+def _display_width(s: str) -> int:
+    w = 0
+    for ch in s:
+        ea = unicodedata.east_asian_width(ch)
+        if ea in ("F", "W"):
+            w += 2
+        else:
+            w += 1
+    return w
 
-    def section(title: str):
-        print(f"-> {title}:")
 
-    def item(label: str, value: str):
-        print(f"   - {label}: {value}")
+def _pad_label(label: str, target_width: int) -> str:
+    pad = max(0, target_width - _display_width(label))
+    return label + (" " * pad)
 
-    section("启动统计")
-    item("总耗时", f"{report.get('startup_ms', '--')}ms")
-    item("启动时间", report.get("started_at", "--"))
 
-    section("服务器信息")
-    item("服务器地址", report.get("server_url", "--"))
-    item("API Docs", report.get("docs_url", "--"))
-    item("工作台", report.get("workbench_url", "--"))
-    item("登录页", report.get("workbench_login_url", "--"))
+def _startup_tty() -> bool:
+    return bool(getattr(sys.stdout, "isatty", lambda: False)())
 
-    ws = report.get("ws", {}) or {}
-    section("WebSocket服务")
-    item("服务地址", ws.get("url", "--"))
-    item("连接路径", ws.get("paths", "--"))
-    service_line = ws.get("service_line")
-    if service_line:
-        print(f"   - WebSocket服务: {service_line}")
 
-    perf = report.get("perf", {}) or {}
-    section("性能指标")
-    item("内存使用", perf.get("mem", "--"))
-    item("CPU核心", perf.get("cpu", "--"))
-    item("平台", perf.get("platform", "--"))
-    item("Python", perf.get("python", "--"))
+async def _animate_bar_fill(bar_w: int) -> None:
+    c = LogColors
+    if not _startup_tty():
+        print(f"  {c.CYAN}{'━' * bar_w}{c.RESET}")
+        return
+    fill = "━"
+    ghost = "╌"
+    for step in range(bar_w + 1):
+        left = f"{c.CYAN}{c.BRIGHT}{fill * step}{c.RESET}"
+        mid = f"{c.DIM}{ghost * (bar_w - step)}{c.RESET}" if step < bar_w else ""
+        sys.stdout.write(f"\r  {left}{mid} ")
+        sys.stdout.flush()
+        await asyncio.sleep(0.018)
+    sys.stdout.write(f"\r  {c.CYAN}{fill * bar_w}{c.RESET}\n")
+    sys.stdout.flush()
 
-    api = report.get("api", {}) or {}
-    section("API统计")
-    item("API模块", api.get("modules", "--"))
-    item("HTTP路由", api.get("http_routes", "--"))
-    item("WebSocket路由", api.get("ws_routes", "--"))
 
-    auth = report.get("auth", {}) or {}
-    section("认证配置")
-    item("API密钥", auth.get("api_key", "--"))
-    item("请求头", auth.get("header", "X-API-Key"))
-    wl = auth.get("whitelist", []) or []
-    item("白名单路径", str(len(wl)))
+async def _reveal_brand_title(text: str, scheme: list[str]) -> None:
+    if not _startup_tty():
+        print(f"  {create_gradient_text(text, scheme)}")
+        return
+    for i in range(1, len(text) + 1):
+        frag = create_gradient_text(text[:i], scheme)
+        pad = " " * max(0, len(text) - i)
+        sys.stdout.write(f"\r  {frag}{pad} ")
+        sys.stdout.flush()
+        await asyncio.sleep(0.055)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+async def _print_service_pulse(name: str, ok: bool, *, label_col: int) -> None:
+    c = LogColors
+    spin_a = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+    spin_b = ("◇", "◈", "◆", "◈")
+    prefix = "     "
+    tw = max(48, shutil.get_terminal_size((80, 24)).columns)
+    pad_clear = " " * min(tw, 120)
+    lab = _pad_label(name, label_col)
+    bar_w = 14
+    n_frames = 22
+    for i in range(n_frames):
+        fr = spin_a[i % len(spin_a)]
+        fr2 = spin_b[i % len(spin_b)]
+        filled = min(bar_w, int((i + 1) * bar_w / n_frames) + (1 if i % 3 == 0 else 0))
+        bar = (
+            f"{c.CYAN}{'█' * filled}{c.DIM}{'░' * (bar_w - filled)}{c.RESET}"
+        )
+        sys.stdout.write(
+            f"\r{prefix}{pad_clear}\r{prefix}{c.DIM}{lab}{c.RESET} "
+            f"{c.MAGENTA}{fr}{c.RESET}{c.DIM}{fr2}{c.RESET} {bar} "
+            f"{c.DIM}checking{c.RESET}"
+        )
+        sys.stdout.flush()
+        await asyncio.sleep(0.04)
+    tag = f"{c.GREEN}{c.BRIGHT}● READY{c.RESET}" if ok else f"{c.YELLOW}○ standby{c.RESET}"
+    sys.stdout.write(f"\r{prefix}{pad_clear}\r{prefix}{c.DIM}{lab}{c.RESET}  {tag}\n")
+    sys.stdout.flush()
+
+
+async def print_startup_report(report: dict[str, Any]) -> None:
+    c = LogColors
+    term_w = max(52, shutil.get_terminal_size((80, 24)).columns)
+    wrap_w = max(36, term_w - 6)
+
+    base_labels = (
+        "总耗时",
+        "启动时间",
+        "HTTP",
+        "OpenAPI",
+        "工作台",
+        "登录页",
+        "基址",
+        "路径摘要",
+        "通道",
+        "内存 RSS",
+        "逻辑 CPU",
+        "平台",
+        "Python",
+        "已加载 API 模块",
+        "HTTP 路由数",
+        "WS 路由数",
+        "API 密钥",
+        "请求头",
+        "白名单条数",
+    )
+    label_col = max(_display_width(x) for x in base_labels)
+    for nm in report.get("services") or {}:
+        label_col = max(label_col, _display_width(str(nm)))
+    label_col += 2
+
+    margin = 5
+    value_start = margin + label_col + 1
+    v_wrap = max(24, term_w - value_start - 1)
+
+    def kv(label: str, value: str) -> None:
+        raw = str(value) if value is not None else "—"
+        lines = textwrap.wrap(raw, width=v_wrap) or [raw]
+        lab = _pad_label(label, label_col)
+        print(f"{' ' * margin}{c.DIM}{lab}{c.RESET} {lines[0]}")
+        cont = " " * value_start
+        for extra in lines[1:]:
+            print(f"{cont}{extra}")
+
+    title = str(report.get("title", "运行快照"))
+    ms = report.get("startup_ms", "--")
+    started = report.get("started_at", "--")
+    ver = str(report.get("version", "")).strip()
+
+    scheme = COLOR_SCHEMES.get("purple", COLOR_SCHEMES["default"])
+    print()
+    await _reveal_brand_title("LY-NEXT", scheme)
+    meta_parts: list[str] = [title]
+    if ver:
+        meta_parts.append(f"v{ver}")
+    meta_parts.append(f"{ms} ms")
+    meta_parts.append(str(started))
+    meta_line = f" {c.DIM}·{c.RESET} ".join(meta_parts)
+    print(f"  {meta_line}{c.RESET}")
+    bar_w = min(term_w - 6, 76)
+    await _animate_bar_fill(bar_w)
+
+    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}启动统计{c.RESET}")
+    kv("总耗时", f"{ms} ms")
+    kv("启动时间", str(started))
+
+    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}入口与文档{c.RESET}")
+    kv("HTTP", report.get("server_url", "—"))
+    kv("OpenAPI", report.get("docs_url", "—"))
+    kv("工作台", report.get("workbench_url", "—"))
+    kv("登录页", report.get("workbench_login_url", "—"))
+
+    ws = report.get("ws") or {}
+    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}WebSocket{c.RESET}")
+    kv("基址", ws.get("url", "—"))
+    kv("路径摘要", ws.get("paths", "—"))
+    if ws.get("service_line"):
+        kv("通道", str(ws["service_line"]))
+
+    perf = report.get("perf") or {}
+    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}本进程环境{c.RESET}")
+    kv("内存 RSS", perf.get("mem", "—"))
+    kv("逻辑 CPU", perf.get("cpu", "—"))
+    kv("平台", perf.get("platform", "—"))
+    kv("Python", perf.get("python", "—"))
+
+    api = report.get("api") or {}
+    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}路由规模{c.RESET}")
+    kv("已加载 API 模块", api.get("modules", "—"))
+    kv("HTTP 路由数", api.get("http_routes", "—"))
+    kv("WS 路由数", api.get("ws_routes", "—"))
+
+    auth = report.get("auth") or {}
+    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}鉴权与白名单{c.RESET}")
+    api_key_raw = str(auth.get("api_key") or "").strip()
+    kv("API 密钥", api_key_raw if api_key_raw else "—")
+    kv("请求头", str(auth.get("header", "X-API-Key")))
+    wl = auth.get("whitelist") or []
+    kv("白名单条数", str(len(wl)))
     for p in wl:
-        print(f"      - {p}")
+        print(f"{' ' * value_start}{c.DIM}↳{c.RESET} {p}")
 
-    services = report.get("services", {}) or {}
-    section("外部服务")
-    for name, ok in services.items():
-        print(f"   - {name:<10}: {'OK' if ok else '--'}")
-    print("")
+    services = report.get("services") or {}
+    if services:
+        print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}外部依赖{c.RESET}")
+        for name, ok in services.items():
+            await _print_service_pulse(str(name), bool(ok), label_col=label_col)
+
+    tips = textwrap.wrap("按 Ctrl+C 可停止服务。", width=wrap_w)
+    print(f"\n  {c.DIM}{'─' * min(bar_w, wrap_w)}{c.RESET}")
+    for ln in tips:
+        print(f"  {c.DIM}{ln}{c.RESET}")
+    print()

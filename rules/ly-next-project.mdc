@@ -2,22 +2,58 @@
 title: ly-next project rules
 ---
 
-## 默认输出结构
+## 默认输出结构（对协作者的回复）
 
-- 先结论：一句话说明将做什么/已做什么
-- 再步骤：列出 2-5 条最关键的执行步骤
-- 再验证：给出可以观察的检查点（命令/日志/文件变更）
+- 先结论：一句话说明将做什么 / 已做什么。
+- 再步骤：2–5 条最关键操作或文件。
+- 再验证：可执行的检查点（命令、日志、或应看到的文件/行为）。
 
-## 项目内规则
+## 仓库地图（改代码前先定位）
 
-- 变更保持聚焦：不要把不相关的重构混入同一次修改。
-- 行为等价优先：重构以不改变外部行为为前提；若必须改变行为，要明确写出差异与验证方法。
-- 示例命令必须可复制：文档里的命令不要写死本机绝对路径，优先相对路径与仓库根目录可运行。
-- 可选依赖要可降级：Redis/DB/pgvector 不可用时尽量降级运行并给出明确日志。
+- **应用入口**：`ly_next/main.py`（生命周期、静态资源、鉴权中间件）。
+- **HTTP / WebSocket**：`ly_next/api/wei_api.py`、`ly_next/api/ws_api.py`。
+- **Agent**：`ly_next/agent/factory.py`、`ly_next/agent/deps.py`、`ly_next/agent/react.py`（及同目录图）。
+- **模型与流式**：`ly_next/models/openai_compat.py`。
+- **内置工具**：`ly_next/tools/`（`builtin.py` 注册表；`@tool` 见 `tools/base.py`）。
+- **RAG / 示例**：`ly_next/rag/document_retriever.py`、`ly_next/rag/example_selector.py`；知识库默认目录 `data/ly_next/knowledge/`。
+- **长期记忆文件**：`MEMORY.md`（根目录）；助手写入工具 `ly_next/tools/memory_note.py`（`remember_fact`）。
 
-## 质量门槛
+## 配置与路径
 
-- Python 代码必须通过：
-  - `uv run ruff format .`
-  - `uv run ruff check .`
+- 运行参数优先来自 **`data/ly_next/config.yaml`**，或环境变量 **`LY_NEXT_CONFIG_DIR`** 指向的目录；合并默认见 `ly_next/default_config.yaml`、`ly_next/core/config_merge.py`。
+- 项目根可用 **`LY_NEXT_PROJECT_ROOT`** 覆盖（见 `ly_next/core/config.py` 的 `get_project_root`）。
+- 新增「可调参数」优先走 YAML，避免写死本机绝对路径。
 
+## 变更纪律
+
+- 一条 PR / 一次提交聚焦一类事；不把无关格式化、重命名与功能修正混在一起。
+- 行为等价优先：重构不改变对外行为；若必须变行为，写明差异与验证步骤。
+- **可选依赖可降级**：Redis / PostgreSQL / pgvector 不可用时应有清晰日志与降级路径，避免静默失败。
+
+## 新增 HTTP 能力时
+
+- 新路由挂在既有 `APIRouter` 上，**不要**绕过 `ly_next/main.py` 里与 **`auth` 白名单** 一致的约定（见 `AGENTS.md`）。
+- 动态加载的 API 模块见 `ly_next/api/loader.py` 与 **`SECURITY.md`**；生产默认应使用 `api.security_profile: production` 或 `verified`。
+
+## 新增内置工具时
+
+- 在 `ly_next/tools/` 实现，用 **`@tool`** 装饰器；在 **`ly_next/tools/builtin.py`** 的 `BUILTIN_TOOLS_BY_NAME` 中注册；默认列表在 **`ly_next/default_config.yaml`** 的 `tools.built_in`。
+- 同时考虑 **MCP 暴露名** 与 tier（`category`：`safe` / `general` / `network` / `mcp`），与 `agent.tool_policy` 一致。
+
+## WebSocket 对话中断
+
+- 流式对话开始后，客户端可发送 `{"type":"chat_cancel","task_id":"<id>"}`（或 `type: cancel`）终止当前生成；服务端会 `task_stopped` 并推送 `chat_stopped`（含 `partial` 已生成文本）。
+- 与 `/api/tasks/{id}/stop` 共用任务停止事件。
+
+## 质量门槛（改 Python 必跑）
+
+```bash
+uv run ruff format .
+uv run ruff check .
+```
+
+有测试时：
+
+```bash
+uv run pytest -q
+```

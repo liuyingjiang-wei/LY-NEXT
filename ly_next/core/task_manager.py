@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ly_next.core.database import Task as TaskRow
 from ly_next.core.database import db
@@ -17,6 +17,8 @@ logger = get_logger(__name__)
 
 
 class TaskEntry(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     id: str
     name: str
     status: str = "pending"
@@ -27,9 +29,6 @@ class TaskEntry(BaseModel):
     message: str = ""
     result: Any | None = None
     error: str | None = None
-
-    class Config:
-        arbitrary_types_allowed = True
 
 
 def _row_to_entry(row: TaskRow) -> TaskEntry:
@@ -163,6 +162,9 @@ class TaskManager:
         task.ended_at = datetime.now()
         self._event(task_id).set()
         return True
+
+    def get_stop_event(self, task_id: str) -> asyncio.Event:
+        return self._event(str(task_id))
 
     def is_stopped(self, task_id: str) -> bool:
         ev = self._stop_flags.get(task_id) or self._mem_flags.get(task_id)

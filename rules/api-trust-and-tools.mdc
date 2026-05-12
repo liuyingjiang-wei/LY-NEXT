@@ -1,0 +1,25 @@
+---
+title: api-trust-and-tools
+---
+
+## 动态目录 API（`APILoader`）
+
+- `api.api_dir` 下的 `.py` 在**服务进程内执行**，等价本地代码执行。
+- **`api.security_profile`**：`development` 可自动加载；**`production` 从不目录加载**；**`verified`** 仅加载 `api.trusted_module_hashes` 中且 SHA-256 匹配的文件。
+- 新增或修改 `ly_next/apis/` 下模块时：若生产用 `verified`，记得更新哈希（见 `SECURITY.md` 中的 PowerShell 示例）。
+
+## 工具与出站
+
+- **`http_fetch`**：仅 `http`/`https`，有过滤的请求头策略；不要把「绕过校验」当功能加进去。
+- **`web_search` / `web_scrape`**：网络层；收紧时改 **`agent.tool_policy`** 与 **`tools.built_in`**，不要硬编码在个人分支里长期遗忘。
+- **MCP / 远端工具**：把上游当作不可信；不要在工具实现里隐式信任模型拼出的 URL 或参数而不校验。
+
+## 鉴权（与新增路由）
+
+- 鉴权集中在 **`ly_next/main.py`** 与 **`/ly/login`**；新增需登录的接口时对齐既有白名单与 Cookie 行为。
+- 生产：**`auth.allow_api_key_in_query`** 默认应为 `false`；全站 HTTPS 时 **`auth.cookie_secure: true`**。
+- **`cors.origins`**：使用 Cookie 鉴权时避免 `*`（见 `SECURITY.md` 清单）。
+
+## 计算器与代码执行
+
+- 数值计算走 **`ly_next/tools/math_safe.py`**（AST 白名单）；禁止为「方便」恢复通用 `eval` 执行任意代码。

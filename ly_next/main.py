@@ -20,6 +20,7 @@ from ly_next.core.cache import cache
 from ly_next.core.config import config, get_project_root
 from ly_next.core.database import db
 from ly_next.core.logger import (
+    get_uvicorn_log_config,
     print_startup_report,
     refresh_ly_next_log_level_from_config,
     setup_logging,
@@ -189,9 +190,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     ws_host = "localhost" if host in ("0.0.0.0", "::") else host
     report = {
-        "title": "LY-Next 启动完成",
+        "title": "运行快照",
         "startup_ms": startup_ms,
         "started_at": time.strftime("%Y/%m/%d %H:%M:%S"),
+        "version": __version__,
         "server_url": f"http://{host}:{port}",
         "docs_url": f"http://{host}:{port}/docs",
         "workbench_url": f"http://{host}:{port}/ly/",
@@ -218,7 +220,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Redis": redis_info.status == ServiceStatus.RUNNING,
         },
     }
-    print_startup_report(report)
+    await print_startup_report(report)
 
     logger.info(f"LY-Next v{__version__} started successfully")
 
@@ -416,17 +418,14 @@ Examples:
     if args.reload:
         config.set("server.reload", reload)
 
-    logger.info("=" * 50)
+    logger.info("─" * 44)
     logger.info("Starting LY-Next Server")
-    logger.info(f"Host: {host}")
-    logger.info(f"Port: {port}")
-    logger.info(f"Reload: {reload}")
-    logger.info(
-        "Uvicorn: server.log_level=%s | App: logging.level=%s",
-        log_level,
-        config.get("logging.level", "info"),
-    )
-    logger.info("=" * 50)
+    logger.info("Host: %s", host)
+    logger.info("Port: %s", port)
+    logger.info("Reload: %s", reload)
+    logger.info("Uvicorn server.log_level: %s", log_level)
+    logger.info("App logging.level: %s", config.get("logging.level", "info"))
+    logger.info("─" * 44)
 
     refresh_ly_next_log_level_from_config()
 
@@ -437,6 +436,7 @@ Examples:
         reload=reload,
         log_level=log_level,
         access_log=False,
+        log_config=get_uvicorn_log_config(),
     )
 
 

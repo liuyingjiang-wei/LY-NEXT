@@ -15,6 +15,11 @@ logger = get_logger(__name__)
 LEGACY_MARK_PREFIX = "LY_NEXT_STDIN "
 
 
+def normalize_stdin_line(line: str) -> str | None:
+    n = str(line).replace("\r\n", "\n").replace("\r", "\n")
+    return n if n.strip() else None
+
+
 def _journal_cfg() -> dict[str, Any]:
     raw = config.get("agent.stdin_journal", {}) or {}
     return raw if isinstance(raw, dict) else {}
@@ -40,7 +45,7 @@ def build_record(*, line: str, source: str, replay: bool = False) -> dict[str, A
 
 
 def parse_log_line(text: str) -> dict[str, Any] | None:
-    if not text or not isinstance(text, str):
+    if not isinstance(text, str):
         return None
     plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
     idx = plain.find(LEGACY_MARK_PREFIX)
@@ -64,7 +69,11 @@ def _append_jsonl_sync(path: Path, rec: dict[str, Any]) -> None:
 async def publish_stdin_line(line: str, source: str, *, replay: bool = False) -> int:
     from ly_next.api.bridge import emit_channel_event
 
-    rec = build_record(line=line, source=source, replay=replay)
+    norm = normalize_stdin_line(line)
+    if norm is None:
+        return 0
+
+    rec = build_record(line=norm, source=source, replay=replay)
     if bool(_journal_cfg().get("enabled", True)):
         jp = journal_path()
         try:
@@ -75,7 +84,7 @@ async def publish_stdin_line(line: str, source: str, *, replay: bool = False) ->
     return await emit_channel_event(
         "stdin",
         "stdin_line",
-        {"line": line, "source": rec["source"], "replay": replay},
+        {"line": norm, "source": rec["source"], "replay": replay},
     )
 
 
