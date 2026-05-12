@@ -18,11 +18,7 @@ docker compose up -d
 
 ## 构建并运行应用（含上述依赖）
 
-先构建工作台静态资源（否则镜像内 `/ly` 可能不完整）：
-
-```bash
-pnpm run build:workbench
-```
+构建镜像前请确认仓库根目录下 **`www/` 已存在且内容完整**（`docker/Dockerfile` 会 `COPY www`，不在镜像内做前端构建）。
 
 然后：
 

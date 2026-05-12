@@ -11,6 +11,9 @@ cors:
 api:
   auto_load: true
   api_dir: "ly_next/apis"
+  # development = 加载 api_dir 下模块；production = 永不从目录加载；verified = 仅加载 trusted_module_hashes 且哈希匹配
+  security_profile: "development"
+  trusted_module_hashes: {}
 
 llm:
   default_provider: "openai"
@@ -59,7 +62,9 @@ agent:
     path: "MEMORY.md"
   tool_policy:
     max_tier: network
-    allow_categories: []
+    # null = 不按类别白名单；非空列表则仅暴露这些 category（如 safe, general, network, mcp）
+    allow_categories: null
+    # 与 MCP 工具重名或想关掉内置项时写工具名（须与注册名一致，含 MCP 前缀时按实际名）
     deny_tools: []
     allow_tools: null
   scratchpad:
@@ -174,9 +179,14 @@ agent:
       table: "rag_chunks"
 
 tools:
+  # null = 注册全部内置；[] = 不注册任何内置；列表 = 仅注册这些名字
   built_in:
     - "calculator"
     - "format_json"
+    - "text_process"
+    - "regex_extract"
+    - "get_current_time"
+    - "url_parse"
     - "http_fetch"
     - "web_search"
     - "web_scrape"
@@ -224,6 +234,8 @@ auth:
   api_key: "${LY_NEXT_API_KEY}"
   header_name: "X-API-Key"
   cookie_name: "ly_api_key"
+  allow_api_key_in_query: false
+  cookie_secure: false
   whitelist:
     - "/docs"
     - "/openapi.json"

@@ -1,4 +1,4 @@
-# docker build -f docker/Dockerfile .   需已构建 www/（pnpm run build:workbench）
+# docker build -f docker/Dockerfile .   需已包含提交到仓库的 www/（不在此镜像内构建前端）
 
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 

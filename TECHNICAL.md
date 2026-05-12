@@ -1,9 +1,9 @@
-﻿# LY-NEXT 代码阅读路径
+# LY-NEXT 代码阅读路径
 
 ## 推荐阅读顺序
 
 1. ly_next/main.py：应用启动、路由挂载、生命周期。
-2. ly_next/api/wei_api.py、ly_next/api/ws_api.py：HTTP/WS 对话入口与设置接口。
+2. ly_next/api/wei_api.py、ly_next/api/ws_api.py：HTTP/WS 对话入口与设置接口；动态挂载的目录 API 见 ly_next/api/loader.py（`api.security_profile`、`trusted_module_hashes`），安全说明见仓库根目录 SECURITY.md。
 3. ly_next/agent/factory.py：Agent 模式选择（react/plan/chat）。
 4. ly_next/agent/react.py、ly_next/agent/plan.py、ly_next/agent/chat.py：三种执行图。
 5. ly_next/agent/deps.py：LLM 调用、工具注入、运行参数汇总。
@@ -47,7 +47,7 @@ POST /api/chat
 ## 配置与运行时关系
 
 - 主配置文件：data/ly_next/config.yaml。
-- 设置接口：GET/PATCH /api/system/settings，对应 wei_api.py 的白名单 patch 逻辑。
+- 设置接口：GET/PATCH /api/system/settings，对应 wei_api.py 的白名单 patch 逻辑；控制台 `/ly/` 拆为 **「应用配置」**（日志、鉴权相关开关、Agent 与工具策略、扩展 API、内置工具、网络搜索、`agent.rag.enabled` 等）与 **「模型配置」**（`llm`、各 provider、`model_router`、`vision_precaption`、`rag.embedding` 等），PATCH 为深度合并，两页勿重复提交互斥字段即可。
 - 关键运行参数：
   - llm.default_provider
   - openai_compat_llm.*

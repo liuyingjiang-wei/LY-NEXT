@@ -65,6 +65,8 @@ _SETTINGS_EDITABLE_ROOTS = frozenset(
         "rag_embedding_llm",
         "agent",
         "tools",
+        "api",
+        "auth",
     }
 )
 _SETTINGS_MASK = "***"

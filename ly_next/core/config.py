@@ -9,6 +9,8 @@ from urllib.parse import quote
 
 import yaml
 
+from ly_next.core.config_merge import merge_config_dicts
+
 
 def get_project_root() -> Path:
     env = os.environ.get("LY_NEXT_PROJECT_ROOT", "").strip()
@@ -73,12 +75,19 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
     return {
         "server": {"host": "127.0.0.1", "port": 8000, "reload": False, "log_level": "info"},
         "cors": {"origins": ["*"]},
-        "api": {"auto_load": True, "api_dir": "ly_next/apis"},
+        "api": {
+            "auto_load": True,
+            "api_dir": "ly_next/apis",
+            "security_profile": "development",
+            "trusted_module_hashes": {},
+        },
         "auth": {
             "enabled": True,
             "api_key": "",
             "header_name": "X-API-Key",
             "cookie_name": "ly_api_key",
+            "allow_api_key_in_query": False,
+            "cookie_secure": False,
             "whitelist": [
                 "/docs",
                 "/openapi.json",
@@ -150,6 +159,10 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "built_in": [
                 "calculator",
                 "format_json",
+                "text_process",
+                "regex_extract",
+                "get_current_time",
+                "url_parse",
                 "http_fetch",
                 "web_search",
                 "web_scrape",
@@ -273,13 +286,7 @@ class Config:
         self._cache.clear()
 
     def _merge_config(self, default: dict, user: dict) -> dict:
-        result = default.copy()
-        for key, value in user.items():
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                result[key] = self._merge_config(result[key], value)
-            else:
-                result[key] = value
-        return result
+        return merge_config_dicts(default, user)
 
     def save(self) -> None:
         self.config_file.parent.mkdir(parents=True, exist_ok=True)

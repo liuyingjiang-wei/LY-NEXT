@@ -1,4 +1,4 @@
-"""Web search and scrape tools (provider from tools.web_search in config)."""
+"""Web search/scrape; provider from config tools.web_search."""
 
 from __future__ import annotations
 

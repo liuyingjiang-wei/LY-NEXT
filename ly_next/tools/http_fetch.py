@@ -1,4 +1,4 @@
-"""Generic HTTP fetch for agents (httpx), with basic SSRF guards."""
+"""Agent HTTP fetch (httpx) with basic SSRF guards."""
 
 from __future__ import annotations
 
@@ -55,6 +55,21 @@ def _url_allowed(url: str) -> tuple[bool, str]:
     return True, ""
 
 
+_FORBIDDEN_REQUEST_HEADER_NAMES = frozenset(
+    {
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "expect",
+        "upgrade",
+        "te",
+        "proxy-authorization",
+        "proxy-connection",
+    }
+)
+
+
 def _normalize_headers(raw: Any) -> dict[str, str]:
     if not raw or not isinstance(raw, dict):
         return {}
@@ -64,6 +79,11 @@ def _normalize_headers(raw: Any) -> dict[str, str]:
             continue
         ks = k.strip()
         if not ks:
+            continue
+        lower = ks.lower()
+        if lower in _FORBIDDEN_REQUEST_HEADER_NAMES or lower.startswith(
+            ("x-forwarded-", "x-real-ip", "forwarded")
+        ):
             continue
         out[ks] = v
     return out
@@ -137,8 +157,9 @@ async def http_fetch(
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
-            max_redirects=10,
+            max_redirects=8,
             timeout=httpx.Timeout(to),
+            trust_env=False,
         ) as client:
             r = await client.request(m, url, headers=hdrs or None, content=payload)
 

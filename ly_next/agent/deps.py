@@ -196,6 +196,8 @@ def create_agent_deps(
         tool_allow_categories = None
     elif isinstance(allow_cat_raw, list):
         tool_allow_categories = [str(x).strip().lower() for x in allow_cat_raw if str(x).strip()]
+        if not tool_allow_categories:
+            tool_allow_categories = None
     else:
         tool_allow_categories = None
 

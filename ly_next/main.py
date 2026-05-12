@@ -15,6 +15,7 @@ from ly_next.api import api_router, mcp_router, ws_public_router
 from ly_next.api.bridge import SUPPORTED_CHANNELS
 from ly_next.api.loader import APILoader
 from ly_next.api.mcp_api import get_mcp_mount_prefix
+from ly_next.core.auth_http import extract_api_key_from_request
 from ly_next.core.cache import cache
 from ly_next.core.config import config, get_project_root
 from ly_next.core.database import db
@@ -32,15 +33,16 @@ from ly_next.core.service_manager import (
 from ly_next.core.startup_manager import get_startup_manager
 from ly_next.core.task_manager import get_task_manager
 from ly_next.mcp.remote_bridge import load_remote_mcp_tools
-from ly_next.tools import BUILTIN_TOOLS, get_tool_registry
+from ly_next.tools import get_tool_registry, register_builtin_tools
 
 logger = setup_logging()
 
 _LOGIN_BUILD_MISSING = (
     '<!doctype html><html lang="zh-CN"><meta charset="utf-8"/><title>登录</title>'
     '<body style="font-family:system-ui,sans-serif;padding:2rem;max-width:36rem">'
-    "<p>未找到 React 登录页。请在项目根目录执行 <code>pnpm run build:workbench</code> 生成 "
-    "<code>www/login.html</code>。</p></body></html>"
+    "<p>未找到登录页静态文件 <code>www/login.html</code>。请使用仓库中已提交的 <code>www/</code>；"
+    "若本地有 <code>.workbench-src/</code>，可在项目根目录执行 <code>pnpm install</code> 与 "
+    "<code>pnpm run build:workbench</code> 生成。</p></body></html>"
 )
 
 
@@ -139,13 +141,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.warning(f"Table creation failed: {e}")
 
     registry = get_tool_registry()
-    for tool in BUILTIN_TOOLS:
-        try:
-            registry.register(tool)
-        except Exception as e:
-            logger.warning(f"Failed to register tool {tool.name}: {e}")
-
-    logger.debug(f"Registered {len(registry)} tools")
+    n_bi = register_builtin_tools(registry)
+    logger.debug("Registered %s built-in tools (%s total in registry)", n_bi, len(registry))
 
     try:
         await load_remote_mcp_tools()
@@ -294,11 +291,13 @@ def create_app() -> FastAPI:
         key = config.get("auth.api_key", "")
         header_name = config.get("auth.header_name", "X-API-Key")
         cookie_name = config.get("auth.cookie_name", "ly_api_key")
+        allow_query = bool(config.get("auth.allow_api_key_in_query", False))
 
-        provided = (
-            request.headers.get(header_name)
-            or request.cookies.get(cookie_name)
-            or request.query_params.get("api_key")
+        provided = extract_api_key_from_request(
+            request,
+            header_name=header_name,
+            cookie_name=cookie_name,
+            allow_query=allow_query,
         )
         if key and provided == key:
             return await call_next(request)
@@ -365,7 +364,14 @@ def create_app() -> FastAPI:
                 return RedirectResponse(url="/ly/login?e=2", status_code=302)
             if key and api_key == key:
                 resp = RedirectResponse(url="/ly/", status_code=302)
-                resp.set_cookie(cookie_name, api_key, httponly=True, samesite="lax")
+                cookie_secure = bool(config.get("auth.cookie_secure", False))
+                resp.set_cookie(
+                    cookie_name,
+                    api_key,
+                    httponly=True,
+                    samesite="lax",
+                    secure=cookie_secure,
+                )
                 return resp
             return RedirectResponse(url="/ly/login?e=1", status_code=302)
 

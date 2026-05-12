@@ -1,5 +1,3 @@
-"""Filter registered tools by tier / category / allowlist for agent loops."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -69,7 +67,6 @@ def filter_tools_for_agent(
     max_tier: str,
     max_tools: int,
 ) -> tuple[list[Any], list[str]]:
-    """Return (tool objects, names) visible to the planner."""
     deny = {x.strip() for x in deny_tools if isinstance(x, str) and x.strip()}
     max_tr = max_tier_rank(max_tier)
     cats = (

@@ -17,7 +17,6 @@
 - `ly_next/tools/`：工具注册、调用与 MCP 适配
 - `ly_next/rag/`：示例检索/文档检索/embedding/相似度
 - `ly_next/core/`：配置、日志、服务管理、DB/Redis、任务等基础设施
-- `.workbench-src/`：工作台源码（Vite/React），构建输出到 `www/`
 
 ## 常用命令（优先使用）
 
@@ -35,11 +34,6 @@ uv run ruff format .
 uv run ruff check .
 uv run mypy ly_next
 
-# 工作台（可选）
-pnpm install
-pnpm run build:workbench
-pnpm run dev:workbench
-```
 
 ## 代码风格与约定
 

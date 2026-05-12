@@ -48,18 +48,23 @@ data/
 *.db
 *.sqlite
 
-# --- 前端：勿提交 React/Vite 工作台源码；仅提交构建产物 www/ ---
+# --- 前端：`.workbench-src/` 源码不入库；根目录 `package.json` + `pnpm-lock.yaml` 用于本地构建 `www/` ---
 .workbench-src/
 node_modules/
 .pnpm-store/
 .npm/
 pnpm-debug.log*
+npm-debug.log*
+.yarn-error.log*
+/package-lock.json
+/yarn.lock
 .vite/
 
 # --- 环境变量（示例文件可提交：docker/.env.example 等）---
 .env
 .env.local
 .env.*.local
+.envrc
 !.env.example
 
 # --- 其他 ---
@@ -69,5 +74,6 @@ Desktop.ini
 *.tmp
 *.bak
 *.orig
+*.rej
 vcpkg/
 .ly_next_initialized

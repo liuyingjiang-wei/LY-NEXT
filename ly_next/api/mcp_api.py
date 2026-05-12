@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from starlette.websockets import WebSocketState
 
+from ly_next.core.auth_http import extract_api_key_from_websocket
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.mcp.server import MCPError, mcp_server
@@ -33,10 +34,12 @@ async def _ws_auth_ok(websocket: WebSocket) -> bool:
         return True
     header_name = config.get("auth.header_name", "X-API-Key")
     cookie_name = config.get("auth.cookie_name", "ly_api_key")
-    provided = (
-        websocket.headers.get(header_name)
-        or websocket.cookies.get(cookie_name)
-        or websocket.query_params.get("api_key")
+    allow_query = bool(config.get("auth.allow_api_key_in_query", False))
+    provided = extract_api_key_from_websocket(
+        websocket,
+        header_name=header_name,
+        cookie_name=cookie_name,
+        allow_query=allow_query,
     )
     if provided == key:
         return True

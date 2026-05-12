@@ -129,20 +129,44 @@ class Cache:
 
         try:
             if is_windows:
-                redis_paths = [
+                redis_candidates = [
                     "redis-server",
-                    "C:\\Program Files\\Redis\\redis-server.exe",
-                    "C:\\Redis\\redis-server.exe",
+                    r"C:\Program Files\Redis\redis-server.exe",
+                    r"C:\Redis\redis-server.exe",
                 ]
-                for redis_path in redis_paths:
-                    if shutil.which(redis_path.split("\\")[-1]) or (
-                        Path(redis_path).exists() if "\\" in redis_path else False
-                    ):
-                        arch_options = await self._get_architecture_options()
-                        cmd = f'"{redis_path}" --port 6379 --save 900 1 --save 300 10 --daemonize yes{arch_options}'
-                        logger.info(f"Starting Redis: {cmd}")
-                        subprocess.Popen(cmd, shell=True)
-                        return True
+                for candidate in redis_candidates:
+                    exe: str | None = None
+                    if "\\" in candidate or "/" in candidate:
+                        p = Path(candidate)
+                        if p.is_file():
+                            exe = str(p)
+                    if exe is None:
+                        w = shutil.which(candidate)
+                        exe = w if w else None
+                    if not exe:
+                        continue
+
+                    args = [
+                        exe,
+                        "--port",
+                        "6379",
+                        "--save",
+                        "900",
+                        "1",
+                        "--save",
+                        "300",
+                        "10",
+                        "--daemonize",
+                        "yes",
+                    ]
+                    logger.info("Starting Redis: %s", " ".join(args))
+                    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                    if hasattr(subprocess, "DETACHED_PROCESS"):
+                        flags |= subprocess.DETACHED_PROCESS
+                    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                        flags |= subprocess.CREATE_NO_WINDOW
+                    subprocess.Popen(args, close_fds=False, creationflags=flags)
+                    return True
                 logger.warning("Redis not found in system. Please install Redis.")
                 return False
             else:
@@ -161,10 +185,10 @@ class Cache:
                     "300",
                     "10",
                 ]
-                arch_options = await self._get_architecture_options()
+                arch_options = (await self._get_architecture_options()).strip()
                 if arch_options:
-                    cmd.append(arch_options)
-                logger.info(f"Starting Redis: {' '.join(cmd)}")
+                    cmd.extend(arch_options.split())
+                logger.info("Starting Redis: %s", " ".join(cmd))
                 subprocess.run(cmd, check=True)
                 return True
         except Exception as e:

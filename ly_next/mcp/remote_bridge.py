@@ -1,4 +1,4 @@
-"""MCP 远端配置解析；工具加载见 langchain_adapter_bridge（langchain-mcp-adapters）。"""
+"""Remote MCP config merge; tool loading in langchain_adapter_bridge."""
 
 from __future__ import annotations
 

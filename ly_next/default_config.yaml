@@ -11,6 +11,8 @@ cors:
 api:
   auto_load: true
   api_dir: "ly_next/apis"
+  security_profile: "development"
+  trusted_module_hashes: {}
 
 llm:
   default_provider: "openai"
@@ -59,7 +61,7 @@ agent:
     path: "MEMORY.md"
   tool_policy:
     max_tier: network
-    allow_categories: []
+    allow_categories: null
     deny_tools: []
     allow_tools: null
   scratchpad:
@@ -176,6 +178,10 @@ tools:
   built_in:
     - "calculator"
     - "format_json"
+    - "text_process"
+    - "regex_extract"
+    - "get_current_time"
+    - "url_parse"
     - "http_fetch"
     - "web_search"
     - "web_scrape"
@@ -223,6 +229,8 @@ auth:
   api_key: "${LY_NEXT_API_KEY}"
   header_name: "X-API-Key"
   cookie_name: "ly_api_key"
+  allow_api_key_in_query: false
+  cookie_secure: false
   whitelist:
     - "/docs"
     - "/openapi.json"

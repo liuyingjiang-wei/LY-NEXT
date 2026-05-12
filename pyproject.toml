@@ -65,7 +65,7 @@ build-backend = "hatchling.build"
 packages = ["ly_next"]
 
 [tool.hatch.build.targets.sdist]
-include = ["ly_next", "config", "LICENSE", "README.md"]
+include = ["ly_next", "config", "LICENSE", "README.md", "SECURITY.md"]
 
 [tool.ruff]
 line-length = 100

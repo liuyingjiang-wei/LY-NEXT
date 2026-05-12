@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ly_next.api.base import APIRegistry, BaseAPI, create_api_from_dict
+from ly_next.api.loader_security import security_profile, sha256_file, trusted_hashes_map
 from ly_next.core.config import config, get_project_root
 from ly_next.core.logger import get_logger
 
@@ -107,7 +108,30 @@ class APILoader:
         modules = self._discover_modules(api_dir)
         logger.info(f"[APILoader] Found {len(modules)} potential API modules")
 
+        profile = security_profile()
+        api_root = api_dir.resolve()
+        trusted: dict[str, str] | None = None
+        if profile == "verified":
+            trusted = trusted_hashes_map()
+            if not trusted:
+                logger.warning(
+                    "[APILoader] security_profile=verified but api.trusted_module_hashes is empty; "
+                    "no directory APIs will be loaded"
+                )
+                return self.registry
+
         for module_path in modules:
+            if profile == "verified" and trusted is not None:
+                rel = module_path.resolve().relative_to(api_root).as_posix()
+                expected = trusted.get(rel)
+                if expected is None:
+                    logger.warning("[APILoader] skip module not in trusted_module_hashes: %s", rel)
+                    continue
+                actual = sha256_file(module_path).lower()
+                if actual != expected.lower():
+                    logger.error("[APILoader] skip module (hash mismatch): %s", rel)
+                    continue
+
             module = self._load_module_from_file(module_path)
             if module:
                 apis = self._extract_api_from_module(module)
@@ -120,6 +144,13 @@ class APILoader:
     def load_apis(self) -> APIRegistry:
         if not config.get("api.auto_load", True):
             logger.info("[APILoader] Auto-load disabled")
+            return self.registry
+
+        if security_profile() == "production":
+            logger.warning(
+                "[APILoader] api.security_profile=production: directory API loading is disabled "
+                "(set security_profile to development or verified, or use packaged routes only)"
+            )
             return self.registry
 
         api_dir = self._get_api_dir()

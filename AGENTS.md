@@ -5,10 +5,11 @@
 ## 仓库级规则与记录
 
 - `rules/`：仓库级规则块（回复结构、质量门槛、安全边界）
+- `SECURITY.md`：威胁模型、动态 API 加载策略、生产检查项与漏洞报告方式
 - `MEMORY.md`：长期记忆（提炼后的要点与经验）
 - `TOOLS.md`：本机工具与常用操作（避免记录明文密钥）
 - `docker/`：`docker-compose.yml`、`Dockerfile`、pgvector 叠加文件与说明（`docker/README.md`）
-- **前端源码不入库**：`.workbench-src/` 在 `.gitignore` 中；说明见根目录 [README.md](README.md)「版本控制与前端源码」。
+- **前端源码不入库**：`.workbench-src/` 在 `.gitignore` 中；静态页以 `www/` 为准，策略说明见 [README.md — 版本控制与工作台前端](README.md#版本控制与工作台前端)。
 
 ## 工作方式
 
