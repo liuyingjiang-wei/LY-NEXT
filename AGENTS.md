@@ -27,7 +27,7 @@
 
 ## 修改前的定位建议
 
-- HTTP/WS 对话入口：`ly_next/api/wei_api.py`、`ly_next/api/ws_api.py`
+- HTTP/WS 对话入口：`ly_next/api/ly_api.py`、`ly_next/api/ws_api.py`；Agent 提示词见 `ly_next/agent/prompt_templates.py`：`data/ly_next/prompts/` 优先于包内 `prompt_builtin/*.md`；`agent.prompts.enabled: false` 时仅读 data 目录、不用包内 md。
 - Agent 选择与 deps：`ly_next/agent/factory.py`、`ly_next/agent/deps.py`
 - OpenAI 兼容请求与流式：`ly_next/models/openai_compat.py`
 - RAG / 知识库：`ly_next/rag/document_retriever.py`（默认 `data/ly_next/knowledge/`）、`ly_next/rag/example_selector.py`；长期记忆写入工具 `remember_fact`：`ly_next/tools/memory_note.py`

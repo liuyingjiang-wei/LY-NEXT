@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 import re
+import time
 from typing import Any
 
 from ly_next.core.config import config
@@ -104,11 +106,61 @@ def _resolve_precaption_model() -> tuple[str, str]:
     return prov, model
 
 
+def _failure_strategy(raw: dict[str, Any]) -> str:
+    s = str(raw.get("on_failure") or "keep_original").strip().lower()
+    if s in ("annotate", "text_only", "keep_original"):
+        return s
+    return "keep_original"
+
+
+def _failure_note_text(raw: dict[str, Any]) -> str:
+    default = "（图像预识别暂不可用，请仅根据用户文字与常识作答；用户曾附带图片。）"
+    fn = raw.get("failure_note")
+    if isinstance(fn, str) and fn.strip():
+        return fn.strip()
+    return default
+
+
+def _apply_precaption_failure(
+    messages: list[dict[str, Any]],
+    idx: int,
+    user_text: str,
+    *,
+    raw: dict[str, Any],
+    prefix: str,
+    max_merged_chars: int,
+    exc: BaseException,
+) -> list[dict[str, Any]]:
+    strategy = _failure_strategy(raw)
+    logger.info(
+        "[vision_precaption] degraded strategy=%s idx=%s err_type=%s err=%s",
+        strategy,
+        idx,
+        type(exc).__name__,
+        exc,
+    )
+    if strategy == "keep_original":
+        return messages
+    out = copy.deepcopy(messages)
+    if strategy == "text_only":
+        merged = _sanitize_merged_text(user_text, max_merged_chars)
+    else:
+        note = _failure_note_text(raw)
+        merged = _sanitize_merged_text(
+            "\n\n".join(x for x in (user_text, f"{prefix}{note}") if x).strip(),
+            max_merged_chars,
+        )
+    out[idx] = {**out[idx], "content": merged}
+    return out
+
+
 async def apply_vision_precaption_if_needed(
     messages: list[dict[str, Any]],
+    *,
+    skip_precaption: bool = False,
 ) -> list[dict[str, Any]]:
     raw = config.get("agent.vision_precaption", {}) or {}
-    if not isinstance(raw, dict) or not raw.get("enabled"):
+    if skip_precaption or not isinstance(raw, dict) or not raw.get("enabled"):
         return messages
     if not messages:
         return messages
@@ -156,33 +208,72 @@ async def apply_vision_precaption_if_needed(
     max_caption_chars = int(raw.get("max_caption_chars", 16000) or 16000)
     max_merged_chars = int(raw.get("max_merged_chars", 48000) or 48000)
 
+    client_kw: dict[str, Any] = {"provider": provider, "model": model}
+    to_raw = raw.get("timeout")
+    if to_raw is not None:
+        with contextlib.suppress(TypeError, ValueError):
+            client_kw["timeout"] = int(to_raw)
+
     try:
-        client = LLMFactory.get_client(
-            "vision_precaption",
-            provider=provider,
-            model=model,
-        )
+        client = LLMFactory.get_client("vision_precaption", **client_kw)
         vision_messages = [
             {
                 "role": "user",
                 "content": [{"type": "text", "text": instruction}, *image_parts],
             }
         ]
+        t0 = time.perf_counter()
         resp = await client.chat(
             messages=vision_messages,
             temperature=temperature,
             max_tokens=max_tokens,
             stream=False,
         )
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
         caption_raw = _extract_assistant_text(resp)
         caption = _sanitize_merged_text(caption_raw, max_caption_chars)
+        logger.info(
+            "[vision_precaption] ok provider=%s model=%s elapsed_ms=%.0f caption_chars=%s",
+            provider,
+            model,
+            elapsed_ms,
+            len(caption),
+        )
     except Exception as e:
-        logger.warning("[vision_precaption] call failed: %s", e)
-        return messages
+        logger.warning(
+            "[vision_precaption] call failed provider=%s model=%s timeout_cfg=%s images=%s: %s",
+            provider,
+            model,
+            client_kw.get("timeout", "(default)"),
+            len(image_parts),
+            e,
+            exc_info=True,
+        )
+        return _apply_precaption_failure(
+            messages,
+            idx,
+            user_text,
+            raw=raw,
+            prefix=prefix,
+            max_merged_chars=max_merged_chars,
+            exc=e,
+        )
 
     if not caption:
-        logger.warning("[vision_precaption] empty caption; leaving original message")
-        return messages
+        logger.warning(
+            "[vision_precaption] empty caption provider=%s model=%s; applying on_failure policy",
+            provider,
+            model,
+        )
+        return _apply_precaption_failure(
+            messages,
+            idx,
+            user_text,
+            raw=raw,
+            prefix=prefix,
+            max_merged_chars=max_merged_chars,
+            exc=RuntimeError("empty_caption"),
+        )
 
     merged = _sanitize_merged_text(
         "\n\n".join(x for x in (user_text, f"{prefix}{caption}") if x).strip(),
@@ -190,5 +281,5 @@ async def apply_vision_precaption_if_needed(
     )
     out = copy.deepcopy(messages)
     out[idx] = {**copy.deepcopy(msg), "content": merged}
-    logger.debug("[vision_precaption] user message %s -> text-only (%s chars)", idx, len(merged))
+    logger.debug("[vision_precaption] user message %s merged (%s chars)", idx, len(merged))
     return out

@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import secrets
+import time
 from collections.abc import AsyncIterator
 from functools import partial
 from typing import Any
@@ -12,6 +13,12 @@ from langgraph.graph import END, StateGraph
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
 from ly_next.agent.prompt_augment import last_user_query
+from ly_next.agent.prompt_templates import (
+    build_compat_decision_prompt,
+    build_plan_decision_prompt,
+    format_tool_manifest_block,
+    get_native_system_prefix,
+)
 from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
 from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
@@ -25,6 +32,7 @@ from ly_next.core.context_budget import (
     prune_old_tool_message_contents,
 )
 from ly_next.core.logger import get_logger
+from ly_next.core.run_telemetry import record_tool_timing
 from ly_next.core.tool_result_spill import format_tool_result_for_llm
 
 logger = get_logger(__name__)
@@ -69,13 +77,6 @@ def _auto_use_compat_first_for_mcp(deps: AgentDeps) -> bool:
     if not config.get("agent.prefer_compat_when_mcp_tools", True):
         return False
     return _visible_tools_include_mcp(deps)
-
-
-_NATIVE_AGENT_INSTRUCTION = (
-    "You are a helpful assistant with access to function tools registered by the host system. "
-    "When a tool can retrieve facts or perform actions needed to answer the user, call it. "
-    "After receiving tool results, reason briefly if needed and respond in clear natural language."
-)
 
 
 def _tool_result_as_text(result: Any) -> str:
@@ -123,7 +124,7 @@ def _sanitize_dialog_messages(messages: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def _merge_system_instruction(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    prefix = _NATIVE_AGENT_INSTRUCTION + "\n\n"
+    prefix = get_native_system_prefix() + "\n\n"
     out: list[dict[str, Any]] = []
     merged = False
     for m in messages:
@@ -189,13 +190,9 @@ def _parse_openai_completion(
 
 
 def _inject_tool_manifest(dialog: list[dict[str, Any]], tool_names: list[str]) -> None:
-    # Gateways may omit tools; mirror names in system text.
     if not tool_names:
         return
-    block = (
-        "\n\n【宿主已注册的工具】以下名称可通过标准 function calling（tool_calls）调用；"
-        "回答用户「有哪些工具」时请罗列这些名称，不要说系统未提供工具。\n" + ", ".join(tool_names)
-    )
+    block = format_tool_manifest_block(list(tool_names))
     for i, m in enumerate(dialog):
         if (m.get("role") or "").strip().lower() != "system":
             continue
@@ -242,34 +239,11 @@ def _build_compat_decision_prompt(
     tools: list[dict[str, Any]],
     scratchpad: str,
 ) -> str:
-    tools_desc = (
-        "\n".join([f"- {t['name']}: {t['description']}" for t in tools]) if tools else "(no tools)"
+    return build_compat_decision_prompt(
+        dialog=_extract_text(messages),
+        tools=tools,
+        scratchpad=scratchpad,
     )
-    tool_names = ", ".join([t["name"] for t in tools]) if tools else ""
-    dialog = _extract_text(messages)
-    return f"""You are a tool-using agent. The host system will execute tools for you.
-
-Available tools:
-{tools_desc}
-
-You MUST output only JSON, no extra text.
-
-When you need to call a tool:
-{{"type":"tool","name":"<tool_name>","args":{{...}}}}
-
-When you can answer directly:
-{{"type":"final","final":"..."}}
-
-Constraints:
-- Only choose from these tools: {tool_names}
-- args must be a JSON object
-
-Conversation:
-{dialog}
-
-Known process (scratchpad):
-{scratchpad}
-"""
 
 
 async def _iter_compat_react(
@@ -360,9 +334,10 @@ async def _iter_compat_react(
             "args_preview": _preview_json(args, limit=1200),
         }
 
+        t_tool = time.perf_counter()
         result = await deps.tool_registry.call_tool(name, args)
-
         ok = not (isinstance(result, dict) and result.get("success") is False)
+        record_tool_timing(name, (time.perf_counter() - t_tool) * 1000.0, ok)
         obs = await asyncio.to_thread(
             partial(
                 format_tool_result_for_llm,
@@ -447,7 +422,7 @@ async def _iter_native_react(
                 f"{(m.get('role') or 'user')}: {m.get('content', '')}" for m in (messages or [])
             ).strip()
         text = await deps.call_llm(
-            f"{_NATIVE_AGENT_INSTRUCTION}\n\nUser request:\n{q}\n\nAnswer without tools."
+            f"{get_native_system_prefix()}\n\nUser request:\n{q}\n\nAnswer without tools."
         )
         yield {"type": "final", "content": text.strip()}
         return
@@ -591,6 +566,7 @@ async def _iter_native_react(
                 "args_preview": _preview_json(args, limit=1200),
             }
 
+            t_tool = time.perf_counter()
             if allowed_set and name not in allowed_set:
                 result = {"success": False, "error": f"Tool not allowed: {name}"}
             else:
@@ -601,6 +577,7 @@ async def _iter_native_react(
                     result = {"success": False, "error": str(e)}
 
             ok = not (isinstance(result, dict) and result.get("success") is False)
+            record_tool_timing(name, (time.perf_counter() - t_tool) * 1000.0, ok)
             tool_body = await asyncio.to_thread(
                 partial(format_tool_result_for_llm, name, str(tcid), result, run_tag=run_tag)
             )
@@ -675,34 +652,7 @@ def _compact_tools(raw_tools: list[dict]) -> list[dict]:
 
 
 def _build_decision_prompt(question: str, tools: list[dict], scratchpad: str) -> str:
-    tools_desc = (
-        "\n".join([f"- {t['name']}: {t['description']}" for t in tools]) if tools else "(no tools)"
-    )
-    tool_names = ", ".join([t["name"] for t in tools]) if tools else ""
-
-    return f"""You are a tool orchestration AI. Your goal is to solve the problem in minimum steps.
-
-Available tools:
-{tools_desc}
-
-Output only JSON (no extra text).
-
-When you need to call a tool:
-{{"type":"tool","name":"<tool_name>","args":{{...}}}}
-
-When you can answer directly:
-{{"type":"final","final":"..."}}
-
-Constraints:
-- Only choose from these tools: {tool_names}
-- args must be JSON object
-- If a tool returns success=false, try a different approach
-
-Question:
-{question}
-
-Known process (for reference, don't repeat):
-{scratchpad}"""
+    return build_plan_decision_prompt(question=question, tools=tools, scratchpad=scratchpad)
 
 
 def _extract_json_obj(text: str) -> dict[str, Any]:

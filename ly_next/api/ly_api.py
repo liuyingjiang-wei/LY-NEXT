@@ -1,3 +1,5 @@
+"""HTTP API: health, settings, chat, tools, bridge, tasks."""
+
 import copy
 import json
 import os
@@ -26,7 +28,14 @@ from ly_next.api.bridge import (
 from ly_next.core.cache import cache
 from ly_next.core.config import config
 from ly_next.core.database import db
-from ly_next.core.logger import refresh_ly_next_log_level_from_config
+from ly_next.core.logger import get_logger, refresh_ly_next_log_level_from_config
+from ly_next.core.run_telemetry import (
+    begin_run,
+    end_run,
+    get_public_snapshot,
+    usage_counter_value,
+    ws_run_summary_enabled,
+)
 from ly_next.core.stdin_journal import (
     extract_line_source,
     normalize_stdin_line,
@@ -39,6 +48,17 @@ from ly_next.rag import reset_document_retriever, reset_example_selector
 from ly_next.tools import get_tool_registry
 
 router = APIRouter()
+logger = get_logger(__name__)
+
+
+def _chat_usage_from_snapshot(snap: dict[str, Any] | None) -> dict[str, Any]:
+    s = snap or {}
+    return {
+        "prompt_tokens": usage_counter_value(s.get("prompt_tokens")),
+        "completion_tokens": usage_counter_value(s.get("completion_tokens")),
+        "total_tokens": usage_counter_value(s.get("total_tokens")),
+        "llm_calls": usage_counter_value(s.get("llm_calls")),
+    }
 
 
 def _tool_catalog() -> list[dict[str, Any]]:
@@ -210,6 +230,7 @@ class ChatRequest(BaseModel):
     max_tokens: int = 2048
     router_hint: str | None = None
     use_model_router: bool | None = None
+    vision_precaption: bool | None = None
 
 
 class TaskCreateRequest(BaseModel):
@@ -531,8 +552,12 @@ async def chat(request: ChatRequest):
     task_id = await manager.create_task(name="Chat Request")
     await manager.update(task_id, status="running")
 
+    telemetry_token = begin_run(task_id)
     try:
-        messages = await apply_vision_precaption_if_needed(list(request.messages))
+        messages = await apply_vision_precaption_if_needed(
+            list(request.messages),
+            skip_precaption=request.vision_precaption is False,
+        )
         routed = await resolve_model_routing(
             messages,
             request_provider=request.provider,
@@ -550,10 +575,13 @@ async def chat(request: ChatRequest):
         result = await agent.run(messages)
 
         await manager.complete(task_id, result=result)
-        return {
+        snap = get_public_snapshot()
+        if snap:
+            logger.info("[api.chat] task=%s run_summary=%s", task_id, snap)
+        out: dict[str, Any] = {
             "task_id": task_id,
             "response": result,
-            "usage": {"total_tokens": 0},
+            "usage": _chat_usage_from_snapshot(snap),
             "router": {
                 "task_kind": routed.task_kind.value,
                 "via": routed.via,
@@ -561,9 +589,14 @@ async def chat(request: ChatRequest):
                 "model": routed.model,
             },
         }
+        if ws_run_summary_enabled() and snap:
+            out["run_summary"] = snap
+        return out
     except Exception as e:
         await manager.fail(task_id, str(e))
         raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        end_run(telemetry_token)
 
 
 @router.get("/bridge/channels")

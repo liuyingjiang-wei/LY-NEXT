@@ -19,6 +19,12 @@ from ly_next.api.websocket import get_task_broadcaster, get_ws_manager
 from ly_next.core.auth_http import extract_api_key_from_websocket
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
+from ly_next.core.run_telemetry import (
+    begin_run,
+    end_run,
+    get_public_snapshot,
+    ws_run_summary_enabled,
+)
 from ly_next.core.stdin_journal import normalize_stdin_line, publish_stdin_line
 from ly_next.core.task_manager import get_task_manager
 from ly_next.tools import get_tool_registry
@@ -28,6 +34,22 @@ public_router = APIRouter(tags=["websocket"])
 
 ws_manager = get_ws_manager()
 logger = get_logger(__name__)
+
+
+def _ws_run_summary_fields() -> dict[str, Any]:
+    if not ws_run_summary_enabled():
+        return {}
+    snap = get_public_snapshot()
+    return {"run_summary": snap} if snap else {}
+
+
+def _ws_chat_stopped_payload(task_id: str, partial: str) -> dict[str, Any]:
+    return {
+        "type": "chat_stopped",
+        "task_id": task_id,
+        "partial": partial,
+        **_ws_run_summary_fields(),
+    }
 
 
 async def _ws_auth_ok(websocket: WebSocket) -> bool:
@@ -220,6 +242,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
     broadcaster = get_task_broadcaster()
     await broadcaster.task_started(task_id, "WebSocket Chat")
 
+    telemetry_token = begin_run(task_id)
     try:
         logger.debug(
             "[ws.chat] task=%s mode=%s stream=%s provider=%s model=%s",
@@ -229,7 +252,10 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             data.get("provider"),
             data.get("model"),
         )
-        messages = await apply_vision_precaption_if_needed(list(messages))
+        messages = await apply_vision_precaption_if_needed(
+            list(messages),
+            skip_precaption=data.get("vision_precaption") is False,
+        )
         routed = await resolve_model_routing(
             messages,
             request_provider=data.get("provider"),
@@ -255,11 +281,14 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                     "provider": routed.provider,
                     "model": routed.model,
                 },
+                "observability": {"ws_run_summary": ws_run_summary_enabled()},
             }
         )
         logger.debug("[ws.chat] task=%s sent chat_started", task_id)
         messages = await augment_messages_async(messages)
-        logger.debug("[ws.chat] task=%s augment_messages done (messages=%s)", task_id, len(messages))
+        logger.debug(
+            "[ws.chat] task=%s augment_messages done (messages=%s)", task_id, len(messages)
+        )
         deps = create_agent_deps(
             provider=routed.provider,
             model=routed.model,
@@ -288,8 +317,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             use_stream = bool(config.get("agent.stream_output", True))
         if use_stream:
             logger.debug("[ws.chat] task=%s run_stream begin", task_id)
-            # Unbounded queue: a bounded queue can deadlock if send_json blocks while the pump
-            # waits for free slots (agent cannot yield further until puts succeed).
+            # Unbounded queue avoids pump deadlock if send_json blocks on a bounded queue.
             q: asyncio.Queue = asyncio.Queue()
             pump_task = asyncio.create_task(_pump_chat_stream(agent, messages, q))
             cancel_task = asyncio.create_task(
@@ -367,13 +395,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             if end_reason == "cancelled" or manager.is_stopped(task_id):
                 await manager.update(task_id, status="stopped", result=full_response)
                 await broadcaster.task_stopped(task_id, full_response)
-                await websocket.send_json(
-                    {
-                        "type": "chat_stopped",
-                        "task_id": task_id,
-                        "partial": full_response,
-                    }
-                )
+                await websocket.send_json(_ws_chat_stopped_payload(task_id, full_response))
                 return
         else:
             run_task = asyncio.create_task(agent.run(messages))
@@ -395,16 +417,12 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                         fr = ""
                 await manager.update(task_id, status="stopped", result=fr)
                 await broadcaster.task_stopped(task_id, fr)
-                await websocket.send_json(
-                    {"type": "chat_stopped", "task_id": task_id, "partial": fr}
-                )
+                await websocket.send_json(_ws_chat_stopped_payload(task_id, fr))
                 return
             if run_task.cancelled():
                 await manager.update(task_id, status="stopped", result="")
                 await broadcaster.task_stopped(task_id, "")
-                await websocket.send_json(
-                    {"type": "chat_stopped", "task_id": task_id, "partial": ""}
-                )
+                await websocket.send_json(_ws_chat_stopped_payload(task_id, ""))
                 return
             try:
                 full_response = run_task.result() or ""
@@ -413,16 +431,36 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
 
         await manager.complete(task_id, result=full_response)
         await broadcaster.task_completed(task_id, full_response)
+        extra_summary: dict[str, Any] = {}
+        if ws_run_summary_enabled():
+            snap_final = get_public_snapshot()
+            if snap_final:
+                logger.info("[ws.chat] task=%s run_summary=%s", task_id, snap_final)
+                extra_summary["run_summary"] = snap_final
         await websocket.send_json(
-            {"type": "chat_complete", "task_id": task_id, "response": full_response}
+            {
+                "type": "chat_complete",
+                "task_id": task_id,
+                "response": full_response,
+                **extra_summary,
+            }
         )
     except Exception as e:
         logger.exception("[ws.chat] task=%s failed: %s", task_id, e)
         await manager.fail(task_id, str(e))
         await broadcaster.task_failed(task_id, str(e))
         try:
-            await websocket.send_json({"type": "chat_error", "task_id": task_id, "error": str(e)})
+            await websocket.send_json(
+                {
+                    "type": "chat_error",
+                    "task_id": task_id,
+                    "error": str(e),
+                    **_ws_run_summary_fields(),
+                }
+            )
         except Exception as send_err:
             logger.warning(
                 "[ws.chat] task=%s could not send chat_error to client: %s", task_id, send_err
             )
+    finally:
+        end_run(telemetry_token)

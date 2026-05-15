@@ -2,7 +2,7 @@ server:
   host: "127.0.0.1"
   port: 8000
   reload: false
-  log_level: "debug"
+  log_level: "info"
 
 cors:
   origins:
@@ -110,6 +110,13 @@ agent:
     max_retries: 2
     backoff_base_seconds: 0.8
     retry_status_codes: [429, 502, 503, 504]
+  prompts:
+    enabled: true
+    prompts_dir: "prompts"
+    native_system_file: "native_system.md"
+    compat_react_preamble_file: "compat_react_preamble.md"
+    plan_decision_preamble_file: "plan_decision_preamble.md"
+    tool_manifest_file: "tool_manifest_suffix.md"
   coordinator:
     max_agents: 3
     max_steps_per_delegate: 5

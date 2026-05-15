@@ -132,6 +132,11 @@ class EnhancedLogger:
     def error(self, message: str, *args, **kwargs):
         self._log("error", message, *args, **kwargs)
 
+    def exception(self, message: str, *args, **kwargs):
+        exc_info = kwargs.pop("exc_info", True)
+        formatted = self._format_message("error", str(message))
+        self._logger.error(formatted, *args, exc_info=exc_info, **kwargs)
+
     def critical(self, message: str, *args, **kwargs):
         self._log("critical", message, *args, **kwargs)
 
@@ -506,9 +511,7 @@ async def _print_service_pulse(name: str, ok: bool, *, label_col: int) -> None:
         fr = spin_a[i % len(spin_a)]
         fr2 = spin_b[i % len(spin_b)]
         filled = min(bar_w, int((i + 1) * bar_w / n_frames) + (1 if i % 3 == 0 else 0))
-        bar = (
-            f"{c.CYAN}{'█' * filled}{c.DIM}{'░' * (bar_w - filled)}{c.RESET}"
-        )
+        bar = f"{c.CYAN}{'█' * filled}{c.DIM}{'░' * (bar_w - filled)}{c.RESET}"
         sys.stdout.write(
             f"\r{prefix}{pad_clear}\r{prefix}{c.DIM}{lab}{c.RESET} "
             f"{c.MAGENTA}{fr}{c.RESET}{c.DIM}{fr2}{c.RESET} {bar} "

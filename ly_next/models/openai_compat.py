@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -8,6 +10,7 @@ import httpx
 from ly_next.core.config import config
 from ly_next.core.http_url import ensure_http_base
 from ly_next.core.logger import get_logger
+from ly_next.core.run_telemetry import record_llm_usage_from_chat_response
 from ly_next.models.base_llm import BaseLLMClient
 from ly_next.models.openai_chat_body import attach_tools, build_openai_chat_completions_body
 from ly_next.models.openai_compat_auth import (
@@ -63,6 +66,74 @@ def _collect_model_aliases(*sources: Any) -> dict[str, str]:
             if ks and vs:
                 out[ks] = vs
     return out
+
+
+@dataclass(frozen=True, slots=True)
+class _CompatPostLog:
+    path: str
+    model: str
+    base_url: str
+    timeout_sec: float
+
+    def retry_http_status(self, status: int, attempt_idx: int, retry_cap: int) -> None:
+        logger.warning(
+            "[openai_compat] HTTP %s retry %s/%s path=%s model=%s base_url=%s",
+            status,
+            attempt_idx + 1,
+            retry_cap,
+            self.path,
+            self.model,
+            self.base_url,
+        )
+
+    def retry_timeout(self, attempt_idx: int, retry_cap: int, exc: BaseException) -> None:
+        logger.warning(
+            "[openai_compat] timeout retry %s/%s path=%s model=%s read_timeout_sec=%s error=%s: %s",
+            attempt_idx + 1,
+            retry_cap,
+            self.path,
+            self.model,
+            self.timeout_sec,
+            type(exc).__name__,
+            exc,
+        )
+
+    def final_timeout(self, attempt_idx: int, exc: BaseException) -> None:
+        logger.error(
+            "[openai_compat] timeout exhausted path=%s model=%s base_url=%s "
+            "read_timeout_sec=%s attempts=%s error=%s: %s",
+            self.path,
+            self.model,
+            self.base_url,
+            self.timeout_sec,
+            attempt_idx + 1,
+            type(exc).__name__,
+            exc,
+        )
+
+    def retry_transport(self, attempt_idx: int, retry_cap: int, exc: BaseException) -> None:
+        logger.warning(
+            "[openai_compat] transport retry %s/%s path=%s model=%s error=%s: %s",
+            attempt_idx + 1,
+            retry_cap,
+            self.path,
+            self.model,
+            type(exc).__name__,
+            exc,
+        )
+
+    def final_transport(self, attempt_idx: int, exc: BaseException) -> None:
+        logger.error(
+            "[openai_compat] transport failed path=%s model=%s base_url=%s "
+            "timeout_sec=%s attempts=%s error=%s: %s",
+            self.path,
+            self.model,
+            self.base_url,
+            self.timeout_sec,
+            attempt_idx + 1,
+            type(exc).__name__,
+            exc,
+        )
 
 
 class OpenAICompatibleLLMClient(BaseLLMClient):
@@ -171,29 +242,47 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         codes = _retry_status_codes(rec) if enabled else set()
         base_delay = max(0.05, float(rec.get("backoff_base_seconds", 0.8) or 0.8))
 
+        log_ctx = _CompatPostLog(
+            path=self._chat_path,
+            model=str(body.get("model") or self.model or ""),
+            base_url=self.base_url,
+            timeout_sec=self._timeout_sec,
+        )
+
         for attempt in range(retries + 1):
             try:
-                response = await client.post(self._chat_path, json=body)
+                response = await client.post(log_ctx.path, json=body)
                 if enabled and response.status_code in codes and attempt < retries:
-                    logger.warning(
-                        "[openai_compat] HTTP %s retry %s/%s",
-                        response.status_code,
-                        attempt + 1,
-                        retries,
-                    )
+                    log_ctx.retry_http_status(response.status_code, attempt, retries)
                     await _recovery_sleep(attempt, base_delay)
                     continue
                 self._raise_with_body(response)
-                return response.json()
-            except httpx.RequestError as e:
+                try:
+                    data = response.json()
+                except json.JSONDecodeError as e:
+                    snippet = ""
+                    with contextlib.suppress(Exception):
+                        snippet = (response.text or "")[:800]
+                    raise RuntimeError(
+                        f"openai_compat: invalid JSON from {log_ctx.path} "
+                        f"status={response.status_code}: {e!s}\n{snippet}"
+                    ) from e
+                record_llm_usage_from_chat_response(data)
+                return data
+            except httpx.TimeoutException as e:
                 if enabled and attempt < retries:
-                    logger.warning(
-                        "[openai_compat] transport retry %s/%s: %s", attempt + 1, retries, e
-                    )
+                    log_ctx.retry_timeout(attempt, retries, e)
                     await _recovery_sleep(attempt, base_delay)
                     continue
+                log_ctx.final_timeout(attempt, e)
                 raise
-        raise RuntimeError("openai_compat: exhausted retries without response")
+            except httpx.RequestError as e:
+                if enabled and attempt < retries:
+                    log_ctx.retry_transport(attempt, retries, e)
+                    await _recovery_sleep(attempt, base_delay)
+                    continue
+                log_ctx.final_transport(attempt, e)
+                raise
 
     async def chat(
         self,
@@ -298,7 +387,9 @@ def openai_compat_from_provider_block(cfg: dict[str, Any]) -> OpenAICompatibleLL
     model = str(c.get("model") or "gpt-4o-mini")
     api_key = str(c.get("api_key") or "")
     base_url = str(c.get("base_url") or c.get("baseUrl") or "https://api.openai.com/v1")
-    timeout = c.get("timeout", 60)
+    timeout = c.get("timeout")
+    if timeout is None:
+        timeout = config.get("llm.request_timeout", 60)
     auth_mode = c.get("auth_mode") or c.get("authMode")
     auth_header_name = c.get("auth_header_name") or c.get("authHeaderName")
     headers = c.get("headers") if isinstance(c.get("headers"), dict) else None

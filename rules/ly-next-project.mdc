@@ -11,7 +11,7 @@ title: ly-next project rules
 ## 仓库地图（改代码前先定位）
 
 - **应用入口**：`ly_next/main.py`（生命周期、静态资源、鉴权中间件）。
-- **HTTP / WebSocket**：`ly_next/api/wei_api.py`、`ly_next/api/ws_api.py`。
+- **HTTP / WebSocket**：`ly_next/api/ly_api.py`、`ly_next/api/ws_api.py`；提示词 `ly_next/agent/prompt_templates.py`：`data/ly_next/prompts/` 优先于 `prompt_builtin/`；`agent.prompts.enabled: false` 时只读 data、不读包内 md。
 - **Agent**：`ly_next/agent/factory.py`、`ly_next/agent/deps.py`、`ly_next/agent/react.py`（及同目录图）。
 - **模型与流式**：`ly_next/models/openai_compat.py`。
 - **内置工具**：`ly_next/tools/`（`builtin.py` 注册表；`@tool` 见 `tools/base.py`）。

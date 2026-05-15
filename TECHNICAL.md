@@ -3,7 +3,7 @@
 ## 推荐阅读顺序
 
 1. ly_next/main.py：应用启动、路由挂载、生命周期。
-2. ly_next/api/wei_api.py、ly_next/api/ws_api.py：HTTP/WS 对话入口与设置接口；动态挂载的目录 API 见 ly_next/api/loader.py（`api.security_profile`、`trusted_module_hashes`），安全说明见仓库根目录 SECURITY.md。
+2. ly_next/api/ly_api.py、ly_next/api/ws_api.py：HTTP/WS 对话入口与设置接口；动态挂载的目录 API 见 ly_next/api/loader.py（`api.security_profile`、`trusted_module_hashes`），安全说明见仓库根目录 SECURITY.md。Agent 提示词：`ly_next/agent/prompt_templates.py`，包内默认片段 `ly_next/agent/prompt_builtin/*.md`；`data/ly_next/prompts/`（`agent.prompts.prompts_dir`）同名文件优先。若 `agent.prompts.enabled` 为 `false`，则**只**从上述 data 目录加载，不再读包内 `prompt_builtin/`（缺文件时用代码内嵌 fallback）。
 3. ly_next/agent/factory.py：Agent 模式选择（react/plan/chat）。
 4. ly_next/agent/react.py、ly_next/agent/plan.py、ly_next/agent/chat.py：三种执行图。
 5. ly_next/agent/deps.py：LLM 调用、工具注入、运行参数汇总。
@@ -17,7 +17,7 @@
 ### HTTP（非流式）
 
 POST /api/chat
--> ly_next/api/wei_api.py
+-> ly_next/api/ly_api.py
 -> augment_messages_async()
 -> create_agent_deps()
 -> AgentFactory.create_agent()
@@ -47,7 +47,7 @@ POST /api/chat
 ## 配置与运行时关系
 
 - 主配置文件：data/ly_next/config.yaml。
-- 设置接口：GET/PATCH /api/system/settings，对应 wei_api.py 的白名单 patch 逻辑；控制台 `/ly/` 拆为 **「应用配置」**（日志、鉴权相关开关、Agent 与工具策略、扩展 API、内置工具、网络搜索、`agent.rag.enabled` 等）与 **「模型配置」**（`llm`、各 provider、`model_router`、`vision_precaption`、`rag.embedding` 等），PATCH 为深度合并，两页勿重复提交互斥字段即可。
+- 设置接口：GET/PATCH /api/system/settings，对应 ly_api.py 的白名单 patch 逻辑；控制台 `/ly/` 拆为 **「应用配置」**（日志、鉴权相关开关、Agent 与工具策略、扩展 API、内置工具、网络搜索、`agent.rag.enabled` 等）与 **「模型配置」**（`llm`、各 provider、`model_router`、`vision_precaption`、`rag.embedding` 等），PATCH 为深度合并，两页勿重复提交互斥字段即可。
 - 关键运行参数：
   - llm.default_provider
   - openai_compat_llm.*
@@ -56,7 +56,7 @@ POST /api/chat
 
 ## 调试建议（按层定位）
 
-1. 入口层：先看 wei_api.py / ws_api.py 的请求与响应。
+1. 入口层：先看 ly_api.py / ws_api.py 的请求与响应。
 2. Agent 层：看 agent.* 是否进入预期模式，工具是否可用。
 3. Model 层：看 openai_compat.py 组包与返回码。
 4. RAG 层：看 rag/* 是否回退 lexical，embedding 是否可用。

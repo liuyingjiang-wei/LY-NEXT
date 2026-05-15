@@ -71,7 +71,9 @@ class LLMFactory:
     def get_client(cls, name: str = "default", **kwargs) -> BaseLLMClient:
         prov = str(kwargs.get("provider") or "default")
         mod = str(kwargs.get("model") or "").strip()
-        cache_key = f"{name}:{prov}:{mod}"
+        t_raw = kwargs.get("timeout")
+        timeout_part = "" if t_raw is None else str(t_raw)
+        cache_key = f"{name}:{prov}:{mod}:{timeout_part}"
         if cache_key not in cls._clients:
             cls._clients[cache_key] = cls.create_client(**kwargs)
         return cls._clients[cache_key]
