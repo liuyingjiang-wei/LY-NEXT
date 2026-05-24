@@ -156,7 +156,10 @@ detect_linux_id() {
 }
 
 need_root() {
-  [ "$(uname -s)" = "Linux" ] && [ "$(id -u)" -ne 0 ] && { err "Linux 安装需要 sudo"; exit 1; }
+  if [ "$(uname -s)" = "Linux" ] && [ "$(id -u)" -ne 0 ]; then
+    err "Linux 安装需要 sudo"
+    exit 1
+  fi
 }
 
 _ubuntu_setup_pgvector() {
