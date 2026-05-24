@@ -74,7 +74,7 @@ def _load_yaml_defaults() -> dict[str, Any]:
 
 def _minimal_fallback_defaults() -> dict[str, Any]:
     return {
-        "server": {"host": "127.0.0.1", "port": 8000, "reload": False, "log_level": "info"},
+        "server": {"host": "0.0.0.0", "port": 8000, "reload": False, "log_level": "info"},
         "cors": {"origins": ["*"]},
         "api": {
             "auto_load": True,
@@ -301,7 +301,16 @@ class Config:
         self._config = _resolve_env_vars(self._config)
         default_config = copy.deepcopy(_load_yaml_defaults())
         self._config = self._merge_config(default_config, self._config)
+        self._migrate_legacy_server_bind()
         self._cache.clear()
+
+    def _migrate_legacy_server_bind(self) -> None:
+        server = self._config.get("server")
+        if not isinstance(server, dict):
+            return
+        if server.get("host") == "127.0.0.1":
+            server["host"] = "0.0.0.0"
+            self.save()
 
     def _merge_config(self, default: dict, user: dict) -> dict:
         return merge_config_dicts(default, user)

@@ -79,7 +79,7 @@ docker compose -f docker/docker-compose.yml --profile app up -d --build
 
 ```bash
 uv run ly --reload
-uv run ly --host 127.0.0.1 --port 8000
+uv run ly --host 127.0.0.1 --port 8000  # 仅本机访问时
 ```
 
 ## 安装（可选：Redis / PostgreSQL / pgvector）

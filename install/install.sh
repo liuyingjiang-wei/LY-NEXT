@@ -320,6 +320,10 @@ _run_configure_local() {
   patch="$(LY_PG_PW="$pw" LY_REDIS_PW="$rp" python3 - <<'PY'
 import json, os
 print(json.dumps({
+    "server": {
+        "host": "0.0.0.0",
+        "port": 8000,
+    },
     "database": {
         "host": "127.0.0.1",
         "port": 5432,
