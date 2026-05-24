@@ -87,19 +87,22 @@ ly_detect_pgvector() {
 }
 
 ly_component_ok() {
-  local name="$1"
+  local name="$1" cli svc ok
   case "$name" in
     redis)
       IFS='|' read -r cli svc _ _ <<<"$(ly_detect_redis)"
-      [ "$cli" = "1" ] || [ "$svc" = "1" ]
+      if [ "$cli" = "1" ] || [ "$svc" = "1" ]; then return 0; fi
+      return 1
       ;;
     postgresql)
       IFS='|' read -r cli svc _ _ <<<"$(ly_detect_postgresql)"
-      [ "$cli" = "1" ] || [ "$svc" = "1" ]
+      if [ "$cli" = "1" ] || [ "$svc" = "1" ]; then return 0; fi
+      return 1
       ;;
     pgvector)
       IFS='|' read -r ok _ <<<"$(ly_detect_pgvector)"
-      [ "$ok" = "1" ]
+      if [ "$ok" = "1" ]; then return 0; fi
+      return 1
       ;;
     *) return 1 ;;
   esac
@@ -209,7 +212,10 @@ install_postgresql_macos() {
 
 should_install() {
   [ "$FORCE" -eq 1 ] && return 0
-  ly_component_ok "$1" && { info "跳过 $1（已就绪）"; return 1; }
+  if ly_component_ok "$1"; then
+    info "跳过 $1（已就绪）"
+    return 1
+  fi
   return 0
 }
 
@@ -231,7 +237,12 @@ main_menu() {
     1)
       if [ -z "$missing" ]; then return 1; fi
       for m in $missing; do
-        case "$m" in redis) INSTALL_REDIS=1 ;; postgresql) INSTALL_POSTGRESQL=1 ;; pgvector) INSTALL_PGVECTOR=1 ;; esac
+        m="${m//$'\r'/}"
+        case "$m" in
+          redis) INSTALL_REDIS=1 ;;
+          postgresql) INSTALL_POSTGRESQL=1 ;;
+          pgvector) INSTALL_PGVECTOR=1 ;;
+        esac
       done
       ;;
     2) custom_menu ;;
@@ -275,13 +286,14 @@ resolve_plan() {
   if [ "$YES" -eq 1 ]; then
     local m
     for m in $(ly_missing_list); do
+      m="${m//$'\r'/}"
       case "$m" in
         redis) INSTALL_REDIS=1 ;;
         postgresql) INSTALL_POSTGRESQL=1 ;;
         pgvector) INSTALL_PGVECTOR=1 ;;
       esac
     done
-    return
+    return 0
   fi
   main_menu || return 1
 }
@@ -343,7 +355,7 @@ finalize_postgres_stack() {
   psql -U postgres -h 127.0.0.1 -tc "SELECT 1 FROM pg_database WHERE datname='ly_next'" 2>/dev/null | grep -q 1 \
     || psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='ly_next'" 2>/dev/null | grep -q 1 \
     || sudo -u postgres createdb ly_next 2>/dev/null || warn "创建 ly_next 失败"
-  ly_component_ok pgvector && return 0
+  if ly_component_ok pgvector; then return 0; fi
   case "$(detect_linux_id)" in
     ubuntu|debian) _ubuntu_setup_pgvector ;;
     *) warn "pgvector 自动安装仅支持 Ubuntu/Debian，见 install/pgvector.md" ;;
@@ -405,6 +417,14 @@ if [ "$CONFIGURE_ONLY" -eq 1 ]; then
 fi
 
 resolve_plan || { ok "已退出。"; exit 0; }
+
+plan_parts=()
+if [ "$INSTALL_REDIS" -eq 1 ]; then plan_parts+=("redis"); fi
+if [ "$INSTALL_POSTGRESQL" -eq 1 ]; then plan_parts+=("postgresql"); fi
+if [ "$INSTALL_PGVECTOR" -eq 1 ]; then plan_parts+=("pgvector"); fi
+if [ "${#plan_parts[@]}" -gt 0 ]; then
+  info "安装计划: ${plan_parts[*]}"
+fi
 
 if [ "$INSTALL_REDIS" -eq 0 ] && [ "$INSTALL_POSTGRESQL" -eq 0 ] && [ "$INSTALL_PGVECTOR" -eq 0 ]; then
   ok "未选择安装项。"
