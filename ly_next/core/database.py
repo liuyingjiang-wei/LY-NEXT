@@ -24,6 +24,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import DeclarativeBase
@@ -88,6 +89,37 @@ class Task(Base, BaseModel):
         Index("ix_tasks_status", "status"),
         Index("ix_tasks_created_at", "created_at"),
     )
+
+
+class AgentRun(Base, BaseModel):
+    __tablename__ = "agent_runs"
+
+    task_id = Column(String(64), nullable=False, index=True)
+    thread_id = Column(String(64), nullable=True, index=True)
+    mode = Column(String(32), nullable=False, default="react")
+    loop_kind = Column(String(32), nullable=True)
+    status = Column(String(32), nullable=False, default="running")
+    router_ = Column("router", MutableDict.as_mutable(JSONB), default=dict)
+    usage_ = Column("usage", MutableDict.as_mutable(JSONB), default=dict)
+    error = Column(Text, nullable=True)
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_agent_runs_started_at", "started_at"),
+        Index("ix_agent_runs_status", "status"),
+    )
+
+
+class AgentRunEvent(Base, BaseModel):
+    __tablename__ = "agent_run_events"
+
+    run_id = Column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    seq = Column(Integer, nullable=False)
+    kind = Column(String(64), nullable=False)
+    payload_ = Column("payload", MutableDict.as_mutable(JSONB), default=dict)
+
+    __table_args__ = (Index("ix_agent_run_events_run_seq", "run_id", "seq"),)
 
 
 class RagChunk(Base, BaseModel):
@@ -164,6 +196,20 @@ class Database:
             self._session_factory = None
             logger.info("Database disconnected")
 
+    async def _create_table_idempotent(self, conn, table) -> None:
+        """Create one table; ignore duplicate table/index errors on existing DBs."""
+
+        def _run(sync_conn):
+            try:
+                table.create(bind=sync_conn, checkfirst=True)
+            except ProgrammingError as e:
+                msg = str(e).lower()
+                if "already exists" in msg or "duplicate" in msg:
+                    return
+                raise
+
+        await conn.run_sync(_run)
+
     async def create_tables(self) -> None:
         if self._engine is None:
             await self.connect()
@@ -182,20 +228,28 @@ class Database:
                     e,
                 )
 
-            async with conn.begin():
-                await conn.run_sync(Session.__table__.create, checkfirst=True)
-                await conn.run_sync(Task.__table__.create, checkfirst=True)
-                for stmt in (
-                    "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS message TEXT",
-                    "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
-                    "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ",
-                ):
-                    with suppress(Exception):
-                        await conn.execute(text(stmt))
+        table_plan: list[Any] = [
+            Session.__table__,
+            Task.__table__,
+            Message.__table__,
+            AgentRun.__table__,
+            AgentRunEvent.__table__,
+        ]
+        if vector_ok:
+            table_plan.append(RagChunk.__table__)
 
-                await conn.run_sync(Message.__table__.create, checkfirst=True)
-                if vector_ok:
-                    await conn.run_sync(RagChunk.__table__.create, checkfirst=True)
+        for table in table_plan:
+            async with self._engine.begin() as txn_conn:
+                await self._create_table_idempotent(txn_conn, table)
+
+        async with self._engine.begin() as txn_conn:
+            for stmt in (
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS message TEXT",
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
+                "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ",
+            ):
+                with suppress(Exception):
+                    await txn_conn.execute(text(stmt))
 
         logger.info("Database tables ensured")
 
@@ -289,6 +343,25 @@ class Database:
                 .limit(limit)
             )
             return list(result.scalars().all())
+
+    async def get_messages_chronological(self, session_id, limit: int = 100) -> list[Message]:
+        async with self.session() as s:
+            result = await s.execute(
+                select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(desc(Message.created_at))
+                .limit(limit)
+            )
+            return list(reversed(result.scalars().all()))
+
+    async def delete_session(self, session_id) -> bool:
+        uid = self._parse_task_uuid(session_id)
+        if uid is None:
+            return False
+        async with self.session() as s:
+            await s.execute(delete(Message).where(Message.session_id == uid))
+            res = await s.execute(delete(Session).where(Session.id == uid))
+            return int(res.rowcount or 0) > 0
 
     async def create_task(self, name: str, metadata: dict = None) -> Task:
         async with self.session() as s:

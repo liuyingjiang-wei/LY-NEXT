@@ -1,5 +1,3 @@
-"""Coordinator mode: decompose into specialists, delegate React runs, then synthesize."""
-
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +12,7 @@ from ly_next.agent.prompt_augment import last_user_query
 from ly_next.agent.react import ReactAgent
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
+from ly_next.core.run_telemetry import emit_run_event, set_run_loop_kind
 
 logger = get_logger(__name__)
 
@@ -260,6 +259,7 @@ class CoordinatorAgent:
         self.deps = deps if deps is not None else create_agent_deps(**kwargs)
 
     async def run(self, messages: list[dict[str, Any]]) -> str:
+        set_run_loop_kind("coordinator")
         lim = _cfg_limits(self.deps)
 
         question = last_user_query(messages)
@@ -273,6 +273,10 @@ class CoordinatorAgent:
             max_agents=lim["max_agents"],
             max_tokens=lim["dec_toks"],
             retries=lim["retries"],
+        )
+        emit_run_event(
+            "coordinator_plan",
+            {"agents": len(agents), "execution_order": execution_order},
         )
         if not lim["parallel_delegates"]:
             execution_order = "sequential"
@@ -327,6 +331,7 @@ class CoordinatorAgent:
         )
 
     async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+        set_run_loop_kind("coordinator")
         lim = _cfg_limits(self.deps)
 
         question = last_user_query(messages)
@@ -342,6 +347,10 @@ class CoordinatorAgent:
             max_agents=lim["max_agents"],
             max_tokens=lim["dec_toks"],
             retries=lim["retries"],
+        )
+        emit_run_event(
+            "coordinator_plan",
+            {"agents": len(agents), "execution_order": execution_order},
         )
         if not lim["parallel_delegates"]:
             execution_order = "sequential"

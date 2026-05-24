@@ -1,8 +1,5 @@
-"""ReAct loops (compat JSON / native tool_calls / LangGraph legacy)."""
-
 import asyncio
 import json
-import re
 import secrets
 import time
 from collections.abc import AsyncIterator
@@ -12,6 +9,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
+from ly_next.agent.json_extract import parse_json_object
 from ly_next.agent.prompt_augment import last_user_query
 from ly_next.agent.prompt_templates import (
     build_compat_decision_prompt,
@@ -22,6 +20,8 @@ from ly_next.agent.prompt_templates import (
 from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
 from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
+from ly_next.agent.tool_streak import streak_after_tool_call, streak_after_tool_error
+from ly_next.core.checkpointer import compile_graph, graph_astream
 from ly_next.core.config import config
 from ly_next.core.context_budget import (
     cumulative_budget_limit,
@@ -32,7 +32,12 @@ from ly_next.core.context_budget import (
     prune_old_tool_message_contents,
 )
 from ly_next.core.logger import get_logger
-from ly_next.core.run_telemetry import record_tool_timing
+from ly_next.core.run_telemetry import (
+    get_run_loop_kind,
+    record_stream_event,
+    record_tool_timing,
+    set_run_loop_kind,
+)
 from ly_next.core.tool_result_spill import format_tool_result_for_llm
 
 logger = get_logger(__name__)
@@ -66,7 +71,8 @@ def _visible_tools_include_mcp(deps: AgentDeps) -> bool:
             max_tier=deps.tool_max_tier,
             max_tools=deps.max_tools,
         )
-    except Exception:
+    except Exception as e:
+        logger.debug("tool filter for MCP visibility failed: %s", e)
         return False
     return any((t.definition.category or "").strip().lower() == "mcp" for t in objs)
 
@@ -297,7 +303,7 @@ async def _iter_compat_react(
         text = (await deps.call_llm(prompt)).strip()
 
         try:
-            obj = _extract_json_obj(text)
+            obj = parse_json_object(text)
             kind, payload = _validate_decision(obj, tool_names)
         except Exception as e:
             msg = str(e).strip() or repr(e)
@@ -309,13 +315,33 @@ async def _iter_compat_react(
             }
             repair = (
                 "Fix the following into a valid JSON decision that follows the schema exactly. "
-                "Output JSON only.\n\n"
+                "Output JSON only. Escape newlines inside strings as \\n.\n\n"
                 f"Allowed tools: {', '.join(tool_names)}\n\n"
-                f"Bad output:\n{text}"
+                f"Bad output:\n{text[:6000]}"
             )
-            fixed = (await deps.call_llm(repair)).strip()
-            obj = _extract_json_obj(fixed)
-            kind, payload = _validate_decision(obj, tool_names)
+            fixed = ""
+            try:
+                fixed = (
+                    await deps.call_llm_limited(repair, max_tokens=deps.max_tokens, temperature=0.1)
+                ).strip()
+                obj = parse_json_object(fixed)
+                kind, payload = _validate_decision(obj, tool_names)
+            except Exception as e2:
+                err2 = str(e2).strip() or repr(e2)
+                logger.warning(
+                    "[agent.compat] JSON repair failed iteration=%s: %s; raw_len=%s fixed_len=%s",
+                    iteration,
+                    err2,
+                    len(text),
+                    len(fixed),
+                )
+                yield {
+                    "type": "final",
+                    "content": (
+                        f"模型决策 JSON 无法解析，对话已停止。\n首次错误：{msg}\n修复错误：{err2}"
+                    ),
+                }
+                return
 
         if kind == "final":
             yield {"type": "final", "content": str(payload.get("final") or "")}
@@ -325,6 +351,10 @@ async def _iter_compat_react(
         args = payload.get("args") or {}
         if not isinstance(args, dict):
             args = {}
+
+        if _aborted(deps):
+            yield {"type": "final", "content": "（对话已由用户中断）"}
+            return
 
         yield {
             "type": "tool_start",
@@ -557,6 +587,10 @@ async def _iter_native_react(
             except json.JSONDecodeError:
                 args = {}
 
+            if _aborted(deps):
+                yield {"type": "final", "content": "（对话已由用户中断）"}
+                return
+
             tcid = tc.get("id") or f"call_{iteration}_{idx}_{name}"
             yield {
                 "type": "tool_start",
@@ -655,23 +689,6 @@ def _build_decision_prompt(question: str, tools: list[dict], scratchpad: str) ->
     return build_plan_decision_prompt(question=question, tools=tools, scratchpad=scratchpad)
 
 
-def _extract_json_obj(text: str) -> dict[str, Any]:
-    if not text:
-        raise ValueError("empty model output")
-    text = text.strip()
-
-    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
-    if m:
-        text = m.group(1).strip()
-
-    if not text.startswith("{"):
-        m2 = re.search(r"(\{[\s\S]*\})", text)
-        if m2:
-            text = m2.group(1)
-
-    return json.loads(text)
-
-
 def _validate_decision(obj: dict[str, Any], tool_names: list[str]) -> tuple[str, dict[str, Any]]:
     t = (obj.get("type") or "").strip().lower()
 
@@ -718,7 +735,7 @@ async def _plan_node(state: AgentState, deps: AgentDeps) -> AgentState:
 
     try:
         text = (await deps.call_llm(prompt)).strip()
-        obj = _extract_json_obj(text)
+        obj = parse_json_object(text)
         kind, payload = _validate_decision(obj, tool_names)
         return {"decision": {"kind": kind, **payload}}
     except Exception as e:
@@ -742,17 +759,7 @@ async def _act_node(state: AgentState, deps: AgentDeps) -> AgentState:
 
     try:
         result = await deps.tool_registry.call_tool(name, args)
-
-        sig = json.dumps({"name": name, "args": args}, sort_keys=True, ensure_ascii=False)
-        prev_sig = str(state.get("last_tool_signature") or "")
-        repeat = int(state.get("repeat_tool_calls") or 0)
-        repeat = repeat + 1 if sig == prev_sig else 1
-
-        fail_streak = int(state.get("tool_fail_streak") or 0)
-        if isinstance(result, dict) and result.get("success") is False:
-            fail_streak += 1
-        else:
-            fail_streak = 0
+        streak = streak_after_tool_call(state, name, args, result)
 
         scratch = state.get("scratchpad", "")
         rt = secrets.token_hex(5)
@@ -766,24 +773,16 @@ async def _act_node(state: AgentState, deps: AgentDeps) -> AgentState:
             "last_tool": name,
             "last_result": result,
             "tool_results": state.get("tool_results", []) + [{"tool": name, "result": result}],
-            "last_tool_signature": sig,
-            "repeat_tool_calls": repeat,
-            "tool_fail_streak": fail_streak,
+            **streak,
         }
     except Exception as e:
-        logger.error(f"[agent.act] Tool {name} failed: {e}")
-        sig = json.dumps({"name": name, "args": args}, sort_keys=True, ensure_ascii=False)
-        prev_sig = str(state.get("last_tool_signature") or "")
-        repeat = int(state.get("repeat_tool_calls") or 0)
-        repeat = repeat + 1 if sig == prev_sig else 1
-        fail_streak = int(state.get("tool_fail_streak") or 0) + 1
+        logger.error("[agent.act] Tool %s failed: %s", name, e)
+        streak = streak_after_tool_error(state, name, args)
         return {
             "scratchpad": state.get("scratchpad", "") + f"\n[ERROR] {name}: {str(e)}",
             "error": str(e),
             "last_tool": name,
-            "last_tool_signature": sig,
-            "repeat_tool_calls": repeat,
-            "tool_fail_streak": fail_streak,
+            **streak,
         }
 
 
@@ -864,138 +863,110 @@ def build_react_graph(deps: AgentDeps) -> StateGraph:
     return graph
 
 
+def _react_loop_kind(deps: AgentDeps) -> str:
+    if deps._custom_llm_call or not deps.use_tools:
+        return "legacy"
+    mode = (deps.tool_call_mode or "auto").strip().lower()
+    if mode == "compat" or _auto_use_compat_first_for_mcp(deps):
+        return "compat"
+    if mode in ("auto", "native") and deps.native_tool_calls:
+        return "native"
+    return "legacy"
+
+
+def _tool_blind_fallback(deps: AgentDeps) -> str:
+    mode = (deps.tool_call_mode or "auto").strip().lower()
+    return "compat" if mode == "auto" else "legacy"
+
+
 class ReactAgent:
     def __init__(self, deps: AgentDeps | None = None, **kwargs):
         if deps is None:
             deps = create_agent_deps(**kwargs)
         self.deps = deps
         self.graph = build_react_graph(deps)
-        self.app = self.graph.compile()
+        self.app = compile_graph(self.graph)
 
-    async def _run_legacy(self, messages: list[dict[str, Any]]) -> str:
+    async def _iter_legacy_graph(
+        self, messages: list[dict[str, Any]]
+    ) -> AsyncIterator[dict[str, Any]]:
         init = create_initial_state(messages)
-        current_state = dict(init)
-        async for chunk in self.app.astream(init):
-            for node_name, node_output in chunk.items():
-                if isinstance(node_output, dict):
-                    if "decision" in node_output:
-                        logger.debug(f"[agent] {node_name}: {node_output['decision']}")
-                    current_state.update(node_output)
-        decision = current_state.get("decision")
-        if not decision or not isinstance(decision, dict):
-            return "Agent produced no valid decision."
-        if decision.get("kind") == "final":
-            return str(decision.get("final") or "")
-        return str(decision.get("final") or "No response generated.")
-
-    async def run(self, messages: list[dict[str, Any]]) -> str:
-        mode = (self.deps.tool_call_mode or "auto").strip().lower()
-        if mode == "compat" and self.deps.use_tools and not self.deps._custom_llm_call:
-            text_out = ""
-            async for ev in _iter_compat_react(messages, self.deps):
-                if isinstance(ev, dict) and ev.get("type") == "final":
-                    text_out = str(ev.get("content") or "")
-            return text_out or ""
-
-        if (
-            _auto_use_compat_first_for_mcp(self.deps)
-            and self.deps.use_tools
-            and not self.deps._custom_llm_call
-        ):
-            text_out = ""
-            async for ev in _iter_compat_react(messages, self.deps):
-                if isinstance(ev, dict) and ev.get("type") == "final":
-                    text_out = str(ev.get("content") or "")
-            return text_out or ""
-
-        if (
-            mode in ("auto", "native")
-            and self.deps.native_tool_calls
-            and self.deps.use_tools
-            and not self.deps._custom_llm_call
-        ):
-            try:
-                text_out = ""
-                saw_tool = False
-                async for ev in _iter_native_react(messages, self.deps):
-                    if isinstance(ev, dict) and ev.get("type") == "tool_start":
-                        saw_tool = True
-                    if isinstance(ev, dict) and ev.get("type") == "final":
-                        text_out = str(ev.get("content") or "")
-                if not saw_tool and _looks_tool_blind_response(text_out):
-                    logger.warning(
-                        "[agent] native tool-calling appears tool-blind; fallback to legacy ReAct"
-                    )
-                    if mode == "auto":
-                        logger.warning("[agent] switching to compat tool loop")
-                        async for ev in _iter_compat_react(messages, self.deps):
-                            if isinstance(ev, dict) and ev.get("type") == "final":
-                                return str(ev.get("content") or "")
-                    return await self._run_legacy(messages)
-                return text_out or ""
-            except Exception as e:
-                logger.warning("[agent] native ReAct unavailable, using legacy graph: %s", e)
-        return await self._run_legacy(messages)
-
-    async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
-        mode = (self.deps.tool_call_mode or "auto").strip().lower()
-        if mode == "compat" and self.deps.use_tools and not self.deps._custom_llm_call:
-            async for ev in _iter_compat_react(messages, self.deps):
-                yield ev
-            return
-
-        if (
-            _auto_use_compat_first_for_mcp(self.deps)
-            and self.deps.use_tools
-            and not self.deps._custom_llm_call
-        ):
-            async for ev in _iter_compat_react(messages, self.deps):
-                yield ev
-            return
-
-        if (
-            mode in ("auto", "native")
-            and self.deps.native_tool_calls
-            and self.deps.use_tools
-            and not self.deps._custom_llm_call
-        ):
-            try:
-                buffered: list[dict[str, Any]] = []
-                saw_tool = False
-                final_text = ""
-                async for ev in _iter_native_react(messages, self.deps):
-                    if isinstance(ev, dict) and ev.get("type") == "tool_start":
-                        saw_tool = True
-                    if isinstance(ev, dict) and ev.get("type") == "final":
-                        final_text = str(ev.get("content") or "")
-                    buffered.append(ev)
-                if not saw_tool and _looks_tool_blind_response(final_text):
-                    logger.warning(
-                        "[agent] native stream tool-blind; fallback to legacy ReAct stream"
-                    )
-                    if mode == "auto":
-                        logger.warning("[agent] switching to compat tool loop (stream)")
-                        async for ev in _iter_compat_react(messages, self.deps):
-                            yield ev
-                        return
-                else:
-                    for ev in buffered:
-                        yield ev
-                    return
-            except Exception as e:
-                logger.warning("[agent] native ReAct stream fallback: %s", e)
-
-        init = create_initial_state(messages)
-
-        async for chunk in self.app.astream(init):
+        async for chunk in graph_astream(self.app, init, self.deps.thread_id):
             if _aborted(self.deps):
                 yield {"type": "final", "content": "（对话已由用户中断）"}
                 return
             for node_name, node_output in chunk.items():
+                if isinstance(node_output, dict) and "decision" in node_output:
+                    logger.debug("[agent] %s: %s", node_name, node_output["decision"])
                 yield {"type": "node", "node": node_name, "data": node_output}
-
                 if isinstance(node_output, dict) and "decision" in node_output:
                     decision = node_output["decision"]
                     if decision.get("kind") == "final":
                         yield {"type": "final", "content": decision.get("final", "")}
                         return
+
+    async def _iter_react(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+        kind = _react_loop_kind(self.deps)
+        set_run_loop_kind(kind)
+        async for ev in self._iter_react_inner(messages, kind):
+            record_stream_event(ev)
+            yield ev
+
+    async def _iter_react_inner(
+        self, messages: list[dict[str, Any]], kind: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        if kind == "compat":
+            async for ev in _iter_compat_react(messages, self.deps):
+                yield ev
+            return
+
+        if kind == "native":
+            buffered: list[dict[str, Any]] = []
+            saw_tool = False
+            final_text = ""
+            try:
+                async for ev in _iter_native_react(messages, self.deps):
+                    if isinstance(ev, dict):
+                        if ev.get("type") == "tool_start":
+                            saw_tool = True
+                        if ev.get("type") == "final":
+                            final_text = str(ev.get("content") or "")
+                    buffered.append(ev)
+                if not saw_tool and _looks_tool_blind_response(final_text):
+                    fb = _tool_blind_fallback(self.deps)
+                    logger.warning("[agent] native tool-blind; fallback=%s", fb)
+                    if fb == "compat":
+                        set_run_loop_kind("compat")
+                        async for ev in _iter_compat_react(messages, self.deps):
+                            yield ev
+                        return
+                    set_run_loop_kind("legacy")
+                    async for ev in self._iter_legacy_graph(messages):
+                        yield ev
+                    return
+                for ev in buffered:
+                    yield ev
+                return
+            except Exception as e:
+                logger.warning("[agent] native ReAct failed, legacy graph: %s", e)
+                kind = "legacy"
+                set_run_loop_kind(kind)
+
+        if kind == "legacy":
+            async for ev in self._iter_legacy_graph(messages):
+                yield ev
+
+    async def run(self, messages: list[dict[str, Any]]) -> str:
+        final = ""
+        async for ev in self._iter_react(messages):
+            if isinstance(ev, dict) and ev.get("type") == "final":
+                final = str(ev.get("content") or "")
+        if final:
+            return final
+        if get_run_loop_kind() == "legacy":
+            return "Agent produced no valid decision."
+        return ""
+
+    async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+        async for ev in self._iter_react(messages):
+            yield ev

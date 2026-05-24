@@ -1,11 +1,7 @@
-"""Agent State."""
-
 from typing import Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    """LangGraph Agent State."""
-
     messages: list[dict[str, Any]]
     scratchpad: str
     steps: int
@@ -20,8 +16,7 @@ class AgentState(TypedDict, total=False):
     tool_fail_streak: int
 
 
-def create_initial_state(messages: list[dict[str, Any]] = None) -> AgentState:
-    """Create initial agent state."""
+def create_initial_state(messages: list[dict[str, Any]] | None = None) -> AgentState:
     return AgentState(
         messages=messages or [],
         scratchpad="",

@@ -1,39 +1,63 @@
-# 安装（install/）
+# LY-NEXT 依赖安装
 
-用于安装 **Redis / PostgreSQL / pgvector**（开发环境）。
+一条命令完成：**检测 → 安装 Redis / PostgreSQL 17 / pgvector → 写入 `data/ly_next/config.yaml` → 建库**，装完可直接 `uv run ly`。
 
-## 一键安装 Redis + PostgreSQL
+## 快速开始
 
-### 自动检测系统（推荐）
+| 系统 | 命令（项目根目录） |
+|------|-------------------|
+| Windows | 管理员 PowerShell：`.\install.ps1 -Yes` |
+| Linux | `sudo bash install.sh -y` |
+| macOS | `sudo bash install.sh -y`（pgvector 见 `pgvector.md`） |
 
-```bash
-# Linux/macOS
-bash install/install-auto.sh
-```
+安装脚本会自动：
+
+- 安装并启动 Redis、PostgreSQL（本机服务或子进程）
+- 将 **`database.*` / `redis.*`** 写入 `data/ly_next/config.yaml`（含密码、端口、`try_unix_socket: false`）
+- 创建数据库 **`ly_next`**，执行 **`CREATE EXTENSION vector`**
+- Windows 上 Chocolatey/winget 安装 PostgreSQL 时默认密码 **`postgres`**（与脚本探测一致）
+
+## 常用参数
 
 ```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File ".\install\install-auto.ps1"
+.\install.ps1 -Yes              # 安装所有未就绪项 + 写配置
+.\install.ps1 -ConfigureOnly    # 仅写配置 / 建库 / pgvector（已装服务时）
+.\install.ps1 -DetectOnly
 ```
-
-### 仅 Windows
-
-```powershell
-powershell -ExecutionPolicy Bypass -File ".\install\install-windows.ps1"
-```
-
-### 仅 Linux / macOS
 
 ```bash
-bash install/install.sh
+sudo bash install.sh -y
+sudo bash install.sh --configure-only
 ```
 
-在 **Ubuntu / Debian** 上，`install.sh` 还会在检测到 PostgreSQL 主版本后尝试安装 `postgresql-<主版本>-pgvector`，创建数据库 `ly_next` 并执行 `CREATE EXTENSION IF NOT EXISTS vector`。若仓库中没有对应 pgvector 包，请按 `install/pgvector.md` 配置 PGDG 或其它源后再安装。
+自定义 PostgreSQL 密码（安装前设置环境变量）：
 
-首次启动 LY-NEXT 时，若本机 Redis 启用了 `requirepass` 而配置里 `redis.password` 为空，程序会尝试从运行中的 Redis（`CONFIG GET requirepass` / `redis.conf`）同步密码到配置文件。
+```powershell
+$env:LY_NEXT_POSTGRES_PASSWORD = "你的密码"
+.\install.ps1 -ConfigureOnly
+```
 
-## 安装 pgvector（按系统/发行版）
+## 安装后
 
-详见 `install/pgvector.md`  
-Windows 脚本：`install/pgvector-windows.ps1`
+```bash
+uv run ly
+```
 
+一般**无需再改** `config.yaml`。若 winget 安装 PostgreSQL 时用了其它密码，运行：
+
+```powershell
+.\install.ps1 -ConfigureOnly
+```
+
+按提示输入一次密码即可。
+
+## 目录
+
+| 文件 | 说明 |
+|------|------|
+| `install.ps1` / `install.sh` | 安装向导 |
+| `pg-common.ps1` | Windows：连库、pgvector、写配置 |
+| `configure_local.py` | 合并写入 `config.yaml` |
+| `pgvector.md` | 手动排错 |
+
+根目录 `install.ps1`、`install.sh` 转发到本目录。

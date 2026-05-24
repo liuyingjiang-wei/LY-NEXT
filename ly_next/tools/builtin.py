@@ -11,6 +11,7 @@ from ly_next.tools.builtins_core import (
 from ly_next.tools.http_fetch import http_fetch
 from ly_next.tools.memory_note import remember_fact
 from ly_next.tools.registry import ToolRegistry
+from ly_next.tools.web_fetch import web_fetch_tool
 from ly_next.tools.web_search import web_scrape_tool, web_search_tool
 
 logger = get_logger(__name__)
@@ -23,6 +24,7 @@ BUILTIN_TOOLS_BY_NAME: dict[str, object] = {
     "get_current_time": get_current_time,
     "url_parse": url_parse,
     "http_fetch": http_fetch,
+    "web_fetch": web_fetch_tool,
     "remember_fact": remember_fact,
     "web_search": web_search_tool,
     "web_scrape": web_scrape_tool,

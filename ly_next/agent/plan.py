@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 import secrets
 from collections.abc import AsyncIterator
 from functools import partial
@@ -9,11 +8,15 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
+from ly_next.agent.json_extract import parse_json_object
 from ly_next.agent.prompt_augment import last_user_query
 from ly_next.agent.scratchpad_compress import compress_scratchpad
 from ly_next.agent.state import AgentState, create_initial_state
 from ly_next.agent.tool_filter import filter_tools_for_agent, list_tools_payload
+from ly_next.agent.tool_streak import streak_after_tool_call, streak_after_tool_error
+from ly_next.core.checkpointer import compile_graph, graph_astream
 from ly_next.core.logger import get_logger
+from ly_next.core.run_telemetry import emit_run_event, set_run_loop_kind
 from ly_next.core.tool_result_spill import format_tool_result_for_llm
 
 logger = get_logger(__name__)
@@ -63,15 +66,7 @@ Output JSON:
 
     try:
         text = (await deps.call_llm(prompt)).strip()
-        m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
-        if m:
-            text = m.group(1).strip()
-        if not text.startswith("{"):
-            m2 = re.search(r"(\{[\s\S]*\})", text)
-            if m2:
-                text = m2.group(1)
-
-        plan_data = json.loads(text)
+        plan_data = parse_json_object(text)
         plan = plan_data.get("steps", [])
 
         return {
@@ -80,7 +75,7 @@ Output JSON:
             "plan_results": [],
         }
     except Exception as e:
-        logger.error(f"[plan] Planning failed: {e}")
+        logger.error("[agent.plan] Planning failed: %s", e)
         return {"plan": [], "error": str(e)}
 
 
@@ -111,16 +106,7 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
 
         try:
             result = await deps.tool_registry.call_tool(tool_name, args)
-            sig = json.dumps({"name": tool_name, "args": args}, sort_keys=True, ensure_ascii=False)
-            prev_sig = str(state.get("last_tool_signature") or "")
-            repeat = int(state.get("repeat_tool_calls") or 0)
-            repeat = repeat + 1 if sig == prev_sig else 1
-
-            fail_streak = int(state.get("tool_fail_streak") or 0)
-            if isinstance(result, dict) and result.get("success") is False:
-                fail_streak += 1
-            else:
-                fail_streak = 0
+            streak = streak_after_tool_call(state, tool_name, args, result)
 
             plan_results = state.get("plan_results", [])
             plan_results.append(
@@ -146,22 +132,14 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
                 "plan_results": plan_results,
                 "scratchpad": state.get("scratchpad", "")
                 + f"\n[Step {current_step + 1}] {tool_name}: {obs}",
-                "last_tool_signature": sig,
-                "repeat_tool_calls": repeat,
-                "tool_fail_streak": fail_streak,
+                **streak,
             }
         except Exception as e:
-            logger.error(f"[execute] Step {current_step + 1} failed: {e}")
-            sig = json.dumps({"name": tool_name, "args": args}, sort_keys=True, ensure_ascii=False)
-            prev_sig = str(state.get("last_tool_signature") or "")
-            repeat = int(state.get("repeat_tool_calls") or 0)
-            repeat = repeat + 1 if sig == prev_sig else 1
-            fail_streak = int(state.get("tool_fail_streak") or 0) + 1
+            logger.error("[agent.plan] Step %s failed: %s", current_step + 1, e)
+            streak = streak_after_tool_error(state, tool_name, args)
             return {
                 "error": f"Step {current_step + 1}: {str(e)}",
-                "last_tool_signature": sig,
-                "repeat_tool_calls": repeat,
-                "tool_fail_streak": fail_streak,
+                **streak,
             }
 
     return {"current_step": current_step + 1}
@@ -208,14 +186,7 @@ Output only JSON:
 
             try:
                 text = (await deps.call_llm(prompt)).strip()
-                m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
-                if m:
-                    text = m.group(1).strip()
-                if not text.startswith("{"):
-                    m2 = re.search(r"(\{[\s\S]*\})", text)
-                    if m2:
-                        text = m2.group(1)
-                data = json.loads(text)
+                data = parse_json_object(text)
                 return {
                     "final_response": data.get("answer", "Done"),
                     "steps": steps,
@@ -288,26 +259,30 @@ class PlanAgent:
             deps = create_agent_deps(**kwargs)
         self.deps = deps
         self.graph = build_plan_agent_graph(deps)
-        self.app = self.graph.compile()
+        self.app = compile_graph(self.graph)
 
     async def run(self, messages: list[dict[str, Any]]) -> str:
+        set_run_loop_kind("plan")
         init = create_initial_state(messages)
 
         final_state = {}
-        async for chunk in self.app.astream(init):
-            for _node_name, node_output in chunk.items():
+        async for chunk in graph_astream(self.app, init, self.deps.thread_id):
+            for node_name, node_output in chunk.items():
+                emit_run_event("node", {"node": node_name})
                 final_state.update(node_output)
 
         return final_state.get("final_response", "No response generated.")
 
     async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+        set_run_loop_kind("plan")
         init = create_initial_state(messages)
 
-        async for chunk in self.app.astream(init):
+        async for chunk in graph_astream(self.app, init, self.deps.thread_id):
             if self.deps.stop_event and self.deps.stop_event.is_set():
                 yield {"type": "final", "content": "（对话已由用户中断）"}
                 return
             for node_name, node_output in chunk.items():
+                emit_run_event("node", {"node": node_name})
                 yield {"type": "node", "node": node_name, "data": node_output}
 
                 if node_output.get("final_response"):

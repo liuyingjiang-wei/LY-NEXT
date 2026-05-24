@@ -10,7 +10,11 @@ import httpx
 from ly_next.core.config import config
 from ly_next.core.http_url import ensure_http_base
 from ly_next.core.logger import get_logger
-from ly_next.core.run_telemetry import record_llm_usage_from_chat_response
+from ly_next.core.run_telemetry import (
+    record_llm_call_failed,
+    record_llm_call_start,
+    record_llm_usage_from_chat_response,
+)
 from ly_next.models.base_llm import BaseLLMClient
 from ly_next.models.openai_chat_body import attach_tools, build_openai_chat_completions_body
 from ly_next.models.openai_compat_auth import (
@@ -20,6 +24,12 @@ from ly_next.models.openai_compat_auth import (
 )
 
 logger = get_logger(__name__)
+
+
+def _http_response_text(response: httpx.Response, limit: int = 500) -> str:
+    with contextlib.suppress(Exception):
+        return (response.text or "")[:limit]
+    return ""
 
 
 def _error_recovery_cfg() -> dict[str, Any]:
@@ -248,6 +258,12 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             base_url=self.base_url,
             timeout_sec=self._timeout_sec,
         )
+        msgs = body.get("messages")
+        record_llm_call_start(
+            model=log_ctx.model,
+            provider=self.provider_name,
+            messages_count=len(msgs) if isinstance(msgs, list) else None,
+        )
 
         for attempt in range(retries + 1):
             try:
@@ -256,13 +272,20 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                     log_ctx.retry_http_status(response.status_code, attempt, retries)
                     await _recovery_sleep(attempt, base_delay)
                     continue
+                if response.status_code >= 400:
+                    record_llm_call_failed(
+                        model=log_ctx.model,
+                        error=f"HTTP {response.status_code}: {_http_response_text(response)}",
+                    )
                 self._raise_with_body(response)
                 try:
                     data = response.json()
                 except json.JSONDecodeError as e:
-                    snippet = ""
-                    with contextlib.suppress(Exception):
-                        snippet = (response.text or "")[:800]
+                    record_llm_call_failed(
+                        model=log_ctx.model,
+                        error=f"invalid JSON status={response.status_code}: {e!s}",
+                    )
+                    snippet = _http_response_text(response, 800)
                     raise RuntimeError(
                         f"openai_compat: invalid JSON from {log_ctx.path} "
                         f"status={response.status_code}: {e!s}\n{snippet}"
@@ -275,6 +298,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                     await _recovery_sleep(attempt, base_delay)
                     continue
                 log_ctx.final_timeout(attempt, e)
+                record_llm_call_failed(model=log_ctx.model, error=f"timeout: {e!s}")
                 raise
             except httpx.RequestError as e:
                 if enabled and attempt < retries:
@@ -282,6 +306,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                     await _recovery_sleep(attempt, base_delay)
                     continue
                 log_ctx.final_transport(attempt, e)
+                record_llm_call_failed(model=log_ctx.model, error=f"transport: {e!s}")
                 raise
 
     async def chat(

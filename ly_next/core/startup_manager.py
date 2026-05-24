@@ -36,9 +36,9 @@ class StartupManager:
     ]
 
     OPTIONAL_PACKAGES = [
-        "langchain",
+        "langchain-core",
         "langgraph",
-        "duckduckgo",
+        "duckduckgo-search",
     ]
 
     REQUIRED_SERVICES = [

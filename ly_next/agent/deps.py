@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from ly_next.agent.llm_text import text_from_chat_response, text_from_stream_delta
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.models.base_llm import BaseLLMClient
@@ -38,6 +39,7 @@ class AgentDeps:
     native_tool_calls: bool = True
     tool_call_mode: str = "auto"
     stop_event: asyncio.Event | None = None
+    thread_id: str | None = None
 
     def __post_init__(self):
         if self.llm_client is None:
@@ -73,9 +75,9 @@ class AgentDeps:
         )
 
         if isinstance(response, dict):
-            choices = response.get("choices", [])
-            if choices:
-                return choices[0].get("message", {}).get("content", "")
+            text = text_from_chat_response(response)
+            if text:
+                return text
 
         return str(response)
 
@@ -126,9 +128,9 @@ class AgentDeps:
         )
 
         if isinstance(response, dict):
-            choices = response.get("choices", [])
-            if choices:
-                return choices[0].get("message", {}).get("content", "")
+            text = text_from_chat_response(response)
+            if text:
+                return text
 
         return str(response)
 
@@ -154,8 +156,9 @@ class AgentDeps:
                 break
             content = ""
             if isinstance(chunk, dict):
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                content = delta.get("content", "")
+                choices = chunk.get("choices") or [{}]
+                delta = choices[0].get("delta", {}) if choices else {}
+                content = text_from_stream_delta(delta if isinstance(delta, dict) else {})
             else:
                 content = str(chunk)
 

@@ -50,7 +50,8 @@ class APILoader:
         return sorted(modules, key=lambda x: x.name)
 
     def _load_module_from_file(self, file_path: Path) -> Any | None:
-        module_name = file_path.stem
+        stem = file_path.stem
+        module_name = f"ly_next_plugin_{stem}"
 
         if file_path.suffix == ".py":
             spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -67,7 +68,7 @@ class APILoader:
             self._loaded_modules[module_name] = module
             return module
         except Exception as e:
-            logger.error(f"[APILoader] Failed to load module {module_name}: {e}")
+            logger.error("[APILoader] Failed to load module %s (%s): %s", stem, file_path, e)
             return None
 
     def _extract_api_from_module(self, module: Any) -> list[BaseAPI]:

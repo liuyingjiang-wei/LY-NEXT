@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from ly_next.agent.llm_text import text_from_chat_response
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.models.factory import LLMFactory
@@ -30,6 +31,15 @@ class ModelRoutingResult:
     model: str | None
     task_kind: TaskKind
     via: str
+
+
+def routing_payload(result: ModelRoutingResult) -> dict[str, Any]:
+    return {
+        "task_kind": result.task_kind.value,
+        "via": result.via,
+        "provider": result.provider,
+        "model": result.model,
+    }
 
 
 def _default_llm_pair() -> tuple[str, str | None]:
@@ -299,7 +309,7 @@ async def _llm_classify_task_kind(messages: list[dict[str, Any]]) -> TaskKind:
     if isinstance(resp, dict):
         choices = resp.get("choices", [])
         if choices:
-            content = str(choices[0].get("message", {}).get("content", "") or "")
+            content = text_from_chat_response(resp)
     else:
         content = str(resp)
 

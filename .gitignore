@@ -32,6 +32,8 @@ env/
 *.swo
 .ruff_cache/
 .pytest_cache/
+.pytest_tmp/
+# pytest session temps (also under %TEMP%/ly-next/ on Windows)
 .mypy_cache/
 .coverage
 .coverage.*
@@ -39,6 +41,7 @@ coverage.xml
 htmlcov/
 __pypackages__/
 .pyre/
+.hypothesis/
 *.tsbuildinfo
 
 # --- 日志与本地数据 ---
@@ -48,11 +51,12 @@ data/
 *.db
 *.sqlite
 
-# --- 前端：`.workbench-src/` 源码不入库；根目录 `package.json` + `pnpm-lock.yaml` 用于本地构建 `www/` ---
+#前端数据文件
 .workbench-src/
 node_modules/
 .pnpm-store/
 .npm/
+.pnpm-debug.log*
 pnpm-debug.log*
 npm-debug.log*
 .yarn-error.log*

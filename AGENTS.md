@@ -27,7 +27,13 @@
 
 ## 修改前的定位建议
 
+- **内置 HTTP 路由**（随应用启动注册）：`ly_next/api/`（`ly_api.py`、`ws_api.py`、`runs_api.py`、`threads_api.py` 等）。
+- 工作台静态页：`www/home.html`（首页）、`www/app.html`（应用）、`www/login.html`；轨道图 `www/orbit/`（源文件 `.workbench-src/public/orbit/`）。
+- 会话持久化：`ly_next/core/thread_persistence.py`（`sessions`/`messages` 表）；LangGraph checkpoint：`ly_next/core/checkpointer.py`（legacy react 图与 plan 图）；`thread_id`≠`task_id`/`run_id`。
+- **插件 API 目录**（扫描加载，默认仅放 `BaseAPI` 子类）：`ly_next/apis/`；由 `APILoader` 按 `api.api_dir` 配置加载，模块名 `ly_next_plugin_<stem>` 避免与内置包冲突。详见 `ly_next/apis/README.md`。
+- 工作台静态页：`www/home.html`（首页）、`www/app.html`（应用）、`www/login.html`；轨道图目录 `www/orbit/`（构建自 `.workbench-src/public/orbit/`）。
 - HTTP/WS 对话入口：`ly_next/api/ly_api.py`、`ly_next/api/ws_api.py`；Agent 提示词见 `ly_next/agent/prompt_templates.py`：`data/ly_next/prompts/` 优先于包内 `prompt_builtin/*.md`；`agent.prompts.enabled: false` 时仅读 data 目录、不用包内 md。
+- Agent 图实现：`ly_next/agent/react.py`、`plan.py`；JSON 解析与工具 streak 复用 `json_extract.py`、`tool_streak.py`（勿再引入已删除的 `langgraph_prebuilt` / `langchain_integration` 包装层）。
 - Agent 选择与 deps：`ly_next/agent/factory.py`、`ly_next/agent/deps.py`
 - OpenAI 兼容请求与流式：`ly_next/models/openai_compat.py`
 - RAG / 知识库：`ly_next/rag/document_retriever.py`（默认 `data/ly_next/knowledge/`）、`ly_next/rag/example_selector.py`；长期记忆写入工具 `remember_fact`：`ly_next/tools/memory_note.py`

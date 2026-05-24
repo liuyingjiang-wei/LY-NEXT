@@ -1,3 +1,10 @@
+import asyncio
+import sys
+
+# 须在任意 asyncio 循环创建前设置；配合 main.run(loop="none") 供 psycopg / LangGraph checkpoint
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 __version__ = "1.0.1"
 
 from ly_next.agent import AgentFactory

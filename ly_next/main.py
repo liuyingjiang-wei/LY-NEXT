@@ -1,6 +1,12 @@
+import asyncio
 import secrets
+import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+
+# psycopg / LangGraph AsyncPostgresSaver 在 Windows 上需要 SelectorEventLoop，不能是默认的 ProactorEventLoop
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from contextlib import asynccontextmanager, suppress
 
 import uvicorn
@@ -17,6 +23,7 @@ from ly_next.api.loader import APILoader
 from ly_next.api.mcp_api import get_mcp_mount_prefix
 from ly_next.core.auth_http import extract_api_key_from_request
 from ly_next.core.cache import cache
+from ly_next.core.checkpointer import init_checkpointer, shutdown_checkpointer
 from ly_next.core.config import config, get_project_root
 from ly_next.core.database import db
 from ly_next.core.logger import (
@@ -62,8 +69,11 @@ async def _ensure_external_service(
         logger.info("%s not running, attempting auto-start...", label)
         return await ensure()
     logger.warning("%s: %s", label, info.message)
-    if log_not_installed and info.install_status == InstallStatus.NOT_INSTALLED:
-        logger.info("%s not installed, attempting auto-install...", label)
+    if info.install_status == InstallStatus.NOT_INSTALLED:
+        if log_not_installed:
+            logger.info("%s not installed, attempting auto-install...", label)
+    elif info.status != ServiceStatus.RUNNING:
+        logger.info("%s is installed but not reachable, attempting to start...", label)
     return await ensure()
 
 
@@ -71,10 +81,21 @@ def _auth_exempt_path(path: str) -> bool:
     if path.startswith("/ly/static/"):
         return True
     return path in (
+        "/",
         "/ly/login",
         "/ly/login/",
         "/.well-known/appspecific/com.chrome.devtools.json",
     )
+
+
+def _ly_console_path(path: str) -> bool:
+    if path.startswith("/ly/static/"):
+        return False
+    if path in ("/ly/login", "/ly/login/"):
+        return False
+    if path == "/ly/app" or path.startswith("/ly/app/"):
+        return True
+    return path == "/ly" or path.startswith("/ly/")
 
 
 @asynccontextmanager
@@ -117,6 +138,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log_not_installed=True,
     )
 
+    from ly_next.core.postgres_port import sync_database_port_from_install
+
+    sync_database_port_from_install()
+
     try:
         await db.connect()
         logger.info("Database connected")
@@ -135,11 +160,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning(f"Redis connection failed: {e}")
         logger.info("Continuing without Redis - caching features disabled")
 
-    if app.state.redis_available or db._engine is not None:
+    if db._engine is not None:
         try:
             await db.create_tables()
         except Exception as e:
-            logger.warning(f"Table creation failed: {e}")
+            logger.error("Database schema setup failed: %s", e)
+            if service_mgr._is_production:
+                raise
+            logger.warning(
+                "Continuing without full DB schema — task/run persistence may be limited"
+            )
+        else:
+            try:
+                await init_checkpointer()
+            except Exception as e:
+                logger.warning("LangGraph checkpointer init skipped: %s", e)
 
     registry = get_tool_registry()
     n_bi = register_builtin_tools(registry)
@@ -197,6 +232,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "server_url": f"http://{host}:{port}",
         "docs_url": f"http://{host}:{port}/docs",
         "workbench_url": f"http://{host}:{port}/ly/",
+        "workbench_home_url": f"http://{host}:{port}/",
         "workbench_login_url": f"http://{host}:{port}/ly/login",
         "ws": {
             "url": f"ws://{host}:{port}",
@@ -228,6 +264,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("Shutting down LY-Next...")
     await api_loader.registry.shutdown(app)
+
+    with suppress(Exception):
+        await shutdown_checkpointer()
 
     for svc in [db.disconnect(), cache.disconnect()]:
         with suppress(Exception):
@@ -304,7 +343,7 @@ def create_app() -> FastAPI:
         if key and provided == key:
             return await call_next(request)
 
-        if path.startswith("/ly"):
+        if _ly_console_path(path):
             return RedirectResponse(url="/ly/login", status_code=302)
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
@@ -344,10 +383,27 @@ def create_app() -> FastAPI:
             name="ly_static",
         )
 
+        @app.get("/", include_in_schema=False)
+        async def site_home():
+            home = workbench_dir / "home.html"
+            if not home.is_file():
+                return HTMLResponse(_LOGIN_BUILD_MISSING, status_code=503)
+            return HTMLResponse(home.read_text(encoding="utf-8"))
+
+        @app.get("/ly", include_in_schema=False)
         @app.get("/ly/", include_in_schema=False)
-        async def ly_index():
-            index = workbench_dir / "index.html"
-            return HTMLResponse(index.read_text(encoding="utf-8"))
+        async def ly_workbench():
+            app_html = workbench_dir / "app.html"
+            if not app_html.is_file():
+                app_html = workbench_dir / "index.html"
+            if not app_html.is_file():
+                return HTMLResponse(_LOGIN_BUILD_MISSING, status_code=503)
+            return HTMLResponse(app_html.read_text(encoding="utf-8"))
+
+        @app.get("/ly/app", include_in_schema=False)
+        @app.get("/ly/app/", include_in_schema=False)
+        async def ly_app_legacy_redirect():
+            return RedirectResponse(url="/ly/", status_code=307)
 
         @app.get("/ly/login", include_in_schema=False)
         async def ly_login_page():
@@ -429,6 +485,7 @@ Examples:
 
     refresh_ly_next_log_level_from_config()
 
+    # uvicorn 在 Win 上 loop=auto 会显式 new ProactorEventLoop，与 psycopg 不兼容；loop=none 走策略
     uvicorn.run(
         "ly_next.main:app",
         host=host,
@@ -437,6 +494,7 @@ Examples:
         log_level=log_level,
         access_log=False,
         log_config=get_uvicorn_log_config(),
+        loop="none",
     )
 
 

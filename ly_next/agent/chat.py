@@ -3,6 +3,7 @@ from typing import Any
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
 from ly_next.core.logger import get_logger
+from ly_next.core.run_telemetry import set_run_loop_kind
 
 logger = get_logger(__name__)
 
@@ -17,6 +18,7 @@ class ChatAgent:
         if not messages:
             return "No messages provided."
 
+        set_run_loop_kind("chat")
         processed_messages = self._process_messages(messages)
         prompt = self._build_prompt(processed_messages)
 
@@ -32,6 +34,7 @@ class ChatAgent:
             yield {"type": "error", "content": "No messages provided."}
             return
 
+        set_run_loop_kind("chat")
         processed_messages = self._process_messages(messages)
         prompt = self._build_prompt(processed_messages)
 

@@ -10,7 +10,8 @@ title: api-trust-and-tools
 
 ## 工具与出站
 
-- **`http_fetch`**：仅 `http`/`https`，有过滤的请求头策略；不要把「绕过校验」当功能加进去。
+- **`http_fetch`**：原始 HTTP 响应；仅 `http`/`https`，有过滤的请求头策略；不要把「绕过校验」当功能加进去。
+- **`web_fetch`**：`tools.web_fetch.provider` 可选 `trafilatura`（本地）/ `jina` / `tavily` / `firecrawl`（`local` 同 trafilatura）；与 `http_fetch` 分工不同；受 SSRF URL 限制。
 - **`web_search` / `web_scrape`**：网络层；收紧时改 **`agent.tool_policy`** 与 **`tools.built_in`**，不要硬编码在个人分支里长期遗忘。
 - **MCP / 远端工具**：把上游当作不可信；不要在工具实现里隐式信任模型拼出的 URL 或参数而不校验。
 

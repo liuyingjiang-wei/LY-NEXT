@@ -7,9 +7,11 @@ import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from ly_next.core.config import config, get_project_root
 from ly_next.core.logger import get_logger
+from ly_next.core.postgres_port import resolve_database_port, sync_database_port_from_install
 
 logger = get_logger(__name__)
 
@@ -71,12 +73,156 @@ class ServiceManager:
     def _should_auto_start(self) -> bool:
         return not self._is_docker and not self._is_production
 
+    def _postgres_bin_dirs(self) -> list[Path]:
+        seen: set[str] = set()
+        dirs: list[Path] = []
+
+        def add(p: Path) -> None:
+            key = str(p.resolve()).lower()
+            if key not in seen and p.is_dir():
+                seen.add(key)
+                dirs.append(p)
+
+        for name in ("psql", "pg_ctl"):
+            found = shutil.which(name)
+            if found:
+                add(Path(found).parent)
+
+        if self._is_windows:
+            for env_key in ("ProgramFiles", "ProgramFiles(x86)"):
+                root = os.environ.get(env_key)
+                if not root:
+                    continue
+                base = Path(root) / "PostgreSQL"
+                if not base.is_dir():
+                    continue
+                for ver_dir in sorted(base.iterdir(), reverse=True):
+                    if ver_dir.is_dir():
+                        add(ver_dir / "bin")
+
+        return dirs
+
+    def _postgres_executable(self, name: str) -> str | None:
+        suffix = ".exe" if self._is_windows else ""
+        for bin_dir in self._postgres_bin_dirs():
+            candidate = bin_dir / f"{name}{suffix}"
+            if candidate.is_file():
+                return str(candidate)
+        return shutil.which(name)
+
+    def _list_windows_postgres_services(self) -> list[str]:
+        if not self._is_windows:
+            return []
+        try:
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-Service -Name 'postgresql*' -ErrorAction SilentlyContinue | "
+                    "Select-Object -ExpandProperty Name",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        except Exception:
+            return []
+
+    def _format_pg_error(self, err: Exception | None) -> str:
+        if err is None:
+            return "unknown error"
+        msg = str(err).strip()
+        if msg:
+            return msg
+        name = type(err).__name__
+        if name == "NotImplementedError":
+            return (
+                "Unix socket not supported on this platform "
+                "(use TCP: database.host=127.0.0.1, try_unix_socket=false)"
+            )
+        return name + (f": {err.args[0]!r}" if err.args else "")
+
+    def _windows_is_admin(self) -> bool:
+        if not self._is_windows:
+            return True
+        try:
+            import ctypes
+
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
+    def _windows_service_state(self, service_name: str) -> str | None:
+        try:
+            result = subprocess.run(
+                ["sc", "query", service_name],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            text_out = (result.stdout or "") + (result.stderr or "")
+            for line in text_out.splitlines():
+                if "STATE" in line:
+                    parts = line.split(":", 1)[-1].strip().split()
+                    if len(parts) >= 2:
+                        return parts[1]
+        except Exception:
+            pass
+        return None
+
+    def _resolve_postgres_port(self, db_config: dict[str, Any]) -> int:
+        return resolve_database_port(db_config)
+
+    async def _probe_postgres_tcp(
+        self, *, database: str | None = None, timeout: float = 5.0
+    ) -> tuple[bool, Exception | None]:
+        import asyncpg
+
+        db_config = config.get("database", {})
+        if not isinstance(db_config, dict):
+            db_config = {}
+        host = str(db_config.get("host", "localhost") or "localhost")
+        hosts = [host]
+        if host in ("localhost", "127.0.0.1", "::1"):
+            hosts = ["127.0.0.1", "localhost"]
+        port = self._resolve_postgres_port(db_config)
+        user = str(db_config.get("username", "postgres") or "postgres")
+        pw = db_config.get("password", "")
+        password = str(pw) if pw else None
+        dbname = database or str(db_config.get("database", "ly_next") or "ly_next")
+
+        last_err: Exception | None = None
+        for h in hosts:
+            try:
+                conn = await asyncpg.connect(
+                    host=h,
+                    port=port,
+                    user=user,
+                    password=password,
+                    database=dbname,
+                    timeout=timeout,
+                )
+                await conn.close()
+                return True, None
+            except Exception as e:
+                last_err = e
+        return False, last_err
+
     def _check_service_installed(self, service_name: str) -> InstallStatus:
+        if service_name == "postgresql":
+            if self._postgres_executable("psql") or self._postgres_executable("pg_ctl"):
+                return InstallStatus.INSTALLED
+            if self._list_windows_postgres_services():
+                return InstallStatus.INSTALLED
+            return InstallStatus.NOT_INSTALLED
+
         commands = {
             "redis": ["redis-server", "redis-cli"],
-            "postgresql": ["pg_ctl", "psql", "postgres"],
         }
-
         service_commands = commands.get(service_name, [service_name])
         for cmd in service_commands:
             if shutil.which(cmd):
@@ -102,29 +248,43 @@ class ServiceManager:
                     pass
 
         elif service_name == "postgresql":
-            cmd = shutil.which("pg_ctl")
-            if cmd:
+            cmd = self._postgres_executable("pg_ctl") or self._postgres_executable("psql")
+            services = self._list_windows_postgres_services()
+            if cmd or services:
                 info["installed"] = True
-                info["path"] = cmd
+                info["path"] = cmd or (services[0] if services else None)
+            if cmd:
                 try:
                     result = subprocess.run(
                         [cmd, "--version"], capture_output=True, text=True, timeout=5
                     )
-                    if "PostgreSQL" in result.stdout:
-                        version_str = result.stdout.split("PostgreSQL")[1].strip()
+                    out = result.stdout or result.stderr or ""
+                    if "PostgreSQL" in out:
+                        version_str = out.split("PostgreSQL", 1)[1].strip()
                         info["version"] = version_str.split(" ")[0]
                 except Exception:
                     pass
 
-                for data_dir in [
-                    Path.home() / "AppData" / "Local" / "PostgreSQL" / "data",
-                    Path("C:/Program Files/PostgreSQL") / (info["version"] or "17") / "data",
-                    Path("/var/lib/postgresql") / (info["version"] or "17") / "main",
-                    Path("/usr/local/var/postgres"),
-                ]:
-                    if data_dir.exists():
-                        info["data_dir"] = str(data_dir)
-                        break
+            candidates: list[Path] = [
+                Path.home() / "AppData" / "Local" / "PostgreSQL" / "data",
+                Path("/var/lib/postgresql") / (info["version"] or "17") / "main",
+                Path("/usr/local/var/postgres"),
+            ]
+            if self._is_windows:
+                for env_key in ("ProgramFiles", "ProgramFiles(x86)"):
+                    root = os.environ.get(env_key)
+                    if not root:
+                        continue
+                    base = Path(root) / "PostgreSQL"
+                    if not base.is_dir():
+                        continue
+                    for ver_dir in sorted(base.iterdir(), reverse=True):
+                        if ver_dir.is_dir():
+                            candidates.append(ver_dir / "data")
+            for data_dir in candidates:
+                if data_dir.exists():
+                    info["data_dir"] = str(data_dir)
+                    break
 
         return info
 
@@ -137,16 +297,16 @@ class ServiceManager:
             "database": "ly_next",
         }
 
-        pg_ctl = shutil.which("pg_ctl")
-        if not pg_ctl:
-            return config
-
         if self._is_windows:
             possible_paths = [
                 Path.home() / "AppData" / "Local" / "PostgreSQL",
                 Path("C:/Program Files/PostgreSQL"),
                 Path("C:/PostgreSQL"),
             ]
+            for env_key in ("ProgramFiles", "ProgramFiles(x86)"):
+                root = os.environ.get(env_key)
+                if root:
+                    possible_paths.append(Path(root) / "PostgreSQL")
             for base_path in possible_paths:
                 if base_path.exists():
                     for version_dir in sorted(base_path.iterdir(), reverse=True):
@@ -166,6 +326,10 @@ class ServiceManager:
                                     except Exception:
                                         pass
                                 break
+        elif not self._is_windows:
+            pg_ctl = self._postgres_executable("pg_ctl")
+            if not pg_ctl:
+                return config
 
         return config
 
@@ -317,6 +481,7 @@ PostgreSQL Installation Guide (Windows):
 3. Remember the password for postgres user
 4. Or use Chocolatey: choco install postgresql
 5. Or use winget: winget install PostgreSQL.PostgreSQL.17
+6. Or run (admin): .\\install.ps1 -PostgreSQL
 """,
             }
         else:
@@ -333,6 +498,7 @@ PostgreSQL Installation Guide (Linux/macOS):
 - Ubuntu/Debian: sudo apt update && sudo apt install postgresql postgresql-contrib
 - CentOS/RHEL: sudo yum install postgresql-server postgresql-contrib
 - macOS: brew install postgresql@17
+- Windows (project script): .\\install.ps1 -PostgreSQL
 - Arch Linux: sudo pacman -S postgresql
 """,
             }
@@ -418,12 +584,12 @@ PostgreSQL Installation Guide (Linux/macOS):
             )
 
     async def check_postgres(self) -> ServiceInfo:
-        import asyncpg
-
         db_config = config.get("database", {})
-        host = db_config.get("host", "localhost")
-        port = db_config.get("port", 5432)
-        database = db_config.get("database", "ly_next")
+        if not isinstance(db_config, dict):
+            db_config = {}
+        host = str(db_config.get("host", "localhost") or "localhost")
+        port = self._resolve_postgres_port(db_config)
+        database = str(db_config.get("database", "ly_next") or "ly_next")
 
         install_status = self._check_service_installed("postgresql")
         install_guide = (
@@ -432,23 +598,32 @@ PostgreSQL Installation Guide (Linux/macOS):
             else None
         )
 
-        last_err: Exception | None = None
-        for dsn in config.iter_asyncpg_dsn():
-            try:
-                conn = await asyncpg.connect(dsn=dsn)
-                await conn.close()
-                return ServiceInfo(
-                    name="PostgreSQL",
-                    status=ServiceStatus.RUNNING,
-                    message=f"Connected to {host}:{port}/{database}",
-                    port=port,
-                    install_status=install_status,
-                    install_guide=install_guide,
-                )
-            except Exception as e:
-                last_err = e
+        ok, last_err = await self._probe_postgres_tcp(database=database)
+        if not ok and not self._is_windows:
+            import asyncpg
 
-        error_msg = str(last_err) if last_err else "PostgreSQL connection failed"
+            for dsn in config.iter_asyncpg_dsn():
+                try:
+                    conn = await asyncpg.connect(dsn=dsn)
+                    await conn.close()
+                    ok = True
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+
+        if ok:
+            return ServiceInfo(
+                name="PostgreSQL",
+                status=ServiceStatus.RUNNING,
+                message=f"Connected to {host}:{port}/{database}",
+                port=port,
+                install_status=install_status,
+                install_guide=install_guide,
+            )
+
+        error_msg = self._format_pg_error(last_err)
+        low = error_msg.lower()
         if "Connection refused" in error_msg or "ECONNREFUSED" in error_msg:
             return ServiceInfo(
                 name="PostgreSQL",
@@ -458,10 +633,15 @@ PostgreSQL Installation Guide (Linux/macOS):
                 install_status=install_status,
                 install_guide=install_guide,
             )
+        hint = ""
+        if any(x in low for x in ("password", "authentication", "no password supplied")):
+            hint = " — 请在 data/ly_next/config.yaml 设置 database.password（安装时设置的 postgres 密码）"
+        elif "does not exist" in low and "database" in low:
+            hint = " — 请先创建数据库 ly_next，或修正 database.database"
         return ServiceInfo(
             name="PostgreSQL",
             status=ServiceStatus.UNAVAILABLE,
-            message=f"PostgreSQL error: {error_msg}",
+            message=f"PostgreSQL error: {error_msg}{hint}",
             port=port,
             install_status=install_status,
             install_guide=install_guide,
@@ -544,11 +724,56 @@ PostgreSQL Installation Guide (Linux/macOS):
             logger.error(f"Failed to start Redis: {e}")
             return False
 
+    async def _try_start_windows_postgres_service(self) -> bool:
+        services = self._list_windows_postgres_services()
+        if not services:
+            return False
+
+        running = [s for s in services if self._windows_service_state(s) == "RUNNING"]
+        if running:
+            logger.debug("PostgreSQL Windows service already running: %s", ", ".join(running))
+            return True
+
+        if not self._windows_is_admin():
+            logger.warning(
+                "无法启动 PostgreSQL 服务：当前进程没有管理员权限。"
+                "请以管理员打开终端执行 Start-Service %s，"
+                "或在「服务」中启动 PostgreSQL Server 17，或运行: .\\install.ps1 -PostgreSQL",
+                services[0],
+            )
+            return False
+
+        started_any = False
+        for svc in services:
+            logger.info(f"Starting Windows PostgreSQL service: {svc}")
+            try:
+                completed = await asyncio.to_thread(
+                    subprocess.run,
+                    ["sc", "start", svc],
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                    check=False,
+                )
+                out = ((completed.stdout or "") + (completed.stderr or "")).lower()
+                if completed.returncode == 0 or "already been started" in out or "running" in out:
+                    started_any = True
+                else:
+                    logger.warning(
+                        "sc start %s failed (code %s): %s",
+                        svc,
+                        completed.returncode,
+                        (completed.stderr or completed.stdout or "")[:300],
+                    )
+            except Exception as e:
+                logger.warning(f"sc start {svc} failed: {e}")
+        return started_any
+
     async def _init_postgres(self) -> None:
         pg_data_dir = self.data_dir / "postgres"
         if (pg_data_dir / "PG_VERSION").exists():
             return
-        initdb = shutil.which("initdb")
+        initdb = self._postgres_executable("initdb")
         if not initdb:
             logger.error("initdb not found in PATH; cannot initialize PostgreSQL data directory.")
             raise FileNotFoundError("initdb")
@@ -597,9 +822,32 @@ PostgreSQL Installation Guide (Linux/macOS):
         pg_data_dir.mkdir(parents=True, exist_ok=True)
 
         try:
+            if self._is_windows and self._list_windows_postgres_services():
+                port = self._resolve_postgres_port(db_config if isinstance(db_config, dict) else {})
+                await self._try_start_windows_postgres_service()
+                for _ in range(15):
+                    await asyncio.sleep(1)
+                    ok, _ = await self._probe_postgres_tcp(database="postgres")
+                    if ok:
+                        sync_database_port_from_install()
+                        logger.success(f"PostgreSQL service reachable at 127.0.0.1:{port}")
+                        return True
+                logger.warning(
+                    "PostgreSQL 服务未响应 TCP 连接；请检查服务是否运行、"
+                    "database.password 与 data/ly_next/config.yaml 中的 database.port（当前探测端口 %s）",
+                    port,
+                )
+                return False
+
             await self._init_postgres()
 
-            cmd = ["pg_ctl", "start", "-D", str(pg_data_dir), "-o", f"-p {port}"]
+            pg_ctl = self._postgres_executable("pg_ctl")
+            if not pg_ctl:
+                logger.error("pg_ctl not found in PATH or Program Files/PostgreSQL")
+                logger.info(self._get_install_guide("postgresql"))
+                return False
+
+            cmd = [pg_ctl, "start", "-D", str(pg_data_dir), "-o", f"-p {port}"]
             logger.info(f"Starting PostgreSQL: {' '.join(cmd)}")
 
             if self._is_windows:
@@ -786,7 +1034,8 @@ PostgreSQL Installation Guide (Linux/macOS):
         pg_data_dir = self.data_dir / "postgres"
         if not pg_data_dir.is_dir():
             return
-        cmd = ["pg_ctl", "stop", "-D", str(pg_data_dir), "-m", "fast", "-w"]
+        pg_ctl = self._postgres_executable("pg_ctl") or "pg_ctl"
+        cmd = [pg_ctl, "stop", "-D", str(pg_data_dir), "-m", "fast", "-w"]
         logger.info("Stopping PostgreSQL instance started by LY-NEXT...")
         try:
             proc = await asyncio.create_subprocess_exec(

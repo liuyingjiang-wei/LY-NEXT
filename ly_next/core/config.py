@@ -10,6 +10,7 @@ from urllib.parse import quote
 import yaml
 
 from ly_next.core.config_merge import merge_config_dicts
+from ly_next.core.postgres_port import resolve_database_port
 
 
 def get_project_root() -> Path:
@@ -94,6 +95,7 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                 "/redoc",
                 "/api/health",
                 "/api/info",
+                "/",
                 "/ly/login",
                 "/ly/static/*",
             ],
@@ -164,10 +166,26 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                 "get_current_time",
                 "url_parse",
                 "http_fetch",
+                "web_fetch",
                 "web_search",
                 "web_scrape",
+                "remember_fact",
             ],
             "web_search": {"provider": "duckduckgo", "api_key": ""},
+            "web_fetch": {
+                "provider": "jina",
+                "api_key": "",
+                "jina_proxy": "",
+                "base_url": "",
+                "extract_depth": "basic",
+                "output_format": "txt",
+                "favor_recall": True,
+                "include_tables": True,
+                "timeout_seconds": 30,
+                "default_max_length": 8000,
+                "max_response_bytes": 2_000_000,
+                "user_agent": "",
+            },
             "mcp": {
                 "enabled": True,
                 "transport": "sse",
@@ -327,7 +345,7 @@ class Config:
         user = quote(str(db.get("username", "postgres")), safe="")
         pw = str(db.get("password", "") or "")
         host = str(db.get("host", "localhost"))
-        port = int(db.get("port", 5432))
+        port = resolve_database_port(db if isinstance(db, dict) else {})
         dbname = quote(str(db.get("database", "ly_next")), safe="")
 
         urls: list[str] = []
@@ -337,7 +355,12 @@ class Config:
             urls.append(f"postgresql+asyncpg://{user}@{host}:{port}/{dbname}")
 
         try_unix = bool(db.get("try_unix_socket", True))
-        if try_unix and not pw and host in ("localhost", "127.0.0.1", "::1"):
+        if (
+            try_unix
+            and platform.system() != "Windows"
+            and not pw
+            and host in ("localhost", "127.0.0.1", "::1")
+        ):
             sockets = ["/var/run/postgresql", "/tmp"]
             if platform.system() == "Darwin":
                 sockets = ["/tmp", "/var/run/postgresql"]

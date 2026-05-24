@@ -11,7 +11,6 @@ cors:
 api:
   auto_load: true
   api_dir: "ly_next/apis"
-  # development = 加载 api_dir 下模块；production = 永不从目录加载；verified = 仅加载 trusted_module_hashes 且哈希匹配
   security_profile: "development"
   trusted_module_hashes: {}
 
@@ -38,7 +37,6 @@ openai_compat_llm:
   api_key: "not-needed"
   base_url: "http://localhost:8000/v1"
   auth_mode: "bearer"
-  # 出站 /chat/completions 前将请求的 model 映射为网关真实 ID（任意供应商；合并保存配置时保留）
   model_aliases: {}
 
 rag_embedding_llm:
@@ -54,7 +52,7 @@ agent:
   verbose: false
   reasoning_mode: "react"
   native_tool_calls: true
-  tool_call_mode: "auto"  # auto | native | compat
+  tool_call_mode: "auto"
   prefer_compat_when_mcp_tools: true
   stream_output: true
   memory:
@@ -69,9 +67,7 @@ agent:
       dedupe: true
   tool_policy:
     max_tier: network
-    # null = 不按类别白名单；非空列表则仅暴露这些 category（如 safe, general, network, mcp）
     allow_categories: null
-    # 与 MCP 工具重名或想关掉内置项时写工具名（须与注册名一致，含 MCP 前缀时按实际名）
     deny_tools: []
     allow_tools: null
   scratchpad:
@@ -110,6 +106,18 @@ agent:
     max_retries: 2
     backoff_base_seconds: 0.8
     retry_status_codes: [429, 502, 503, 504]
+  persistence:
+    enabled: true
+    max_messages_per_thread: 200
+    checkpoint:
+      enabled: true
+      backend: postgres   # postgres | memory
+  observability:
+    enabled: true
+    persist: true
+    ws_run_summary: true
+    max_events_per_run: 500
+    store_prompts: false
   prompts:
     enabled: true
     prompts_dir: "prompts"
@@ -156,7 +164,6 @@ agent:
       chat:
         provider: "openai"
         model: "gpt-4o-mini"
-  # 识图预描述：先用多模态模型把图片转成文字，主对话再走全局/路由 LLM（适合识图模型弱、主模型强）
   vision_precaption:
     enabled: false
     use_router_vision_model: false
@@ -193,7 +200,6 @@ agent:
       config_ref: "rag_embedding_llm"
 
 tools:
-  # null = 注册全部内置；[] = 不注册任何内置；列表 = 仅注册这些名字
   built_in:
     - "calculator"
     - "format_json"
@@ -202,12 +208,26 @@ tools:
     - "get_current_time"
     - "url_parse"
     - "http_fetch"
+    - "web_fetch"
     - "remember_fact"
     - "web_search"
     - "web_scrape"
   web_search:
     provider: "duckduckgo"
     api_key: ""
+  web_fetch:
+    provider: "jina"
+    api_key: ""
+    jina_proxy: ""
+    base_url: ""
+    extract_depth: "basic"
+    output_format: "txt"
+    favor_recall: true
+    include_tables: true
+    timeout_seconds: 30
+    default_max_length: 8000
+    max_response_bytes: 2000000
+    user_agent: ""
   mcp:
     enabled: true
     transport: "sse"
@@ -258,5 +278,7 @@ auth:
     - "/redoc"
     - "/api/health"
     - "/api/info"
+    - "/ly"
+    - "/ly/"
     - "/ly/login"
     - "/ly/static/*"

@@ -20,13 +20,13 @@
 
 ### 动态目录 API（`APILoader`）
 
-从 `api.api_dir` 加载的 `.py` 会在服务进程内执行，等价于**本地代码执行**。
+从 `api.api_dir` 加载的 `.py` 会在服务进程内执行，等价于**本地代码执行**。`api.auto_load: false` 时所有 profile 均不加载。
 
 | `api.security_profile` | 行为 |
 |------------------------|------|
 | `development`（默认） | `api.auto_load` 为真时加载目录下模块。 |
 | `production` | **从不**从目录加载 API 模块（即使 `api.auto_load` 为真）。 |
-| `verified` | 仅加载 `api.trusted_module_hashes` 中列出且 **SHA-256** 匹配的文件。 |
+| `verified` | 仅加载 `api.trusted_module_hashes` 中列出且 **SHA-256** 匹配的文件；哈希表为空则不加载任何模块。 |
 
 `api.trusted_module_hashes`：键为**相对于 `api_dir` 的正斜杠路径**（如 `my_plugin.py`、`pkg/__init__.py`），值为小写十六进制 SHA-256。
 
@@ -39,17 +39,26 @@
 ### 鉴权与 Cookie
 
 - **`auth.allow_api_key_in_query`**（默认 **`false`**）：为 `true` 时，才允许从 URL 查询参数读取 `api_key`（HTTP 与 **WebSocket `/api/ws*`、MCP WS** 一致）。默认关闭，避免 Key 进入访问日志、Referer；仅本机调试需要时可临时改为 `true`。  
-- **`auth.cookie_secure`**（默认 `false`）：全站 **HTTPS** 时设为 **`true`**，为登录 Cookie 加上 `Secure`。
+- **`auth.cookie_secure`**（默认 `false`）：全站 **HTTPS** 时设为 **`true`**，为登录 Cookie 加上 `Secure`（配合 `HttpOnly`、`SameSite=lax`）。  
+- **`auth.whitelist`**：默认放行 `/docs`、`/api/health`、`/ly/` 等静态页；**`/api/*` 仍受鉴权**。  
+- 启动快照（`logger.py`）会在控制台**打印完整 `auth.api_key`**，生产环境注意终端与日志留存。
 
-### 工具 `http_fetch`
+### 工具 `http_fetch` 与 `web_fetch`
 
-- 出站客户端 **`trust_env=False`**：不因进程环境里的 `HTTP_PROXY` / `ALL_PROXY` 等自动走系统代理，降低被恶意环境变量劫持出站的风险（若业务需要代理，应在代码或显式客户端配置中单独支持）。  
-- 对模型/用户传入的 **Request Headers** 做过滤：丢弃 `Host`、`Content-Length`、`X-Forwarded-*` 等可影响路由或链路的头，减少误用与部分绕过面。  
-- 仍仅允许 `http`/`https`，并对解析后的主机名做 SSRF 方向限制；重定向后的最终 URL 会再次校验。
+- **`http_fetch`**：原始 HTTP 请求（状态码、头、正文），供 API/JSON 等场景。  
+- **`web_fetch`**：GET 后抽取页面主正文；入口 URL 做 SSRF 校验。默认 provider 为 **`jina`**（第三方 API）；**local / trafilatura / html** 路径走本地 httpx，与 `http_fetch` 类似的 `trust_env=False` 与重定向后复验。  
+- 出站客户端 **`trust_env=False`**（`http_fetch` 与 `web_fetch` 本地路径）：不因进程环境里的 `HTTP_PROXY` / `ALL_PROXY` 等自动走系统代理。  
+- 对模型/用户传入的 **Request Headers** 做过滤：丢弃 `Host`、`Content-Length`、`X-Forwarded-*` 等可影响路由或链路的头。  
+- 仍仅允许 `http`/`https`，并对解析后的主机名做 SSRF 方向限制。
+
+### 工具 `web_scrape`
+
+默认在 `tools.built_in` 中启用，但**未**做与 `http_fetch` 相同的 SSRF 校验，且 httpx **未**设 `trust_env=False`。生产环境若不需要，应从 `tools.built_in` 移除，或配合 `agent.tool_policy` 收紧 `network` 层工具。
 
 ### 本机拉起 Redis（`core/cache.py`）
 
-- Windows 上启动 `redis-server` 已改为 **参数列表 + 非 shell** 的 `subprocess.Popen`，避免 `shell=True` 拼接命令带来的注入面。
+- 各平台启动 `redis-server` 均使用 **参数列表、非 shell** 的 subprocess，避免命令拼接注入。  
+- 自动拉起仅在非 Docker、非 production 环境下尝试。
 
 ## 生产环境检查清单
 
@@ -58,8 +67,8 @@
 - [ ] `api.security_profile` 为 `production` 或 `verified`；`verified` 时维护 `trusted_module_hashes`。  
 - [ ] `apis/`、配置目录对运行用户**只读**。  
 - [ ] `cors.origins` 不用 `*`（尤其在使用 Cookie 鉴权时）。  
-- [ ] 密钥走环境变量或密钥管理；日志不打印完整密钥与敏感请求体。  
-- [ ] 按需收紧 `agent.tool_policy` 与 `tools.built_in`。
+- [ ] 密钥走环境变量或密钥管理；日志与启动快照不对外暴露完整密钥。  
+- [ ] 按需收紧 `agent.tool_policy` 与 `tools.built_in`（尤其 `web_scrape` 等 network 工具）。
 
 ## 漏洞报告
 

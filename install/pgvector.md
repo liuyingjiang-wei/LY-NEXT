@@ -1,69 +1,99 @@
-# pgvector 安装
+# pgvector
 
-## Windows（本机 PostgreSQL）
+LY-NEXT 的 RAG 依赖 PostgreSQL 的 **vector** 扩展。日常使用请走统一安装脚本，本文档用于手动排错。
 
-使用脚本（需要 Git + VS Build Tools / VS 2022 C++ 工具链）：
+## 推荐：统一安装（无需单独脚本）
 
 ```powershell
-# 仅检查
-powershell -ExecutionPolicy Bypass -File ".\install\pgvector-windows.ps1" -PostgresMajor 16 -VerifyOnly -UseWeiConfig
-
-# 编译安装 + 在数据库启用扩展
-powershell -ExecutionPolicy Bypass -File ".\install\pgvector-windows.ps1" -PostgresMajor 16 -Build -UseWeiConfig
-
-# 手动指定 vcvars64.bat
-powershell -ExecutionPolicy Bypass -File ".\install\pgvector-windows.ps1" -PostgresMajor 16 -Build -UseWeiConfig -VcVarsPath "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+# Windows，管理员 PowerShell，项目根目录
+.\install.ps1
 ```
 
-完成后在目标库执行（脚本会自动执行）：
+```bash
+# Linux / macOS
+sudo bash install.sh
+```
+
+脚本会：检测 → 安装 PostgreSQL（若缺失）→ 启动服务 → 创建 `ly_next` → `CREATE EXTENSION vector`；Windows 上若缺少扩展文件且本机有 Git + VS C++，会尝试编译 pgvector。
+
+仅补 pgvector：
+
+```powershell
+.\install.ps1 -Pgvector
+```
+
+## 前置条件
+
+运行 `.\install.ps1 -Yes` 或 `.\install.ps1 -ConfigureOnly` 后，下列项通常已自动完成。手动排错时检查：
+
+1. PostgreSQL **TCP 可连接**（Windows：`Start-Service postgresql-x64-17`）
+2. `data/ly_next/config.yaml` 中已有 **`database.password`**（脚本默认 `postgres`）
+3. 数据库 `ly_next` 已存在
+
+验证：
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
+SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
 ```
 
-## Ubuntu / Debian
+## Windows 手动编译（仅当安装脚本无法自动完成时）
 
-使用仓库内 `install/install.sh`（Ubuntu/Debian）时，脚本会尝试安装与当前集群主版本匹配的 `postgresql-<ver>-pgvector` 并在库 `ly_next` 中启用扩展；若你的环境未走该脚本，可手动执行：
+需要：Git、Visual Studio 2022 **C++ 桌面开发** 或 Build Tools（含 `vcvars64.bat`）。
 
-自检接口依赖应用能连上 PostgreSQL：请在 `data/ly_next/config.yaml`（或 `LY_NEXT_CONFIG_DIR`）里配置 `database.password`，或设置环境变量 `POSTGRES_PASSWORD`。密码为空时，LY-NEXT 会按配置依次尝试 TCP 与本机 Unix socket（`database.try_unix_socket`，默认开启）。
+1. 确认 `C:\Program Files\PostgreSQL\17\share\extension\vector.control` 是否存在  
+2. 若不存在，从 [pgvector](https://github.com/pgvector/pgvector) 克隆对应 tag，在 **x64 Native Tools** 环境中：
 
-以 PostgreSQL 16 为例（版本按你的 PostgreSQL 主版本调整）：
+```bat
+set PGROOT=C:\Program Files\PostgreSQL\17
+cd pgvector
+nmake /F Makefile.win clean
+nmake /F Makefile.win
+nmake /F Makefile.win install
+```
+
+3. 在库中执行 `CREATE EXTENSION vector;`
+
+## Linux 包管理器
+
+将 `17` 换成你的 PostgreSQL 主版本（`psql --version`）。
+
+**Ubuntu / Debian**
 
 ```bash
 sudo apt update
-sudo apt install -y postgresql-16-pgvector
+sudo apt install -y postgresql-17-pgvector
+sudo -u postgres createdb ly_next 2>/dev/null || true
 sudo -u postgres psql -d ly_next -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
-如果系统源没有对应版本的包，可使用 PostgreSQL 官方仓库（PGDG），然后安装 `postgresql-<ver>-pgvector`。
-
-## RHEL / Rocky / AlmaLinux
-
-以 PostgreSQL 16 为例：
+**RHEL / Rocky / Alma**
 
 ```bash
-sudo dnf install -y pgvector_16
+sudo dnf install -y pgvector_17
 sudo -u postgres psql -d ly_next -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
-## macOS（Homebrew）
+**macOS**
 
 ```bash
 brew install pgvector
 psql -d ly_next -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
-## Docker（最省事的开发方式）
-
-编排文件在仓库 `docker/` 目录。使用 pgvector 镜像示例：
+## Docker
 
 ```bash
 docker compose -f docker/docker-compose.yml -f docker/compose.pgvector.yml up -d
 ```
 
-若只用默认 Postgres 镜像，也可自建库后按下方 SQL 安装扩展。启动后在库里执行：
+进入库后执行 `CREATE EXTENSION IF NOT EXISTS vector;`。
 
-```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-```
+## 常见问题
 
+| 现象 | 处理 |
+|------|------|
+| `Connection refused` | 启动 PostgreSQL 服务；检查 `postgresql.conf` 中 `port` 与配置一致 |
+| 认证失败 | 在 `config.yaml` 填写正确的 `database.password` |
+| `vector.control` 已有但扩展未启用 | 运行 `.\install.ps1 -Pgvector` 或手动 `CREATE EXTENSION` |
+| Windows 无法启动服务 | 使用**管理员**终端，或于「服务」中手动启动 `postgresql-x64-*` |
