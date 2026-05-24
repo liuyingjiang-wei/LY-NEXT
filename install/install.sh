@@ -362,12 +362,24 @@ run_install() {
   case "$(uname -s)" in
     Linux)
       need_root
-      [ "$INSTALL_REDIS" -eq 1 ] && should_install redis && { info "安装 Redis"; install_redis_linux; }
-      [ "$INSTALL_POSTGRESQL" -eq 1 ] && should_install postgresql && { info "安装 PostgreSQL"; install_postgresql_linux; }
+      if [ "$INSTALL_REDIS" -eq 1 ] && should_install redis; then
+        info "安装 Redis"
+        install_redis_linux
+      fi
+      if [ "$INSTALL_POSTGRESQL" -eq 1 ] && should_install postgresql; then
+        info "安装 PostgreSQL"
+        install_postgresql_linux
+      fi
       ;;
     Darwin)
-      [ "$INSTALL_REDIS" -eq 1 ] && should_install redis && { info "安装 Redis"; install_redis_macos; }
-      [ "$INSTALL_POSTGRESQL" -eq 1 ] && should_install postgresql && { info "安装 PostgreSQL"; install_postgresql_macos; }
+      if [ "$INSTALL_REDIS" -eq 1 ] && should_install redis; then
+        info "安装 Redis"
+        install_redis_macos
+      fi
+      if [ "$INSTALL_POSTGRESQL" -eq 1 ] && should_install postgresql; then
+        info "安装 PostgreSQL"
+        install_postgresql_macos
+      fi
       if [ "$INSTALL_PGVECTOR" -eq 1 ] || [ "$INSTALL_ALL" -eq 1 ]; then
         warn "macOS 请按 install/pgvector.md 手动安装 pgvector"
       fi
@@ -394,10 +406,10 @@ fi
 
 resolve_plan || { ok "已退出。"; exit 0; }
 
-[ "$INSTALL_REDIS" -eq 0 ] && [ "$INSTALL_POSTGRESQL" -eq 0 ] && [ "$INSTALL_PGVECTOR" -eq 0 ] && {
+if [ "$INSTALL_REDIS" -eq 0 ] && [ "$INSTALL_POSTGRESQL" -eq 0 ] && [ "$INSTALL_PGVECTOR" -eq 0 ]; then
   ok "未选择安装项。"
   exit 0
-}
+fi
 
 run_install
 
