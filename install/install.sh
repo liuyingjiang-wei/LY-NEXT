@@ -63,25 +63,69 @@ ly_detect_redis() {
   printf '%s|%s|%s|%s\n' "$cli" "$svc" "$ver" "$reachable"
 }
 
+# Run SQL as postgres (same paths as finalize_postgres_stack / _ubuntu_setup_pgvector).
+ly_psql_postgres_scalar() {
+  local sql="$1"
+  local db="${2:-postgres}"
+  local out="" pw=""
+
+  if ! command -v psql >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if [ -n "${PGPASSWORD:-}" ]; then
+    out="$(psql -U postgres -h 127.0.0.1 -d "$db" -tAc "$sql" 2>/dev/null || true)"
+    out="${out//$'\r'/}"
+    [ -n "$out" ] && { printf '%s' "$out"; return 0; }
+  fi
+
+  pw="${LY_NEXT_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}"
+  out="$(PGPASSWORD="$pw" psql -U postgres -h 127.0.0.1 -d "$db" -tAc "$sql" 2>/dev/null || true)"
+  out="${out//$'\r'/}"
+  [ -n "$out" ] && { printf '%s' "$out"; return 0; }
+
+  out="$(psql -U postgres -d "$db" -tAc "$sql" 2>/dev/null || true)"
+  out="${out//$'\r'/}"
+  [ -n "$out" ] && { printf '%s' "$out"; return 0; }
+
+  if command -v sudo >/dev/null 2>&1; then
+    out="$(sudo -u postgres psql -d "$db" -tAc "$sql" 2>/dev/null || true)"
+    out="${out//$'\r'/}"
+    [ -n "$out" ] && { printf '%s' "$out"; return 0; }
+  fi
+  return 1
+}
+
+ly_postgres_reachable() {
+  [ "$(ly_psql_postgres_scalar "SELECT 1")" = "1" ]
+}
+
 ly_detect_postgresql() {
   local cli=0 svc=0 ver="" reachable=0
   command -v psql >/dev/null 2>&1 && cli=1
   command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet postgresql 2>/dev/null && svc=1
   [ "$cli" -eq 1 ] && ver="$(psql --version 2>/dev/null | head -1 || true)"
-  [ "$cli" -eq 1 ] && psql -U postgres -tAc "SELECT 1" 2>/dev/null | grep -q 1 && reachable=1
+  ly_postgres_reachable && reachable=1
   printf '%s|%s|%s|%s\n' "$cli" "$svc" "$ver" "$reachable"
 }
 
 ly_detect_pgvector() {
   local ok=0 detail=""
-  if command -v psql >/dev/null 2>&1 && psql -U postgres -tAc "SELECT 1" 2>/dev/null | grep -q 1; then
-    if psql -U postgres -d ly_next -tAc "SELECT 1 FROM pg_extension WHERE extname='vector'" 2>/dev/null | grep -q 1; then
-      ok=1; detail="ly_next.vector"
-    else
-      detail="未启用"
-    fi
+  if ! command -v psql >/dev/null 2>&1; then
+    printf '%s|%s\n' 0 "需要 psql 客户端"
+    return
+  fi
+  if ! ly_postgres_reachable; then
+    printf '%s|%s\n' 0 "PostgreSQL 不可连接"
+    return
+  fi
+  if [ "$(ly_psql_postgres_scalar "SELECT 1 FROM pg_extension WHERE extname='vector'" ly_next)" = "1" ]; then
+    ok=1
+    detail="ly_next.vector"
+  elif [ "$(ly_psql_postgres_scalar "SELECT 1 FROM pg_database WHERE datname='ly_next'")" != "1" ]; then
+    detail="库 ly_next 未创建"
   else
-    detail="需先安装 PostgreSQL"
+    detail="未启用 CREATE EXTENSION vector"
   fi
   printf '%s|%s\n' "$ok" "$detail"
 }
@@ -354,14 +398,13 @@ finalize_postgres_stack() {
   command -v psql >/dev/null 2>&1 || return 0
   _ensure_postgres_password
   export PGPASSWORD="${LY_NEXT_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}"
-  psql -U postgres -h 127.0.0.1 -tAc "SELECT 1" 2>/dev/null | grep -q 1 \
-    || psql -U postgres -tAc "SELECT 1" 2>/dev/null | grep -q 1 || {
+  ly_postgres_reachable || {
     warn "PostgreSQL 未响应，跳过建库/pgvector"
     return 0
   }
-  psql -U postgres -h 127.0.0.1 -tc "SELECT 1 FROM pg_database WHERE datname='ly_next'" 2>/dev/null | grep -q 1 \
-    || psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='ly_next'" 2>/dev/null | grep -q 1 \
-    || sudo -u postgres createdb ly_next 2>/dev/null || warn "创建 ly_next 失败"
+  [ "$(ly_psql_postgres_scalar "SELECT 1 FROM pg_database WHERE datname='ly_next'")" = "1" ] \
+    || sudo -u postgres createdb ly_next 2>/dev/null \
+    || warn "创建 ly_next 失败"
   if ly_component_ok pgvector; then return 0; fi
   case "$(detect_linux_id)" in
     ubuntu|debian) _ubuntu_setup_pgvector ;;
