@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from ly_next.core.config import config, get_project_root
+from ly_next.core.config import config, get_data_root, get_project_root
 from ly_next.core.database import RAG_EMBEDDING_DIM, db
 from ly_next.core.logger import get_logger
 from ly_next.rag.chunking import chunk_text
@@ -13,6 +13,33 @@ from ly_next.rag.retrieval_fusion import bm25_rank, mmr_select_vectors, rrf_fuse
 from ly_next.rag.similarity import cosine_similarity, jaccard_similarity
 
 logger = get_logger(__name__)
+
+
+def _resolve_documents_path(raw: str) -> Path:
+    """Resolve RAG corpus path; tolerate ``data/ly_next/...`` when config dir is customized."""
+    s = (raw or "").strip()
+    if not s:
+        return Path()
+    p = Path(s)
+    if p.is_absolute():
+        return p
+    root = get_project_root()
+    candidates: list[Path] = [root / p]
+    dr = get_data_root()
+    parts = p.parts
+    if len(parts) >= 2 and parts[0] == "data" and parts[1] == "ly_next":
+        candidates.append(dr / Path(*parts[2:]))
+    if p.name == "knowledge":
+        candidates.append(dr / "knowledge")
+    seen: set[Path] = set()
+    for target in candidates:
+        key = target.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        if target.exists():
+            return target
+    return candidates[0]
 
 
 class DocumentRetriever:
@@ -44,10 +71,7 @@ class DocumentRetriever:
             return
         self._warned_empty_path = False
 
-        root = get_project_root()
-        target = Path(raw)
-        if not target.is_absolute():
-            target = root / target
+        target = _resolve_documents_path(raw)
 
         file_units: list[tuple[str, str]] = []
         if target.is_file():

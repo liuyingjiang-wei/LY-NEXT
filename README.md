@@ -96,7 +96,7 @@ powershell -ExecutionPolicy Bypass -File ".\install.ps1"
 
 ## 配置
 
-首次启动会创建 **`data/ly_next/config.yaml`**（由仓库默认模板与包内缺省合并）。可选环境变量：
+首次启动会创建 **`data/ly_next/config.yaml`**（由仓库默认模板与包内缺省合并），并自动补齐 **`data/ly_next/prompts/`**（来自包内 `prompt_builtin`）与 **`data/ly_next/knowledge/`**（含 `RAG_README.md` 说明）；仅补缺、不覆盖已有文件。`data/` 仍在 `.gitignore` 中，可放心本地修改。可选环境变量：
 
 - **`LY_NEXT_CONFIG_DIR`**：用户配置目录（可写）
 - **`LY_NEXT_PROJECT_ROOT`**：项目根（模板、`data/` 等）

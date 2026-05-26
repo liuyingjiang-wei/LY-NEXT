@@ -10,6 +10,7 @@ from urllib.parse import quote
 import yaml
 
 from ly_next.core.config_merge import merge_config_dicts
+from ly_next.core.data_bootstrap import bootstrap_data_assets
 from ly_next.core.postgres_port import resolve_database_port
 
 
@@ -254,6 +255,7 @@ class Config:
         self._cache: dict[str, Any] = {}
         self._bootstrap_user_config_file()
         self.load()
+        self._bootstrap_data_assets()
         self._initialized = True
 
     def _bootstrap_user_config_file(self) -> bool:
@@ -272,10 +274,18 @@ class Config:
         self.save()
         return True
 
+    def _bootstrap_data_assets(self) -> dict[str, int]:
+        prompts_cfg = self.get("agent.prompts", {}) or {}
+        sub = "prompts"
+        if isinstance(prompts_cfg, dict):
+            sub = str(prompts_cfg.get("prompts_dir") or "prompts").strip() or "prompts"
+        return bootstrap_data_assets(self.data_root, prompts_subdir=sub)
+
     def ensure_initialized(self) -> dict[str, Any]:
         """Ensure config file exists on disk and reload. Safe to call multiple times."""
         created = self._bootstrap_user_config_file()
         self.load()
+        data_assets = self._bootstrap_data_assets()
         try:
             resolved = self.config_file.resolve()
             exists = resolved.is_file()
@@ -287,6 +297,7 @@ class Config:
             "exists": exists,
             "path": str(resolved),
             "parent_writable": os.access(self.config_file.parent, os.W_OK),
+            "data_assets": data_assets,
         }
 
     def load(self) -> None:

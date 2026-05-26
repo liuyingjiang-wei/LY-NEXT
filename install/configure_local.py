@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from ly_next.core.data_bootstrap import bootstrap_data_assets
+
 
 def _merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     out = copy.deepcopy(base)
@@ -39,15 +41,20 @@ def _bootstrap_config(repo: Path, cfg_file: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Write local LY-NEXT service settings into config.yaml")
+    parser = argparse.ArgumentParser(
+        description="Write local LY-NEXT service settings into config.yaml"
+    )
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--patch-json", default="", help="JSON object to deep-merge into config")
-    parser.add_argument("--patch-file", type=Path, default=None, help="UTF-8 JSON file (preferred on Windows)")
+    parser.add_argument(
+        "--patch-file", type=Path, default=None, help="UTF-8 JSON file (preferred on Windows)"
+    )
     args = parser.parse_args()
 
     repo = args.repo_root.resolve()
     cfg_file = repo / "data" / "ly_next" / "config.yaml"
     _bootstrap_config(repo, cfg_file)
+    bootstrap_data_assets(cfg_file.parent)
 
     data: dict[str, Any] = {}
     if cfg_file.is_file():
