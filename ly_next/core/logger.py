@@ -462,42 +462,6 @@ def _pad_label(label: str, target_width: int) -> str:
     return label + (" " * pad)
 
 
-STARTUP_BOX_INNER = 76
-STARTUP_KV_LABEL_W = 20
-
-
-def _truncate_display_width(s: str, max_w: int) -> str:
-    if _display_width(s) <= max_w:
-        return s
-    out: list[str] = []
-    w = 0
-    for ch in s:
-        cw = 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
-        if w + cw > max_w - 1:
-            out.append("…")
-            break
-        out.append(ch)
-        w += cw
-    return "".join(out)
-
-
-def _fit_display_width(s: str, width: int) -> str:
-    text = _truncate_display_width(s, width)
-    return text + (" " * max(0, width - _display_width(text)))
-
-
-def _box_top(margin: str = "  ") -> None:
-    print(f"{margin}╭{'─' * STARTUP_BOX_INNER}╮")
-
-
-def _box_bottom(margin: str = "  ") -> None:
-    print(f"{margin}╰{'─' * STARTUP_BOX_INNER}╯")
-
-
-def _box_line(text: str, margin: str = "  ") -> None:
-    print(f"{margin}│{_fit_display_width(text, STARTUP_BOX_INNER)}│")
-
-
 def _startup_tty() -> bool:
     return bool(getattr(sys.stdout, "isatty", lambda: False)())
 
@@ -560,26 +524,28 @@ async def _print_service_pulse(name: str, ok: bool, *, label_col: int) -> None:
     sys.stdout.flush()
 
 
+def _startup_wrap_width() -> int:
+    try:
+        cols = shutil.get_terminal_size((80, 24)).columns
+    except Exception:
+        cols = 80
+    return max(36, min(72, cols - 4))
+
+
 async def print_startup_report(report: dict[str, Any]) -> None:
     c = LogColors
-    value_w = STARTUP_BOX_INNER - STARTUP_KV_LABEL_W - 1
-    cont_pad = " " * (STARTUP_KV_LABEL_W + 1)
+    margin = "  "
+    wrap_w = _startup_wrap_width()
 
     def kv(label: str, value: str) -> None:
         raw = str(value) if value is not None else "—"
-        lines = textwrap.wrap(raw, width=value_w) or [raw]
-        lab = _fit_display_width(label, STARTUP_KV_LABEL_W)
-        _box_line(f"{c.DIM}{lab}{c.RESET} {lines[0]}")
+        lines = textwrap.wrap(raw, width=wrap_w) or [raw]
+        print(f"{margin}{c.DIM}{label}{c.RESET} {lines[0]}")
         for extra in lines[1:]:
-            _box_line(cont_pad + extra)
+            print(f"{margin}  {extra}")
 
     def section(title: str) -> None:
-        _box_line(f"{c.MAGENTA}◆{c.RESET} {c.BRIGHT}{title}{c.RESET}")
-
-    def service_row(name: str, ok: bool) -> None:
-        lab = _fit_display_width(str(name), STARTUP_KV_LABEL_W)
-        tag = f"{c.GREEN}{c.BRIGHT}● READY{c.RESET}" if ok else f"{c.YELLOW}○ standby{c.RESET}"
-        _box_line(f"{c.DIM}{lab}{c.RESET} {tag}")
+        print(f"\n{margin}{c.MAGENTA}◆{c.RESET} {c.BRIGHT}{title}{c.RESET}")
 
     title = str(report.get("title", "运行快照"))
     ms = report.get("startup_ms", "--")
@@ -594,11 +560,9 @@ async def print_startup_report(report: dict[str, Any]) -> None:
         meta_parts.append(f"v{ver}")
     meta_parts.append(f"{ms} ms")
     meta_parts.append(str(started))
-    meta_plain = " · ".join(meta_parts)
-    print(f"  {_fit_display_width(meta_plain, STARTUP_BOX_INNER)}")
-    await _animate_bar_fill(STARTUP_BOX_INNER)
+    print(f"{margin}{' · '.join(meta_parts)}")
+    await _animate_bar_fill(min(48, wrap_w + 4))
 
-    _box_top()
     section("启动统计")
     kv("总耗时", f"{ms} ms")
     kv("启动时间", str(started))
@@ -637,21 +601,15 @@ async def print_startup_report(report: dict[str, Any]) -> None:
     wl = auth.get("whitelist") or []
     kv("白名单条数", str(len(wl)))
     for p in wl:
-        path_lines = textwrap.wrap(str(p), width=value_w - 2) or [str(p)]
-        _box_line(f"{cont_pad}{c.DIM}↳{c.RESET} {path_lines[0]}")
-        for extra in path_lines[1:]:
-            _box_line(cont_pad + "  " + extra)
+        kv(f"  ↳ {p}")
 
     services = report.get("services") or {}
     if services:
         section("外部依赖")
         for name, ok in services.items():
-            service_row(str(name), bool(ok))
+            tag = f"{c.GREEN}{c.BRIGHT}● READY{c.RESET}" if ok else f"{c.YELLOW}○ standby{c.RESET}"
+            print(f"{margin}{c.DIM}{name}{c.RESET} {tag}")
 
-    _box_bottom()
-
-    tips = textwrap.wrap("按 Ctrl+C 可停止服务。", width=STARTUP_BOX_INNER)
-    print(f"\n  {c.DIM}{'─' * STARTUP_BOX_INNER}{c.RESET}")
-    for ln in tips:
-        print(f"  {c.DIM}{ln}{c.RESET}")
+    for ln in textwrap.wrap("按 Ctrl+C 可停止服务。", width=wrap_w):
+        print(f"{margin}{c.DIM}{ln}{c.RESET}")
     print()

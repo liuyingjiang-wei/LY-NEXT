@@ -103,7 +103,9 @@ def _ly_console_path(path: str) -> bool:
 def _safe_ly_next_path(path: str) -> str:
     """登录成功后仅允许跳回工作台路径，避免开放重定向。"""
     p = (path or "").strip()
-    if not p.startswith("/") or p.startswith("//"):
+    if not p.startswith("/") or p.startswith("//") or "\\" in p:
+        return "/ly/"
+    if "\0" in p or "@" in p:
         return "/ly/"
     if p in ("/ly/login", "/ly/login/"):
         return "/ly/"

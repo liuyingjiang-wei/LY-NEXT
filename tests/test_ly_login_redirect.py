@@ -6,6 +6,8 @@ from ly_next.main import _login_redirect_url, _safe_ly_next_path
 def test_safe_ly_next_path_rejects_external():
     assert _safe_ly_next_path("//evil.com") == "/ly/"
     assert _safe_ly_next_path("https://x") == "/ly/"
+    assert _safe_ly_next_path("/ly\\evil") == "/ly/"
+    assert _safe_ly_next_path("/ly/foo@bar") == "/ly/"
 
 
 def test_safe_ly_next_path_allows_workbench():
