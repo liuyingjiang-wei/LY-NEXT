@@ -601,7 +601,8 @@ async def print_startup_report(report: dict[str, Any]) -> None:
     wl = auth.get("whitelist") or []
     kv("白名单条数", str(len(wl)))
     for p in wl:
-        kv(f"  ↳ {p}")
+        path = str(p)
+        print(f"{margin}  {c.DIM}-{c.RESET} {path}")
 
     services = report.get("services") or {}
     if services:
