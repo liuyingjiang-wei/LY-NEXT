@@ -72,6 +72,9 @@ def _load_yaml_defaults() -> dict[str, Any]:
     return _minimal_fallback_defaults()
 
 
+UNSAFE_WORKBENCH_WHITELIST = frozenset({"/ly", "/ly/"})
+
+
 def _minimal_fallback_defaults() -> dict[str, Any]:
     return {
         "server": {"host": "0.0.0.0", "port": 8000, "reload": False, "log_level": "info"},
@@ -302,7 +305,26 @@ class Config:
         default_config = copy.deepcopy(_load_yaml_defaults())
         self._config = self._merge_config(default_config, self._config)
         self._migrate_legacy_server_bind()
+        self._migrate_auth_whitelist()
         self._cache.clear()
+
+    def sanitize_auth_whitelist(self) -> list[str]:
+        """移除放行工作台的不安全白名单项，若有变更则写回配置。"""
+        auth = self._config.get("auth")
+        if not isinstance(auth, dict):
+            return []
+        wl = auth.get("whitelist")
+        if not isinstance(wl, list):
+            return []
+        removed = [str(r) for r in wl if r in UNSAFE_WORKBENCH_WHITELIST]
+        if not removed:
+            return []
+        auth["whitelist"] = [r for r in wl if r not in UNSAFE_WORKBENCH_WHITELIST]
+        self.save()
+        return removed
+
+    def _migrate_auth_whitelist(self) -> None:
+        self.sanitize_auth_whitelist()
 
     def _migrate_legacy_server_bind(self) -> None:
         server = self._config.get("server")

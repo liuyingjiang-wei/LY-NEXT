@@ -330,11 +330,11 @@ def create_app() -> FastAPI:
     if config.get("auth.enabled", True) and not config.get("auth.api_key"):
         config.set("auth.api_key", secrets.token_urlsafe(32), save=True)
 
-    wl = config.get("auth.whitelist", []) or []
-    if any(r in ("/ly", "/ly/") for r in wl):
-        logger.warning(
-            "auth.whitelist 包含 /ly 或 /ly/ 时未登录也可打开工作台页面；"
-            "请从配置中移除该项（默认模板已不再放行工作台路径）"
+    removed = config.sanitize_auth_whitelist()
+    if removed:
+        logger.info(
+            "已从 auth.whitelist 移除工作台路径（未登录不可访问 /ly/）："
+            + ", ".join(removed)
         )
 
     def _is_whitelisted(path: str) -> bool:

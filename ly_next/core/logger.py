@@ -462,6 +462,42 @@ def _pad_label(label: str, target_width: int) -> str:
     return label + (" " * pad)
 
 
+STARTUP_BOX_INNER = 76
+STARTUP_KV_LABEL_W = 20
+
+
+def _truncate_display_width(s: str, max_w: int) -> str:
+    if _display_width(s) <= max_w:
+        return s
+    out: list[str] = []
+    w = 0
+    for ch in s:
+        cw = 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+        if w + cw > max_w - 1:
+            out.append("…")
+            break
+        out.append(ch)
+        w += cw
+    return "".join(out)
+
+
+def _fit_display_width(s: str, width: int) -> str:
+    text = _truncate_display_width(s, width)
+    return text + (" " * max(0, width - _display_width(text)))
+
+
+def _box_top(margin: str = "  ") -> None:
+    print(f"{margin}╭{'─' * STARTUP_BOX_INNER}╮")
+
+
+def _box_bottom(margin: str = "  ") -> None:
+    print(f"{margin}╰{'─' * STARTUP_BOX_INNER}╯")
+
+
+def _box_line(text: str, margin: str = "  ") -> None:
+    print(f"{margin}│{_fit_display_width(text, STARTUP_BOX_INNER)}│")
+
+
 def _startup_tty() -> bool:
     return bool(getattr(sys.stdout, "isatty", lambda: False)())
 
@@ -526,47 +562,24 @@ async def _print_service_pulse(name: str, ok: bool, *, label_col: int) -> None:
 
 async def print_startup_report(report: dict[str, Any]) -> None:
     c = LogColors
-    term_w = max(52, shutil.get_terminal_size((80, 24)).columns)
-    wrap_w = max(36, term_w - 6)
-
-    base_labels = (
-        "总耗时",
-        "启动时间",
-        "HTTP",
-        "OpenAPI",
-        "工作台",
-        "登录页",
-        "基址",
-        "路径摘要",
-        "通道",
-        "内存 RSS",
-        "逻辑 CPU",
-        "平台",
-        "Python",
-        "已加载 API 模块",
-        "HTTP 路由数",
-        "WS 路由数",
-        "API 密钥",
-        "请求头",
-        "白名单条数",
-    )
-    label_col = max(_display_width(x) for x in base_labels)
-    for nm in report.get("services") or {}:
-        label_col = max(label_col, _display_width(str(nm)))
-    label_col += 2
-
-    margin = 5
-    value_start = margin + label_col + 1
-    v_wrap = max(24, term_w - value_start - 1)
+    value_w = STARTUP_BOX_INNER - STARTUP_KV_LABEL_W - 1
+    cont_pad = " " * (STARTUP_KV_LABEL_W + 1)
 
     def kv(label: str, value: str) -> None:
         raw = str(value) if value is not None else "—"
-        lines = textwrap.wrap(raw, width=v_wrap) or [raw]
-        lab = _pad_label(label, label_col)
-        print(f"{' ' * margin}{c.DIM}{lab}{c.RESET} {lines[0]}")
-        cont = " " * value_start
+        lines = textwrap.wrap(raw, width=value_w) or [raw]
+        lab = _fit_display_width(label, STARTUP_KV_LABEL_W)
+        _box_line(f"{c.DIM}{lab}{c.RESET} {lines[0]}")
         for extra in lines[1:]:
-            print(f"{cont}{extra}")
+            _box_line(cont_pad + extra)
+
+    def section(title: str) -> None:
+        _box_line(f"{c.MAGENTA}◆{c.RESET} {c.BRIGHT}{title}{c.RESET}")
+
+    def service_row(name: str, ok: bool) -> None:
+        lab = _fit_display_width(str(name), STARTUP_KV_LABEL_W)
+        tag = f"{c.GREEN}{c.BRIGHT}● READY{c.RESET}" if ok else f"{c.YELLOW}○ standby{c.RESET}"
+        _box_line(f"{c.DIM}{lab}{c.RESET} {tag}")
 
     title = str(report.get("title", "运行快照"))
     ms = report.get("startup_ms", "--")
@@ -581,59 +594,64 @@ async def print_startup_report(report: dict[str, Any]) -> None:
         meta_parts.append(f"v{ver}")
     meta_parts.append(f"{ms} ms")
     meta_parts.append(str(started))
-    meta_line = f" {c.DIM}·{c.RESET} ".join(meta_parts)
-    print(f"  {meta_line}{c.RESET}")
-    bar_w = min(term_w - 6, 76)
-    await _animate_bar_fill(bar_w)
+    meta_plain = " · ".join(meta_parts)
+    print(f"  {_fit_display_width(meta_plain, STARTUP_BOX_INNER)}")
+    await _animate_bar_fill(STARTUP_BOX_INNER)
 
-    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}启动统计{c.RESET}")
+    _box_top()
+    section("启动统计")
     kv("总耗时", f"{ms} ms")
     kv("启动时间", str(started))
 
-    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}入口与文档{c.RESET}")
+    section("入口与文档")
     kv("HTTP", report.get("server_url", "—"))
     kv("OpenAPI", report.get("docs_url", "—"))
     kv("工作台", report.get("workbench_url", "—"))
     kv("登录页", report.get("workbench_login_url", "—"))
 
     ws = report.get("ws") or {}
-    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}WebSocket{c.RESET}")
+    section("WebSocket")
     kv("基址", ws.get("url", "—"))
     kv("路径摘要", ws.get("paths", "—"))
     if ws.get("service_line"):
         kv("通道", str(ws["service_line"]))
 
     perf = report.get("perf") or {}
-    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}本进程环境{c.RESET}")
+    section("本进程环境")
     kv("内存 RSS", perf.get("mem", "—"))
     kv("逻辑 CPU", perf.get("cpu", "—"))
     kv("平台", perf.get("platform", "—"))
     kv("Python", perf.get("python", "—"))
 
     api = report.get("api") or {}
-    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}路由规模{c.RESET}")
+    section("路由规模")
     kv("已加载 API 模块", api.get("modules", "—"))
     kv("HTTP 路由数", api.get("http_routes", "—"))
     kv("WS 路由数", api.get("ws_routes", "—"))
 
     auth = report.get("auth") or {}
-    print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}鉴权与白名单{c.RESET}")
+    section("鉴权与白名单")
     api_key_raw = str(auth.get("api_key") or "").strip()
     kv("API 密钥", api_key_raw if api_key_raw else "—")
     kv("请求头", str(auth.get("header", "X-API-Key")))
     wl = auth.get("whitelist") or []
     kv("白名单条数", str(len(wl)))
     for p in wl:
-        print(f"{' ' * value_start}{c.DIM}↳{c.RESET} {p}")
+        path_lines = textwrap.wrap(str(p), width=value_w - 2) or [str(p)]
+        _box_line(f"{cont_pad}{c.DIM}↳{c.RESET} {path_lines[0]}")
+        for extra in path_lines[1:]:
+            _box_line(cont_pad + "  " + extra)
 
     services = report.get("services") or {}
     if services:
-        print(f"\n  {c.MAGENTA}◆{c.RESET} {c.BRIGHT}外部依赖{c.RESET}")
+        section("外部依赖")
         for name, ok in services.items():
-            await _print_service_pulse(str(name), bool(ok), label_col=label_col)
+            service_row(str(name), bool(ok))
 
-    tips = textwrap.wrap("按 Ctrl+C 可停止服务。", width=wrap_w)
-    print(f"\n  {c.DIM}{'─' * min(bar_w, wrap_w)}{c.RESET}")
+    _box_bottom()
+
+    tips = textwrap.wrap("按 Ctrl+C 可停止服务。", width=STARTUP_BOX_INNER)
+    print(f"\n  {c.DIM}{'─' * STARTUP_BOX_INNER}{c.RESET}")
     for ln in tips:
         print(f"  {c.DIM}{ln}{c.RESET}")
     print()
