@@ -5,8 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
-    "build:workbench": "vite build --config .workbench-src/vite.config.js && uv run --no-sync --with pillow python scripts/sync_www_assets.py",
-    "dev:workbench": "vite --config .workbench-src/vite.config.js",
+    "build:workbench": "vite build --config .workbench-src/vite.config.js && uv run --no-sync --with pillow python scripts/compress_firefly_images.py && uv run --no-sync --with pillow python scripts/compress_orbit_images.py && uv run --no-sync --with pillow python scripts/sync_www_assets.py",
+    "dev:workbench": "uv run --no-sync --with pillow python scripts/compress_firefly_images.py && uv run --no-sync --with pillow python scripts/compress_orbit_images.py && vite --config .workbench-src/vite.config.js",
     "preview:workbench": "vite preview --config .workbench-src/vite.config.js"
   },
   "dependencies": {

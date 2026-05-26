@@ -3,6 +3,7 @@ import secrets
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+from urllib.parse import quote
 
 # psycopg / LangGraph AsyncPostgresSaver 在 Windows 上需要 SelectorEventLoop，不能是默认的 ProactorEventLoop
 if sys.platform == "win32":
@@ -82,6 +83,7 @@ def _auth_exempt_path(path: str) -> bool:
         return True
     return path in (
         "/",
+        "/firefly",
         "/ly/login",
         "/ly/login/",
         "/.well-known/appspecific/com.chrome.devtools.json",
@@ -96,6 +98,27 @@ def _ly_console_path(path: str) -> bool:
     if path == "/ly/app" or path.startswith("/ly/app/"):
         return True
     return path == "/ly" or path.startswith("/ly/")
+
+
+def _safe_ly_next_path(path: str) -> str:
+    """登录成功后仅允许跳回工作台路径，避免开放重定向。"""
+    p = (path or "").strip()
+    if not p.startswith("/") or p.startswith("//"):
+        return "/ly/"
+    if p in ("/ly/login", "/ly/login/"):
+        return "/ly/"
+    if p.startswith("/ly/static/"):
+        return "/ly/"
+    if not _ly_console_path(p):
+        return "/ly/"
+    return p
+
+
+def _login_redirect_url(request: Request) -> str:
+    target = request.url.path
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return f"/ly/login?next={quote(target, safe='/?=&')}"
 
 
 @asynccontextmanager
@@ -307,6 +330,13 @@ def create_app() -> FastAPI:
     if config.get("auth.enabled", True) and not config.get("auth.api_key"):
         config.set("auth.api_key", secrets.token_urlsafe(32), save=True)
 
+    wl = config.get("auth.whitelist", []) or []
+    if any(r in ("/ly", "/ly/") for r in wl):
+        logger.warning(
+            "auth.whitelist 包含 /ly 或 /ly/ 时未登录也可打开工作台页面；"
+            "请从配置中移除该项（默认模板已不再放行工作台路径）"
+        )
+
     def _is_whitelisted(path: str) -> bool:
         rules = config.get("auth.whitelist", []) or []
         for r in rules:
@@ -344,7 +374,7 @@ def create_app() -> FastAPI:
             return await call_next(request)
 
         if _ly_console_path(path):
-            return RedirectResponse(url="/ly/login", status_code=302)
+            return RedirectResponse(url=_login_redirect_url(request), status_code=302)
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
     _quiet_http_debug_paths = frozenset(
@@ -390,6 +420,13 @@ def create_app() -> FastAPI:
                 return HTMLResponse(_LOGIN_BUILD_MISSING, status_code=503)
             return HTMLResponse(home.read_text(encoding="utf-8"))
 
+        @app.get("/firefly", include_in_schema=False)
+        async def site_firefly():
+            firefly_html = workbench_dir / "firefly.html"
+            if not firefly_html.is_file():
+                return HTMLResponse(_LOGIN_BUILD_MISSING, status_code=503)
+            return HTMLResponse(firefly_html.read_text(encoding="utf-8"))
+
         @app.get("/ly", include_in_schema=False)
         @app.get("/ly/", include_in_schema=False)
         async def ly_workbench():
@@ -421,7 +458,8 @@ def create_app() -> FastAPI:
             if not api_key:
                 return RedirectResponse(url="/ly/login?e=2", status_code=302)
             if key and api_key == key:
-                resp = RedirectResponse(url="/ly/", status_code=302)
+                next_path = _safe_ly_next_path(str(form.get("next") or ""))
+                resp = RedirectResponse(url=next_path, status_code=302)
                 cookie_secure = bool(config.get("auth.cookie_secure", False))
                 resp.set_cookie(
                     cookie_name,

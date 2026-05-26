@@ -40,7 +40,7 @@
 
 - **`auth.allow_api_key_in_query`**（默认 **`false`**）：为 `true` 时，才允许从 URL 查询参数读取 `api_key`（HTTP 与 **WebSocket `/api/ws*`、MCP WS** 一致）。默认关闭，避免 Key 进入访问日志、Referer；仅本机调试需要时可临时改为 `true`。  
 - **`auth.cookie_secure`**（默认 `false`）：全站 **HTTPS** 时设为 **`true`**，为登录 Cookie 加上 `Secure`（配合 `HttpOnly`、`SameSite=lax`）。  
-- **`auth.whitelist`**：默认放行 `/docs`、`/api/health`、`/ly/` 等静态页；**`/api/*` 仍受鉴权**。  
+- **`auth.whitelist`**：默认放行 `/docs`、`/api/health`、`/ly/login`、`/ly/static/*` 等；**`/ly/` 工作台与 `/api/*` 需登录**。  
 - 启动快照（`logger.py`）会在控制台**打印完整 `auth.api_key`**，生产环境注意终端与日志留存。
 
 ### 工具 `http_fetch` 与 `web_fetch`

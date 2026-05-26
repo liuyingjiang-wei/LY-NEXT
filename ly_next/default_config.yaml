@@ -118,6 +118,48 @@ agent:
     ws_run_summary: true
     max_events_per_run: 500
     store_prompts: false
+  workbench:
+    translate:
+      mode: chat
+      prompt: |
+        你是一名专业翻译。请将以下文本翻译为 {target_language}。
+        保留 Markdown 格式、代码块与行内代码；只输出译文，不要解释、不要加标题。
+
+        原文：
+        {text}
+      languages:
+        - id: en
+          label: English
+          flag: "🇺🇸"
+          target: English
+        - id: zh-CN
+          label: 简体中文
+          flag: "🇨🇳"
+          target: 简体中文
+        - id: zh-TW
+          label: 繁体中文
+          flag: "🇹🇼"
+          target: 繁体中文
+        - id: ja
+          label: 日语
+          flag: "🇯🇵"
+          target: 日语
+        - id: ko
+          label: 韩语
+          flag: "🇰🇷"
+          target: 韩语
+        - id: fr
+          label: 法语
+          flag: "🇫🇷"
+          target: 法语
+        - id: de
+          label: 德语
+          flag: "🇩🇪"
+          target: 德语
+        - id: it
+          label: 意大利语
+          flag: "🇮🇹"
+          target: 意大利语
   prompts:
     enabled: true
     prompts_dir: "prompts"
@@ -281,7 +323,5 @@ auth:
     - "/redoc"
     - "/api/health"
     - "/api/info"
-    - "/ly"
-    - "/ly/"
     - "/ly/login"
     - "/ly/static/*"
