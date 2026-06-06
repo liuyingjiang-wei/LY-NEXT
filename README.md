@@ -72,19 +72,19 @@ LY-NEXT 是一套可自托管的 Agent 运行时：HTTP / WebSocket 对话、MCP
 
 ```mermaid
 flowchart LR
-  subgraph Client
+  subgraph client["Client"]
     WB[Web 工作台]
     API[HTTP / WS 客户端]
     QQ[NapCat]
   end
 
-  subgraph LY-NEXT
+  subgraph core["LY-NEXT"]
     FA[FastAPI]
     AG[Agent 层]
     TL[Tools / MCP]
   end
 
-  subgraph Optional
+  subgraph optional["Optional"]
     PG[(PostgreSQL)]
     RD[(Redis)]
   end
