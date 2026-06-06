@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 DEFAULT_ONEBOT11_WS_PATHS: tuple[str, ...] = (
-    "/onebot/v11/ws",
     "/OneBotv11",
+    "/onebot/v11/ws",
 )
+
+DEFAULT_NAPCAT_WS_PATH = "/OneBotv11"
 
 
 def normalize_ws_path(path: str) -> str:
@@ -29,4 +31,7 @@ def merge_ws_paths(configured: tuple[str, ...]) -> tuple[str, ...]:
             continue
         seen.add(norm)
         out.append(norm)
+    if DEFAULT_NAPCAT_WS_PATH in out:
+        out.remove(DEFAULT_NAPCAT_WS_PATH)
+        out.insert(0, DEFAULT_NAPCAT_WS_PATH)
     return tuple(out)

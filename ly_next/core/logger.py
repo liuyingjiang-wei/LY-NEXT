@@ -45,17 +45,20 @@ COLOR_SCHEMES = {
 }
 
 LOG_STYLES = {
-    "trace": {"symbol": "-", "color": "DIM"},
-    "debug": {"symbol": "#", "color": "CYAN"},
-    "info": {"symbol": "i", "color": "BLUE"},
-    "warn": {"symbol": "!", "color": "YELLOW"},
-    "warning": {"symbol": "!", "color": "YELLOW"},
-    "error": {"symbol": "x", "color": "RED"},
-    "critical": {"symbol": "X", "color": "RED"},
-    "success": {"symbol": "+", "color": "GREEN"},
-    "mark": {"symbol": "*", "color": "MAGENTA"},
-    "tip": {"symbol": "~", "color": "YELLOW"},
-    "done": {"symbol": "+", "color": "GREEN"},
+    "trace": {"symbol": "·", "color": "DIM"},
+    "debug": {"symbol": "◎", "color": "CYAN"},
+    "info": {"symbol": "●", "color": "BLUE"},
+    "warn": {"symbol": "⚠", "color": "YELLOW"},
+    "warning": {"symbol": "⚠", "color": "YELLOW"},
+    "error": {"symbol": "✖", "color": "RED"},
+    "critical": {"symbol": "‼", "color": "RED"},
+    "success": {"symbol": "✓", "color": "GREEN"},
+    "mark": {"symbol": "◆", "color": "MAGENTA"},
+    "tip": {"symbol": "→", "color": "YELLOW"},
+    "done": {"symbol": "✓", "color": "GREEN"},
+    "start": {"symbol": "▶", "color": "CYAN"},
+    "stop": {"symbol": "■", "color": "YELLOW"},
+    "network": {"symbol": "⇄", "color": "CYAN"},
 }
 
 
@@ -219,6 +222,7 @@ class EnhancedLogger:
             "running": "⚙",
             "complete": "✓",
             "failed": "✗",
+            "network": "⇄",
         }
 
         icon = status_icons.get(status.lower(), "•")
@@ -301,15 +305,51 @@ class ColoredFormatter(logging.Formatter):
         "CRITICAL": LogColors.MAGENTA + LogColors.BRIGHT,
     }
 
+    LEVEL_ICONS = {
+        "DEBUG": "◎",
+        "INFO": "●",
+        "WARNING": "⚠",
+        "ERROR": "✖",
+        "CRITICAL": "‼",
+    }
+
+    ACCESS_ICON = "⇢"
+
+    def __init__(self, *, access: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self._access = access
+
     def format(self, record: logging.LogRecord) -> str:
         original = record.levelname
         color = self.LEVEL_COLORS.get(original, LogColors.RESET)
-        padded = f"{original:<8}"
+        if self._access:
+            icon = self.ACCESS_ICON
+            label = "ACCESS"
+        else:
+            icon = self.LEVEL_ICONS.get(original, "•")
+            label = original
+        padded = f"{icon} {label:<7}"
         record.levelname = f"{color}{padded}{LogColors.RESET}"
         try:
             return super().format(record)
         finally:
             record.levelname = original
+
+
+class UvicornConsoleFormatter(ColoredFormatter):
+    """Uvicorn / Starlette console lines with the same icon + color scheme."""
+
+    def __init__(self, access: bool = False):
+        super().__init__(
+            fmt="%(asctime)s │ %(levelname)s │ %(message)s",
+            datefmt="%H:%M:%S",
+            access=access,
+        )
+
+
+class UvicornAccessFormatter(UvicornConsoleFormatter):
+    def __init__(self):
+        super().__init__(access=True)
 
 
 class UnifiedHeaderFormatter(logging.Formatter):
@@ -355,7 +395,8 @@ def setup_logging(
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.DEBUG)
     console_formatter = ColoredFormatter(
-        UnifiedHeaderFormatter.CONSOLE_FORMAT, datefmt=UnifiedHeaderFormatter.DATE_FORMAT
+        fmt=UnifiedHeaderFormatter.CONSOLE_FORMAT,
+        datefmt=UnifiedHeaderFormatter.DATE_FORMAT,
     )
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
@@ -412,20 +453,15 @@ def refresh_ly_next_log_level_from_config() -> None:
 
 
 def get_uvicorn_log_config() -> dict[str, Any]:
-    """Align uvicorn console lines with app logging (time │ level │ message)."""
+    """Align uvicorn console lines with app logging (time │ icon level │ message)."""
     import uvicorn.config as uvconf
 
     cfg = copy.deepcopy(uvconf.LOGGING_CONFIG)
-    column_fmt = "%(asctime)s │ %(levelname)-8s │ %(message)s"
     cfg["formatters"]["default"] = {
-        "()": "logging.Formatter",
-        "format": column_fmt,
-        "datefmt": "%H:%M:%S",
+        "()": "ly_next.core.logger.UvicornConsoleFormatter",
     }
     cfg["formatters"]["access"] = {
-        "()": "logging.Formatter",
-        "format": "%(asctime)s │ ACCESS   │ %(message)s",
-        "datefmt": "%H:%M:%S",
+        "()": "ly_next.core.logger.UvicornAccessFormatter",
     }
     cfg["handlers"]["default"]["stream"] = "ext://sys.stdout"
     cfg["loggers"]["uvicorn.error"] = {

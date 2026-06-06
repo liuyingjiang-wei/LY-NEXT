@@ -110,7 +110,7 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "onebot11": {
                 "enabled": True,
                 "access_token": "",
-                "ws_paths": ["/onebot/v11/ws", "/OneBotv11"],
+                "ws_paths": ["/OneBotv11", "/onebot/v11/ws"],
                 "auto_reply": {
                     "enabled": True,
                     "mode": "react",
@@ -353,7 +353,7 @@ class Config:
         self.sanitize_auth_whitelist()
 
     def _migrate_onebot11_config(self) -> None:
-        from ly_next.bridge.onebot11.paths import DEFAULT_ONEBOT11_WS_PATHS
+        from ly_next.bridge.onebot11.paths import DEFAULT_ONEBOT11_WS_PATHS, merge_ws_paths
 
         bridge = self._config.get("bridge")
         if not isinstance(bridge, dict):
@@ -368,6 +368,16 @@ class Config:
         changed = False
         if isinstance(legacy, dict) and legacy.get("access_token") and not ob.get("access_token"):
             ob["access_token"] = legacy["access_token"]
+            changed = True
+
+        raw_paths = ob.get("ws_paths")
+        if isinstance(raw_paths, list):
+            merged = list(merge_ws_paths(tuple(str(p) for p in raw_paths)))
+            if merged != raw_paths:
+                ob["ws_paths"] = merged
+                changed = True
+        elif not raw_paths:
+            ob["ws_paths"] = list(DEFAULT_ONEBOT11_WS_PATHS)
             changed = True
 
         auth = self._config.get("auth")

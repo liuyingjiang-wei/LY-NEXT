@@ -507,47 +507,91 @@ def create_app() -> FastAPI:
 def run():
     import argparse
 
+    from ly_next.core.server_port import (
+        ENV_PORT,
+        is_port_in_use,
+        resolve_startup_port,
+    )
+
     parser = argparse.ArgumentParser(
         description="LY-Next Agent Framework Server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                  # Start with default settings (0.0.0.0:8000)
-  %(prog)s --port 9000     # Start on port 9000
-  %(prog)s --host 127.0.0.1  # Bind to localhost only
-  %(prog)s --reload        # Enable auto-reload for development
+  %(prog)s                     # 交互选择端口（TTY）或使用配置默认 8000
+  %(prog)s --port 9000         # 指定端口 9000
+  %(prog)s --host 127.0.0.1    # 仅本机监听
+  %(prog)s --reload            # 开发热重载
+  LY_NEXT_PORT=9000 %(prog)s   # 环境变量指定端口（非交互）
         """,
     )
 
     parser.add_argument("--host", default=None, help="Host to bind to (default: 0.0.0.0)")
     parser.add_argument(
-        "-p", "--port", type=int, default=None, help="Port to bind to (default: 8000)"
+        "-p",
+        "--port",
+        type=int,
+        default=None,
+        help=f"Port to bind to (default: config or {ENV_PORT} or interactive)",
+    )
+    parser.add_argument(
+        "--no-prompt",
+        action="store_true",
+        help="Skip interactive port prompt; use config / env / default",
     )
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
     args = parser.parse_args()
 
     host = args.host or config.get("server.host", "0.0.0.0")
-    port = args.port or config.get("server.port", 8000)
+    config_port = config.get("server.port", 8000)
+    port = resolve_startup_port(
+        args.port,
+        config_port,
+        host=host,
+        interactive=not args.no_prompt,
+    )
     reload = args.reload or config.get("server.reload", False)
     log_level = str(config.get("server.log_level", "info")).lower()
 
     if args.host:
         config.set("server.host", host)
-    if args.port:
+    if args.port or port != int(config_port or 8000):
         config.set("server.port", port)
     if args.reload:
         config.set("server.reload", reload)
 
-    logger.info("─" * 44)
-    logger.info("Starting LY-Next Server")
-    logger.info("Host: %s", host)
-    logger.info("Port: %s", port)
-    logger.info("Reload: %s", reload)
-    logger.info("Uvicorn server.log_level: %s", log_level)
-    logger.info("App logging.level: %s", config.get("logging.level", "info"))
-    logger.info("─" * 44)
-
     refresh_ly_next_log_level_from_config()
+
+    logger.subtitle("启动 LY-Next 服务")
+    logger.status(f"Host {host}", "info", "CYAN")
+    logger.status(f"Port {port}", "info", "CYAN")
+    logger.status(f"Reload {'on' if reload else 'off'}", "running" if reload else "info", "YELLOW")
+    logger.status(
+        f"Uvicorn {log_level} · App {config.get('logging.level', 'info')}",
+        "info",
+        "CYAN",
+    )
+
+    bind_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    if is_port_in_use(bind_host, port):
+        alt = port + 1
+        logger.error(f"端口 {port} 已被占用，无法绑定")
+        logger.tip(f"可尝试: uv run ly --port {alt}  或  LY_NEXT_PORT={alt} uv run ly --no-prompt")
+        raise SystemExit(1)
+
+    if config.get("bridge.onebot11.enabled", False):
+        napcat_path = "/OneBotv11"
+        ob_paths = config.get("bridge.onebot11.ws_paths") or []
+        if ob_paths:
+            napcat_path = str(ob_paths[0])
+        display_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+        logger.status(
+            f"NapCat WS ws://{display_host}:{port}{napcat_path}",
+            "network",
+            "MAGENTA",
+        )
+
+    logger.line("─", 44, "DIM")
 
     # uvicorn 在 Win 上 loop=auto 会显式 new ProactorEventLoop，与 psycopg 不兼容；loop=none 走策略
     uvicorn.run(

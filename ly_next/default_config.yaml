@@ -341,8 +341,8 @@ bridge:
     max_concurrent_replies: 8
     access_token: "${ONEBOT11_ACCESS_TOKEN:-}"
     ws_paths:
-      - "/onebot/v11/ws"
       - "/OneBotv11"
+      - "/onebot/v11/ws"
     new_chat_commands:
       - "/新对话"
       - "/new"

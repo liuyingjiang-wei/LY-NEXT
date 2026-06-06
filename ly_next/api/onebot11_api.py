@@ -32,7 +32,7 @@ async def onebot11_status():
     host = str(config.get("server.host", "0.0.0.0") or "0.0.0.0").strip()
     napcat_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
     port = int(config.get("server.port", 8000) or 8000)
-    primary_path = settings.ws_paths[0] if settings.ws_paths else "/onebot/v11/ws"
+    primary_path = settings.ws_paths[0] if settings.ws_paths else "/OneBotv11"
     bound = sum(1 for n in NAPCAT_ACTION_NAMES if is_bindable_action_name(n))
     return {
         "enabled": settings.enabled,
