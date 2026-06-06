@@ -1,5 +1,4 @@
 import copy
-import json
 import os
 import shutil
 import subprocess
@@ -12,17 +11,16 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from ly_next.agent.deps import create_agent_deps
-from ly_next.agent.factory import AgentFactory
-from ly_next.agent.model_router import resolve_model_routing, routing_payload
-from ly_next.agent.prompt_augment import augment_messages_async
-from ly_next.agent.startup_memory import invalidate_startup_memory_cache
-from ly_next.agent.vision_precaption import apply_vision_precaption_if_needed
-from ly_next.api.bridge import (
-    SUPPORTED_CHANNELS,
-    emit_channel_event,
-    is_supported_channel,
+from ly_next.agent.chat_pipeline import (
+    ChatTurnRequest,
+    await_user_persist,
+    build_agent_deps,
+    prepare_chat_turn,
+    run_agent_on_prepared,
 )
+from ly_next.agent.factory import AgentFactory
+from ly_next.agent.image_reply import finalize_agent_reply
+from ly_next.agent.startup_memory import invalidate_startup_memory_cache
 from ly_next.core.cache import cache
 from ly_next.core.config import config
 from ly_next.core.database import db
@@ -30,14 +28,9 @@ from ly_next.core.logger import get_logger, refresh_ly_next_log_level_from_confi
 from ly_next.core.observability import attach_run_fields
 from ly_next.core.run_lifecycle import finish_observed_run, start_observed_run
 from ly_next.core.run_telemetry import snapshot_usage_for_api
-from ly_next.core.stdin_journal import (
-    extract_line_source,
-    normalize_stdin_line,
-    parse_log_line,
-    publish_stdin_line,
-)
 from ly_next.core.task_manager import get_task_manager
-from ly_next.core.thread_persistence import persist_chat_turn, prepare_messages_for_agent
+from ly_next.core.thread_persistence import persist_chat_turn
+from ly_next.messaging.models import mixed_message_to_dict
 from ly_next.models.factory import LLMFactory
 from ly_next.rag import reset_document_retriever, reset_example_selector
 from ly_next.tools import get_tool_registry
@@ -79,12 +72,21 @@ _SETTINGS_EDITABLE_ROOTS = frozenset(
         "tools",
         "api",
         "auth",
+        "bridge",
     }
 )
-_SETTINGS_RESTART_ROOTS = frozenset({"server", "database", "redis", "services"})
+_SETTINGS_RESTART_ROOTS = frozenset({"server", "database", "redis", "services", "bridge"})
 _SETTINGS_MASK = "***"
 _SETTINGS_SECRET_NORMALIZED = frozenset(
-    {"api-key", "password", "auth-token", "authorization", "x-api-key", "proxy-authorization"}
+    {
+        "api-key",
+        "access-token",
+        "password",
+        "auth-token",
+        "authorization",
+        "x-api-key",
+        "proxy-authorization",
+    }
 )
 
 
@@ -234,20 +236,6 @@ class ChatRequest(BaseModel):
 class TaskCreateRequest(BaseModel):
     name: str
     metadata: dict[str, Any] | None = None
-
-
-class BridgeEmitRequest(BaseModel):
-    event: str = "event"
-    source: str = "http"
-    payload: dict[str, Any] = {}
-
-
-class StdinReplayRequest(BaseModel):
-    record: dict[str, Any] | None = None
-    journal_line: str | None = None
-    log_line: str | None = None
-    line: str | None = None
-    source: str = "http_replay"
 
 
 @router.get("/health")
@@ -552,51 +540,59 @@ async def chat(request: ChatRequest):
     await manager.update(task_id, status="running")
 
     try:
-        thread_id, messages, user_to_persist = await prepare_messages_for_agent(
-            request.thread_id, list(request.messages)
+        prepared = await prepare_chat_turn(
+            ChatTurnRequest(
+                client_messages=list(request.messages),
+                thread_id=request.thread_id,
+                mode=request.mode,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                provider=request.provider,
+                model=request.model,
+                router_hint=request.router_hint,
+                use_model_router=request.use_model_router,
+                skip_vision_precaption=request.vision_precaption is False,
+                turn_meta_extra={"task_id": task_id, "mode": request.mode},
+            )
         )
     except ValueError as e:
         await manager.fail(task_id, str(e))
         raise HTTPException(status_code=404, detail=str(e)) from e
 
-    messages = await apply_vision_precaption_if_needed(
-        messages,
-        skip_precaption=request.vision_precaption is False,
-    )
-    routed = await resolve_model_routing(
-        messages,
-        request_provider=request.provider,
-        request_model=request.model,
-        router_hint=request.router_hint,
-        enabled_override=request.use_model_router,
-    )
-    router_payload = routing_payload(routed)
     telemetry_token = await start_observed_run(
-        task_id, mode=request.mode, thread_id=thread_id, router=router_payload
+        task_id,
+        mode=request.mode,
+        thread_id=prepared.thread_id,
+        router=prepared.router_payload,
     )
     run_status = "ok"
     run_error: str | None = None
     snap: dict[str, Any] | None = None
     result = ""
+    mixed_payload: dict[str, Any] | None = None
+    image_urls: list[str] = []
     try:
-        turn_meta = {"task_id": task_id, "mode": request.mode}
-        await persist_chat_turn(thread_id, user_to_persist, None, metadata=turn_meta)
-
-        deps = create_agent_deps(provider=routed.provider, model=routed.model)
-        deps.temperature = request.temperature
-        deps.max_tokens = request.max_tokens
-        deps.tool_registry = get_tool_registry()
-        deps.thread_id = thread_id
-
-        messages = await augment_messages_async(messages)
-        agent = AgentFactory.create_agent(mode=request.mode, deps=deps)
-        result = await agent.run(messages)
+        deps = build_agent_deps(
+            prepared,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+        )
+        result = await run_agent_on_prepared(prepared, deps, mode=request.mode)
+        await await_user_persist(prepared)
+        _, mixed, _ = await finalize_agent_reply(deps, result)
+        mixed_payload = mixed_message_to_dict(mixed)
+        image_urls = mixed.image_urls()
 
         await persist_chat_turn(
-            thread_id,
+            prepared.thread_id,
             [],
             result,
-            metadata={**turn_meta, "run_id": task_id},
+            metadata={
+                **prepared.turn_meta,
+                "run_id": task_id,
+                "mixed_message": mixed_payload,
+                "image_urls": image_urls,
+            },
         )
 
         await manager.complete(task_id, result=result)
@@ -612,92 +608,15 @@ async def chat(request: ChatRequest):
 
     if snap:
         logger.info("[api.chat] task=%s run_summary=%s", task_id, snap)
-    return attach_run_fields(
-        {
-            "task_id": task_id,
-            "run_id": task_id,
-            "thread_id": thread_id,
-            "response": result,
-            "usage": snapshot_usage_for_api(snap),
-            "router": router_payload,
-        },
-        snap,
-    )
-
-
-@router.get("/bridge/channels")
-async def bridge_channels():
-    return {"channels": sorted(SUPPORTED_CHANNELS), "count": len(SUPPORTED_CHANNELS)}
-
-
-@router.post("/bridge/{channel}/emit")
-async def bridge_emit(channel: str, request: BridgeEmitRequest):
-    if not is_supported_channel(channel):
-        raise HTTPException(status_code=404, detail=f"Unsupported channel: {channel}")
-    receivers = await emit_channel_event(
-        channel,
-        request.event or f"{channel}_event",
-        {
-            "source": request.source,
-            "payload": request.payload,
-        },
-    )
-    return {"success": True, "channel": channel, "receivers": receivers}
-
-
-@router.post("/bridge/stdin/replay")
-async def bridge_stdin_replay(request: StdinReplayRequest):
-    def _line_src_from_rec(rec: dict[str, Any]) -> tuple[str, str]:
-        pair = extract_line_source(rec)
-        if not pair:
-            raise HTTPException(status_code=400, detail="record has no string line field")
-        return pair
-
-    def _require_nonempty(raw: str) -> str:
-        n = normalize_stdin_line(raw)
-        if n is None:
-            raise HTTPException(status_code=400, detail="stdin line is empty")
-        return n
-
-    async def _replay(line: str, src: str, *, with_source: bool) -> dict[str, Any]:
-        receivers = await publish_stdin_line(line, src, replay=True)
-        out: dict[str, Any] = {"success": True, "channel": "stdin", "receivers": receivers}
-        if with_source:
-            out["source"] = src
-        return out
-
-    if request.record:
-        ln, src = _line_src_from_rec(request.record)
-        return await _replay(_require_nonempty(ln), src, with_source=True)
-
-    jl = (request.journal_line or "").strip()
-    if jl:
-        try:
-            rec = json.loads(jl)
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"journal_line is not JSON: {e}") from e
-        if not isinstance(rec, dict):
-            raise HTTPException(status_code=400, detail="journal_line must be one JSON object")
-        ln, src = _line_src_from_rec(rec)
-        return await _replay(_require_nonempty(ln), src, with_source=True)
-
-    raw_log = (request.log_line or "").strip()
-    if raw_log:
-        rec = parse_log_line(raw_log)
-        if not rec:
-            raise HTTPException(
-                status_code=400,
-                detail="log_line must contain legacy LY_NEXT_STDIN payload",
-            )
-        ln, src = _line_src_from_rec(rec)
-        return await _replay(_require_nonempty(ln), src, with_source=True)
-
-    if request.line is not None:
-        ln = _require_nonempty(str(request.line))
-        src = request.source.strip() or "http_replay"
-        return await _replay(ln, src, with_source=False)
-
-    raise HTTPException(
-        status_code=400,
-        detail="Provide record, journal_line, log_line (legacy), or non-empty line",
-    )
+    body: dict[str, Any] = {
+        "task_id": task_id,
+        "run_id": task_id,
+        "thread_id": prepared.thread_id,
+        "response": result,
+        "usage": snapshot_usage_for_api(snap),
+        "router": prepared.router_payload,
+    }
+    if mixed_payload is not None:
+        body["mixed_message"] = mixed_payload
+        body["image_urls"] = image_urls
+    return attach_run_fields(body, snap)

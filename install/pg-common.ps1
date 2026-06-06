@@ -1,4 +1,4 @@
-# Shared PostgreSQL helpers for install/install.ps1 (Windows)
+﻿# Shared PostgreSQL helpers for install/install.ps1 (Windows)
 if ($PSScriptRoot) {
     $script:PgCommonInstallDir = $PSScriptRoot
 }

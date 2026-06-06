@@ -11,7 +11,7 @@ import yaml
 
 from ly_next.core.config_merge import merge_config_dicts
 from ly_next.core.data_bootstrap import bootstrap_data_assets
-from ly_next.core.postgres_port import resolve_database_port
+from ly_next.core.postgres_port import resolve_database_password, resolve_database_port
 
 
 def get_project_root() -> Path:
@@ -102,7 +102,20 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                 "/",
                 "/ly/login",
                 "/ly/static/*",
+                "/onebot/v11/ws",
+                "/OneBotv11",
             ],
+        },
+        "bridge": {
+            "onebot11": {
+                "enabled": True,
+                "access_token": "",
+                "ws_paths": ["/onebot/v11/ws", "/OneBotv11"],
+                "auto_reply": {
+                    "enabled": True,
+                    "mode": "react",
+                },
+            },
         },
         "llm": {"default_provider": "openai", "request_timeout": 60},
         "openai_llm": {"model": "gpt-4o-mini", "api_key": "", "base_url": ""},
@@ -312,11 +325,13 @@ class Config:
             self._config = copy.deepcopy(_load_yaml_defaults())
             self.save()
 
+        default_config = _resolve_env_vars(copy.deepcopy(_load_yaml_defaults()))
         self._config = _resolve_env_vars(self._config)
-        default_config = copy.deepcopy(_load_yaml_defaults())
         self._config = self._merge_config(default_config, self._config)
+        self._config = _resolve_env_vars(self._config)
         self._migrate_legacy_server_bind()
         self._migrate_auth_whitelist()
+        self._migrate_onebot11_config()
         self._cache.clear()
 
     def sanitize_auth_whitelist(self) -> list[str]:
@@ -336,6 +351,39 @@ class Config:
 
     def _migrate_auth_whitelist(self) -> None:
         self.sanitize_auth_whitelist()
+
+    def _migrate_onebot11_config(self) -> None:
+        from ly_next.bridge.onebot11.paths import DEFAULT_ONEBOT11_WS_PATHS
+
+        bridge = self._config.get("bridge")
+        if not isinstance(bridge, dict):
+            bridge = {}
+            self._config["bridge"] = bridge
+        ob = bridge.get("onebot11")
+        if not isinstance(ob, dict):
+            ob = {}
+            bridge["onebot11"] = ob
+
+        legacy = self._config.get("onebotv11")
+        changed = False
+        if isinstance(legacy, dict) and legacy.get("access_token") and not ob.get("access_token"):
+            ob["access_token"] = legacy["access_token"]
+            changed = True
+
+        auth = self._config.get("auth")
+        if isinstance(auth, dict):
+            wl = auth.get("whitelist")
+            if not isinstance(wl, list):
+                wl = []
+            existing = {str(x) for x in wl}
+            for p in DEFAULT_ONEBOT11_WS_PATHS:
+                if p not in existing:
+                    wl.append(p)
+                    changed = True
+            auth["whitelist"] = wl
+
+        if changed:
+            self.save()
 
     def _migrate_legacy_server_bind(self) -> None:
         server = self._config.get("server")
@@ -385,9 +433,10 @@ class Config:
     def iter_database_urls(self) -> list[str]:
         db = self.get("database", {})
         user = quote(str(db.get("username", "postgres")), safe="")
-        pw = str(db.get("password", "") or "")
+        db_dict = db if isinstance(db, dict) else {}
+        pw = resolve_database_password(db_dict)
         host = str(db.get("host", "localhost"))
-        port = resolve_database_port(db if isinstance(db, dict) else {})
+        port = resolve_database_port(db_dict)
         dbname = quote(str(db.get("database", "ly_next")), safe="")
 
         urls: list[str] = []

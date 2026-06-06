@@ -4,13 +4,13 @@ import uuid
 
 import pytest
 
+from ly_next.core import run_memory
 from ly_next.core.run_store import (
     _MAX_MEM_RUNS,
     clear_memory_runs_for_tests,
     get_run_store,
     patch_memory_run_loop_kind,
 )
-from ly_next.core import run_memory
 from ly_next.core.run_telemetry import (
     begin_run,
     emit_run_event,
@@ -98,7 +98,7 @@ async def test_patch_memory_run_loop_kind():
 @pytest.mark.asyncio
 async def test_memory_eviction():
     store = get_run_store()
-    for i in range(_MAX_MEM_RUNS + 5):
+    for _i in range(_MAX_MEM_RUNS + 5):
         rid = str(uuid.uuid4())
         await store.start_run(rid, mode="react")
         await store.finish_run(

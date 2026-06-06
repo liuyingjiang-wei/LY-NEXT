@@ -196,9 +196,17 @@ def get_native_system_prefix() -> str:
     name = str(cfg.get("native_system_file") or "native_system.md").strip() or "native_system.md"
     rel = _safe_relative_path(name)
     if rel is None:
-        return _FALLBACK_NATIVE
-    text = _load_text(rel)
-    return text if text else _FALLBACK_NATIVE
+        base = _FALLBACK_NATIVE
+    else:
+        text = _load_text(rel)
+        base = text if text else _FALLBACK_NATIVE
+    img_name = str(cfg.get("image_capabilities_file") or "image_capabilities.md").strip()
+    img_rel = _safe_relative_path(img_name) if img_name else None
+    if img_rel is not None:
+        extra = _load_text(img_rel)
+        if extra:
+            base = f"{base.rstrip()}\n\n{extra}"
+    return base
 
 
 def build_compat_decision_prompt(

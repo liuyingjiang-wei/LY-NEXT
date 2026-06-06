@@ -6,26 +6,24 @@ from typing import Any
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
-from ly_next.agent.deps import create_agent_deps
-from ly_next.agent.factory import AgentFactory
-from ly_next.agent.model_router import resolve_model_routing, routing_payload
-from ly_next.agent.prompt_augment import augment_messages_async
-from ly_next.agent.vision_precaption import apply_vision_precaption_if_needed
-from ly_next.api.bridge import (
-    SUPPORTED_CHANNELS,
-    emit_channel_event,
-    is_supported_channel,
+from ly_next.agent.chat_pipeline import (
+    ChatTurnRequest,
+    await_user_persist,
+    build_agent_deps,
+    prepare_chat_turn,
+    run_agent_on_prepared,
+    run_agent_stream_on_prepared,
 )
+from ly_next.agent.image_reply import finalize_agent_reply
 from ly_next.api.websocket import get_task_broadcaster, get_ws_manager
 from ly_next.core.auth_http import extract_api_key_from_websocket
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.core.observability import attach_run_fields, ws_run_summary_enabled
 from ly_next.core.run_lifecycle import finish_observed_run, start_observed_run
-from ly_next.core.stdin_journal import normalize_stdin_line, publish_stdin_line
 from ly_next.core.task_manager import get_task_manager
-from ly_next.core.thread_persistence import persist_chat_turn, prepare_messages_for_agent
-from ly_next.tools import get_tool_registry
+from ly_next.core.thread_persistence import persist_chat_turn
+from ly_next.messaging.models import mixed_message_to_dict
 
 router = APIRouter(tags=["websocket"])
 public_router = APIRouter(tags=["websocket"])
@@ -82,72 +80,22 @@ async def websocket_endpoint(websocket: WebSocket, group: str | None = Query(Non
         await ws_manager.disconnect(websocket)
 
 
-@router.websocket("/ws/{channel}")
-@public_router.websocket("/ws/{channel}")
-async def websocket_channel_bridge(websocket: WebSocket, channel: str):
-    if not is_supported_channel(channel):
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "message": f"Unsupported channel: {channel}"})
-        await websocket.close(code=1003)
-        return
-    if not await _ws_auth_ok(websocket):
-        return
-    await ws_manager.connect(websocket, group=channel)
-    await websocket.send_json(
-        {
-            "type": "channel_connected",
-            "channel": channel,
-            "supported_channels": sorted(SUPPORTED_CHANNELS),
-        }
-    )
-
+async def _pump_chat_stream_prepared(
+    prepared: Any,
+    deps: Any,
+    mode: str,
+    queue: asyncio.Queue,
+) -> None:
+    how = "finished"
     try:
-        while True:
-            data = await websocket.receive_json()
-            msg_type = data.get("type", "")
-
-            if msg_type == "ping":
-                await websocket.send_json({"type": "pong", "channel": channel})
-                continue
-
-            if channel == "stdin" and msg_type == "stdin_line":
-                raw = data.get("line")
-                if raw is None:
-                    raw = data.get("text", "")
-                norm = normalize_stdin_line(str(raw))
-                if norm is None:
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "channel": channel,
-                            "message": "stdin_line: empty line",
-                        }
-                    )
-                    continue
-                src = str(data.get("source") or "ws").strip() or "ws"
-                await publish_stdin_line(norm, src, replay=False)
-                await websocket.send_json({"type": "stdin_ack", "channel": channel, "ok": True})
-                continue
-
-            if msg_type == "publish":
-                await emit_channel_event(
-                    channel,
-                    data.get("event", f"{channel}_event"),
-                    {
-                        "source": data.get("source", "ws"),
-                        "payload": data.get("payload") or {},
-                    },
-                )
-                await websocket.send_json({"type": "published", "channel": channel})
-                continue
-
-            await websocket.send_json({"type": "error", "message": f"Unknown: {msg_type}"})
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        logger.debug("[ws] channel=%s loop ended: %s", channel, e, exc_info=True)
+        async for event in run_agent_stream_on_prepared(prepared, deps, mode=mode):
+            await queue.put(("ev", event))
+    except asyncio.CancelledError:
+        how = "cancelled"
+        raise
     finally:
-        await ws_manager.disconnect(websocket)
+        with contextlib.suppress(Exception):
+            await queue.put(("done", how))
 
 
 async def _pump_chat_stream(
@@ -245,45 +193,57 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
     cancel_task: asyncio.Task | None = None
     pump_holder: dict[str, asyncio.Task | None] = {"task": None}
     thread_id: str | None = data.get("thread_id")
+    deps = None
+    mixed_payload: dict[str, Any] | None = None
+    image_urls: list[str] = []
 
     def _abort_if_stopped() -> None:
         if manager.is_stopped(task_id):
             raise _ChatUserCancelError()
 
+    prepared = None
+    mode = str(data.get("mode", "react"))
     try:
         try:
-            thread_id, messages, user_to_persist = await prepare_messages_for_agent(
-                thread_id, list(client_messages)
+            prepared = await prepare_chat_turn(
+                ChatTurnRequest(
+                    client_messages=list(client_messages),
+                    thread_id=thread_id,
+                    mode=mode,
+                    temperature=float(data.get("temperature", 0.7)),
+                    max_tokens=int(data.get("max_tokens", 2048)),
+                    provider=data.get("provider"),
+                    model=data.get("model"),
+                    router_hint=data.get("router_hint"),
+                    use_model_router=data.get("use_model_router"),
+                    skip_vision_precaption=data.get("vision_precaption") is False,
+                    tool_call_mode=data.get("tool_call_mode"),
+                    turn_meta_extra={"task_id": task_id, "mode": mode},
+                )
             )
         except ValueError as e:
             await manager.fail(task_id, str(e))
             await websocket.send_json({"type": "error", "message": str(e)})
             return
 
+        thread_id = prepared.thread_id
+        messages = prepared.messages
+        routed = prepared.routed
+        router_payload = prepared.router_payload
+        turn_meta = prepared.turn_meta
+
         logger.debug(
             "[ws.chat] task=%s mode=%s stream=%s provider=%s model=%s thread=%s",
             task_id,
-            data.get("mode", "react"),
+            mode,
             data.get("stream"),
             data.get("provider"),
             data.get("model"),
             thread_id,
         )
-        messages = await apply_vision_precaption_if_needed(
-            messages,
-            skip_precaption=data.get("vision_precaption") is False,
-        )
-        routed = await resolve_model_routing(
-            messages,
-            request_provider=data.get("provider"),
-            request_model=data.get("model"),
-            router_hint=data.get("router_hint"),
-            enabled_override=data.get("use_model_router"),
-        )
-        router_payload = routing_payload(routed)
         telemetry_token = await start_observed_run(
             task_id,
-            mode=str(data.get("mode", "react")),
+            mode=mode,
             thread_id=thread_id,
             router=router_payload,
         )
@@ -309,36 +269,25 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
         cancel_task = asyncio.create_task(
             _listen_cancel_ws(websocket, task_id, manager, pump_holder)
         )
-        turn_meta = {"task_id": task_id, "mode": str(data.get("mode", "react"))}
-        await persist_chat_turn(thread_id, user_to_persist, None, metadata=turn_meta)
-        messages = await augment_messages_async(messages)
         _abort_if_stopped()
         logger.debug(
-            "[ws.chat] task=%s augment_messages done (messages=%s)", task_id, len(messages)
+            "[ws.chat] task=%s prepare done (messages=%s)", task_id, len(messages)
         )
-        deps = create_agent_deps(
-            provider=routed.provider,
-            model=routed.model,
+        deps = build_agent_deps(
+            prepared,
+            temperature=float(data.get("temperature", 0.7)),
+            max_tokens=int(data.get("max_tokens", 2048)),
+            tool_call_mode=data.get("tool_call_mode"),
             stop_event=manager.get_stop_event(task_id),
         )
-        deps.temperature = data.get("temperature", 0.7)
-        deps.max_tokens = data.get("max_tokens", 2048)
-        deps.tool_registry = get_tool_registry()
-        deps.thread_id = thread_id
-        if data.get("tool_call_mode") is not None:
-            deps.tool_call_mode = (
-                str(data.get("tool_call_mode") or "").strip().lower() or deps.tool_call_mode
-            )
         logger.debug(
             "[ws.chat] task=%s registry_tools=%s tool_call_mode=%s",
             task_id,
             len(deps.tool_registry),
             deps.tool_call_mode,
         )
-
-        agent = AgentFactory.create_agent(mode=data.get("mode", "react"), deps=deps)
         _abort_if_stopped()
-        logger.debug("[ws.chat] task=%s agent created mode=%s", task_id, data.get("mode", "react"))
+        logger.debug("[ws.chat] task=%s agent deps ready mode=%s", task_id, mode)
 
         full_response = ""
         use_stream = data.get("stream")
@@ -347,7 +296,9 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
         if use_stream:
             logger.debug("[ws.chat] task=%s run_stream begin", task_id)
             q: asyncio.Queue = asyncio.Queue()
-            pump_task = asyncio.create_task(_pump_chat_stream(agent, messages, q))
+            pump_task = asyncio.create_task(
+                _pump_chat_stream_prepared(prepared, deps, mode, q)
+            )
             pump_holder["task"] = pump_task
             end_reason = "finished"
             try:
@@ -433,7 +384,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                 await broadcaster.task_stopped(task_id, full_response)
                 pending_stopped = full_response
         else:
-            run_task = asyncio.create_task(agent.run(messages))
+            run_task = asyncio.create_task(run_agent_on_prepared(prepared, deps, mode=mode))
             pump_holder["task"] = run_task
             done, pending = await asyncio.wait(
                 {run_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
@@ -466,12 +417,21 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                     raise run_err
 
         if pending_stopped is None:
-            if run_status == "ok":
+            if run_status == "ok" and deps is not None:
+                await await_user_persist(prepared)
+                _, mixed, _ = await finalize_agent_reply(deps, full_response)
+                mixed_payload = mixed_message_to_dict(mixed)
+                image_urls = mixed.image_urls()
                 await persist_chat_turn(
                     thread_id,
                     [],
                     full_response,
-                    metadata={**turn_meta, "run_id": task_id},
+                    metadata={
+                        **turn_meta,
+                        "run_id": task_id,
+                        "mixed_message": mixed_payload,
+                        "image_urls": image_urls,
+                    },
                 )
             await manager.complete(task_id, result=full_response)
             await broadcaster.task_completed(task_id, full_response)
@@ -510,7 +470,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             telemetry_token, task_id, status=run_status, error=run_error
         )
 
-    if pending_complete:
+    if pending_complete and deps is not None:
         if run_snap:
             logger.info("[ws.chat] task=%s run_summary=%s", task_id, run_snap)
         await websocket.send_json(
@@ -521,6 +481,8 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                     "run_id": task_id,
                     "thread_id": thread_id,
                     "response": full_response,
+                    "mixed_message": mixed_payload,
+                    "image_urls": image_urls,
                 },
                 run_snap,
             )

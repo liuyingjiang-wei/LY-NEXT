@@ -1,83 +1,136 @@
-# LY-NEXT 代码阅读路径
+<div align="center">
+
+# LY-NEXT 技术说明
+
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](./pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-6366f1?style=flat-square)](https://github.com/langchain-ai/langgraph)
+
+[← 返回 README](./README.md)
+
+</div>
+
+---
+
+## 目录
+
+- [推荐阅读顺序](#推荐阅读顺序)
+- [对话请求链路](#对话请求链路)
+- [Agent 层](#agent-层)
+- [会话与追踪](#会话与追踪)
+- [LLM 层](#llm-层)
+- [配置与运行时](#配置与运行时)
+- [可观测性](#可观测性-p0)
+- [调试建议](#调试建议)
+
+---
 
 ## 推荐阅读顺序
 
-1. `ly_next/main.py`：应用启动、路由挂载、生命周期。
-2. `ly_next/api/`：`ly_api.py`、`ws_api.py`（对话入口）；`runs_api.py`（运行追踪）；`threads_api.py`（会话持久化）；`loader.py`（目录 API 加载，见 SECURITY.md）；`mcp_api.py`（MCP 协议）。
-3. `ly_next/agent/factory.py`：Agent 模式选择（react / plan / chat / coordinator）。
-4. `ly_next/agent/react.py`、`plan.py`、`chat.py`、`coordinator.py`：ReAct（compat / native / legacy）、Plan 图、Chat 直连、Coordinator 分解—委派—汇总。
-5. `ly_next/agent/prompt_augment.py`、`prompt_templates.py`：运行时上下文增强（示例检索、知识库 RAG、启动记忆）与提示词片段；包内默认 `ly_next/agent/prompt_builtin/*.md`；`data/ly_next/prompts/`（`agent.prompts.prompts_dir`）同名文件优先。`agent.prompts.enabled: false` 时**只**读 data 目录。
-6. `ly_next/agent/deps.py`：LLM 调用、工具注入、运行参数汇总。
-7. `ly_next/agent/model_router.py`、`vision_precaption.py`：多模型路由与识图预描述（在 augment 之前执行）。
-8. `ly_next/models/factory.py`、`openai_compat.py`：模型工厂与网关请求实现。
-9. `ly_next/tools/`、`ly_next/mcp/`：工具注册、调用、MCP Server 与远程 MCP 桥接。
-10. `ly_next/rag/`：示例检索、文档检索、embedding 调用链。
-11. `ly_next/core/`：配置、日志、任务、数据库、缓存、`thread_persistence.py`（会话消息）、`checkpointer.py`（LangGraph 状态）、`run_lifecycle.py` / `run_store.py`（可观测性）。
+| # | 路径 | 关注点 |
+|---|------|--------|
+| 1 | `ly_next/main.py` | 启动、路由挂载、生命周期 |
+| 2 | `ly_next/api/` | `ly_api` · `ws_api` · `runs_api` · `threads_api` · `loader` · `mcp_api` |
+| 3 | `ly_next/agent/factory.py` | 模式选择 react / plan / chat / coordinator |
+| 4 | `ly_next/agent/react.py` 等 | 各模式实现 |
+| 5 | `prompt_augment.py` · `prompt_templates.py` | 上下文增强与提示词 |
+| 6 | `agent/deps.py` | LLM、工具、运行参数 |
+| 7 | `model_router.py` · `vision_precaption.py` | 路由与识图预描述 |
+| 8 | `models/factory.py` · `openai_compat.py` | 模型客户端 |
+| 9 | `tools/` · `mcp/` | 工具与 MCP |
+| 10 | `rag/` | 检索与 embedding |
+| 11 | `core/` | 配置、DB、缓存、checkpoint、run 存储 |
 
-## 一条对话在代码中的路径
+---
+
+## 对话请求链路
 
 ### HTTP（非流式）
 
-```
-POST /api/chat
-→ ly_next/api/ly_api.py
-→ prepare_messages_for_agent（thread 历史）
-→ apply_vision_precaption_if_needed
-→ resolve_model_routing
-→ start_observed_run（task_id = run_id）
-→ persist_chat_turn
-→ augment_messages_async
-→ create_agent_deps → AgentFactory.create_agent → agent.run
-→ finish_observed_run
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant API as ly_api.py
+  participant A as Agent
+  participant O as Observability
+
+  C->>API: POST /api/chat
+  API->>API: prepare_messages / vision_precaption / routing
+  API->>O: start_observed_run
+  API->>A: augment → create_agent → run
+  API->>O: finish_observed_run
+  API->>C: response
 ```
 
 ### WebSocket（流式）
 
 ```
-/api/ws + type=chat
-→ ly_next/api/ws_api.py:handle_chat()
+/api/ws  type=chat
+→ ws_api.handle_chat()
 → 同上预处理链
 → agent.run_stream()
-→ chat_chunk / chat_status / chat_tool_* / chat_node / chat_complete
+→ chat_chunk / chat_status / chat_tool_* / chat_complete
 ```
 
-## Agent 层阅读重点
+---
 
-- **react**：`_react_loop_kind` 在 **compat**（JSON 工具协议）、**native**（`chat_with_tools`）、**legacy**（LangGraph `plan→act→check`）间选择；仅 **legacy** 与 **plan** 使用 LangGraph checkpoint。
-- **plan**：先生成步骤再逐步执行，适合多步任务拆解。
-- **chat**：最小路径，无工具、无图像。
-- **coordinator**：LLM 分解子任务 → 多个 `ReactAgent` 委托 → 汇总。
+## Agent 层
+
+| 模式 | 说明 |
+|------|------|
+| **react** | compat（JSON 工具）· native（`chat_with_tools`）· legacy（LangGraph plan→act→check） |
+| **plan** | 先生成步骤再逐步执行 |
+| **chat** | 无工具、无图像的最小路径 |
+| **coordinator** | 分解 → 多 ReactAgent 委托 → 汇总 |
+
+> 仅 **legacy** react 与 **plan** 使用 LangGraph checkpoint。
+
+---
 
 ## 会话与追踪
 
-- **`thread_id`**：跨轮会话标识，持久化于 `sessions` / `messages`（需 PostgreSQL）；LangGraph checkpoint 亦按 `thread_id` 恢复。
-- **`task_id` / `run_id`**：单次请求标识；可观测性写入 `agent_runs` / `agent_run_events`。
-- 查询：`GET /api/runs` 等（`runs_api.py`）；`agent.observability.enabled: false` 时返回 404。鉴权为 `auth.api_key`（`X-API-Key`），非模型密钥。
+| 标识 | 含义 |
+|------|------|
+| `thread_id` | 跨轮会话；持久化于 `sessions` / `messages`（需 PostgreSQL） |
+| `task_id` / `run_id` | 单次请求；写入 `agent_runs` / `agent_run_events` |
 
-## LLM 层阅读重点
+查询：`GET /api/runs`（`agent.observability.enabled: false` 时 404）。鉴权为 `auth.api_key`，非模型密钥。
 
-- `models/factory.py`：provider 解析与客户端缓存（openai / openai_compat / anthropic / ollama）。
-- `models/openai_compat.py`：请求头、请求体、流式解析、错误处理。
-- `models/openai_chat_body.py`：`max_tokens` / `max_completion_tokens` 组装策略。
+---
 
-## 配置与运行时关系
+## LLM 层
 
-- 主配置文件：`data/ly_next/config.yaml`。
-- 设置接口：`GET/PATCH /api/system/settings`；控制台 `/ly/` 拆为 **「应用配置」**（日志、鉴权、Agent 与工具策略、扩展 API、内置工具、网络搜索、`agent.rag.enabled` 等）与 **「模型配置」**（`llm`、各 provider、`model_router`、`vision_precaption`、`rag.embedding`、`agent.observability`、`agent.prompts` 等），PATCH 为深度合并。
-- 关键运行参数：
-  - `llm.default_provider`
-  - `agent.reasoning_mode`（react / plan / chat / coordinator）
-  - `agent.stream_output`
+- `models/factory.py` — provider 解析与客户端缓存
+- `models/openai_compat.py` — 请求/流式/错误处理
+- `models/openai_chat_body.py` — token 字段组装策略
 
-## 运行追踪（P0 可观测）
+---
 
-- 配置：`agent.observability`（`enabled`、`persist`、`ws_run_summary`、`max_events_per_run`、`store_prompts`）。
-- 入口/出口：`run_lifecycle.start_observed_run` / `finish_observed_run`；过程事件：`run_telemetry`；`loop_kind` 在 agent 入口设置。
+## 配置与运行时
 
-## 调试建议（按层定位）
+- 主配置：`data/ly_next/config.yaml`
+- 接口：`GET/PATCH /api/system/settings`（深度合并）
+- 关键项：`llm.default_provider` · `agent.reasoning_mode` · `agent.stream_output`
 
-1. 入口层：`ly_api.py` / `ws_api.py` 的请求与响应。
-2. Agent 层：`agent.*` 是否进入预期模式，工具是否可用。
-3. Model 层：`openai_compat.py` 组包与返回码；`model_router` / `vision_precaption` 是否改写 provider 与消息。
-4. RAG 层：`rag/*` 是否回退 lexical，embedding 是否可用。
-5. 基础设施层：`core/logger.py`、数据库/Redis 状态、任务与 run 记录。
+---
+
+## 可观测性（P0）
+
+| 配置键 | 说明 |
+|--------|------|
+| `agent.observability.enabled` | 总开关 |
+| `persist` | 持久化 Run 事件 |
+| `ws_run_summary` | WS 摘要推送 |
+| `store_prompts` | 是否存储 prompt 快照 |
+
+入口：`run_lifecycle.start_observed_run` / `finish_observed_run`；过程：`run_telemetry`。
+
+---
+
+## 调试建议
+
+1. **入口层** — `ly_api.py` / `ws_api.py` 请求与响应
+2. **Agent 层** — 模式与工具是否按预期
+3. **Model 层** — `openai_compat.py` 组包与返回码；`model_router` / `vision_precaption` 是否改写 provider 与消息
+4. **RAG 层** — `rag/*` 是否回退 lexical，embedding 是否可用
+5. **基础设施层** — `core/logger.py`、数据库 / Redis 状态、任务与 run 记录

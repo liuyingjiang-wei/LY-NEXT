@@ -17,16 +17,32 @@ INTRO_DIR = ROOT.parent / "介绍"
 
 SLOTS = (
     {"id": "01", "source": "天台.jpg", "variant": "wide", "max_w": 1600, "aspect": (21, 9)},
-    {"id": "02", "source": "萨姆.jpg", "variant": "portrait", "max_h": 1200, "aspect": (3, 4), "focus": (0.5, 0.42)},
+    {
+        "id": "02",
+        "source": "萨姆.jpg",
+        "variant": "portrait",
+        "max_h": 1200,
+        "aspect": (3, 4),
+        "focus": (0.5, 0.42),
+    },
     {"id": "03", "source": "失shang.webp", "variant": "standard", "max_w": 1400, "aspect": (16, 9)},
     {"id": "04", "source": "全景.webp", "variant": "wide", "max_w": 1600, "aspect": (21, 9)},
-    {"id": "05", "source": "星核.jpg", "variant": "portrait", "max_h": 1200, "aspect": (3, 4), "focus": (0.5, 0.38)},
+    {
+        "id": "05",
+        "source": "星核.jpg",
+        "variant": "portrait",
+        "max_h": 1200,
+        "aspect": (3, 4),
+        "focus": (0.5, 0.38),
+    },
     {"id": "06", "source": "羁绊.jpg", "variant": "standard", "max_w": 1400, "aspect": (16, 9)},
     {"id": "07", "source": "少女.jpg", "variant": "wide", "max_w": 1600, "aspect": (21, 9)},
 )
 
 
-def _crop_aspect(img: Image.Image, aspect: tuple[int, int], focus: tuple[float, float]) -> Image.Image:
+def _crop_aspect(
+    img: Image.Image, aspect: tuple[int, int], focus: tuple[float, float]
+) -> Image.Image:
     aw, ah = aspect
     target_ratio = aw / ah
     w, h = img.size
@@ -101,9 +117,13 @@ def main() -> None:
         deploy_targets.append(DEV_PUBLIC_DIR)
 
     if missing:
-        copied = _deploy_webp_dir(WEBP_DIR, WWW_DIR, *([DEV_PUBLIC_DIR] if DEV_PUBLIC_DIR.parent.parent.is_dir() else []))
+        copied = _deploy_webp_dir(
+            WEBP_DIR, WWW_DIR, *([DEV_PUBLIC_DIR] if DEV_PUBLIC_DIR.parent.parent.is_dir() else [])
+        )
         if copied and all((WEBP_DIR / f"firefly-{s['id']}.webp").is_file() for s in SLOTS):
-            print(f"缺少源图 {missing}，已从 assets/firefly/webp 同步到 www（约 {copied // 1024}KB）")
+            print(
+                f"缺少源图 {missing}，已从 assets/firefly/webp 同步到 www（约 {copied // 1024}KB）"
+            )
             return
         raise SystemExit(
             f"缺少源图: {missing}\n"
@@ -124,7 +144,9 @@ def main() -> None:
         total += size
         print(f"{name} <- {slot['source']} ({img.size[0]}x{img.size[1]}, {size // 1024}KB)")
 
-    print(f"firefly 插图已生成，合计约 {total // 1024}KB（请一并提交 assets/firefly/webp 与 www/firefly）")
+    print(
+        f"firefly 插图已生成，合计约 {total // 1024}KB（请一并提交 assets/firefly/webp 与 www/firefly）"
+    )
 
 
 if __name__ == "__main__":

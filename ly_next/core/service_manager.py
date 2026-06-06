@@ -11,7 +11,11 @@ from typing import Any
 
 from ly_next.core.config import config, get_project_root
 from ly_next.core.logger import get_logger
-from ly_next.core.postgres_port import resolve_database_port, sync_database_port_from_install
+from ly_next.core.postgres_port import (
+    resolve_database_password,
+    resolve_database_port,
+    sync_database_port_from_install,
+)
 
 logger = get_logger(__name__)
 
@@ -191,8 +195,7 @@ class ServiceManager:
             hosts = ["127.0.0.1", "localhost"]
         port = self._resolve_postgres_port(db_config)
         user = str(db_config.get("username", "postgres") or "postgres")
-        pw = db_config.get("password", "")
-        password = str(pw) if pw else None
+        password = resolve_database_password(db_config) or None
         dbname = database or str(db_config.get("database", "ly_next") or "ly_next")
 
         last_err: Exception | None = None
@@ -634,8 +637,21 @@ PostgreSQL Installation Guide (Linux/macOS):
                 install_guide=install_guide,
             )
         hint = ""
-        if any(x in low for x in ("password", "authentication", "no password supplied")):
-            hint = " — 请在 data/ly_next/config.yaml 设置 database.password（安装时设置的 postgres 密码）"
+        pw_cfg = str(db_config.get("password", "") or "").strip()
+        if any(
+            x in low
+            for x in (
+                "password",
+                "authentication",
+                "no password supplied",
+                "connection was closed in the middle",
+            )
+        ) or (not pw_cfg and not resolve_database_password(db_config)):
+            hint = (
+                " — 请在 data/ly_next/config.yaml 设置 database.password"
+                "（安装 PostgreSQL 时设置的 postgres 用户密码），"
+                "或设置环境变量 POSTGRES_PASSWORD"
+            )
         elif "does not exist" in low and "database" in low:
             hint = " — 请先创建数据库 ly_next，或修正 database.database"
         return ServiceInfo(

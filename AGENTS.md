@@ -1,42 +1,79 @@
+<div align="center">
+
 # AGENTS.md
 
-本文件给编码智能体在 **LY-NEXT** 仓库中工作的统一约定。
+**编码智能体在 LY-NEXT 仓库中的统一约定**
+
+[![Docs](https://img.shields.io/badge/Docs-Agent_Guide-6366f1?style=for-the-badge)](./AGENTS.md)
+[![Security](https://img.shields.io/badge/Security-SECURITY.md-2563eb?style=flat-square)](./SECURITY.md)
+
+[← 返回 README](./README.md)
+
+</div>
+
+---
+
+## 目录
+
+- [仓库级规则与记录](#仓库级规则与记录)
+- [工作方式](#工作方式)
+- [关键规则](#关键规则)
+- [修改前定位](#修改前的定位建议)
+- [质量门槛](#质量门槛改完必须过)
+
+---
 
 ## 仓库级规则与记录
 
-- `rules/`：仓库级规则块（`ly-next-project.mdc`、`response-safety.mdc`、`api-trust-and-tools.mdc`；见 `rules/README.md`）
-- `SECURITY.md`：威胁模型、动态 API 加载策略、生产检查项与漏洞报告方式
-- `MEMORY.md`：长期记忆（提炼后的要点与经验）
-- `TOOLS.md`：本机工具与常用操作（避免记录明文密钥）
-- `docker/`：`docker-compose.yml`、`Dockerfile`、pgvector 叠加文件与说明（`docker/README.md`）
-- **前端源码不入库**：`.workbench-src/` 在 `.gitignore` 中；静态页以 `www/` 为准，策略说明见 [README.md — 版本控制与工作台前端](README.md#版本控制与工作台前端)。
+| 路径 | 用途 |
+|------|------|
+| [`rules/`](./rules/README.md) | 仓库级规则块（`ly-next-project.mdc`、`response-safety.mdc`、`api-trust-and-tools.mdc`） |
+| [`SECURITY.md`](./SECURITY.md) | 威胁模型、动态 API 加载策略、生产检查项与漏洞报告 |
+| [`MEMORY.md`](./MEMORY.md) | 长期记忆（提炼后的要点与经验） |
+| [`TOOLS.md`](./TOOLS.md) | 本机工具与常用操作（**勿**记录明文密钥） |
+| [`docker/`](./docker/README.md) | Compose、`Dockerfile`、pgvector 叠加与部署说明 |
+
+> **前端源码不入库**：`.workbench-src/` 在 `.gitignore` 中；静态页以 `www/` 为准。策略见 [README — 版本控制与工作台前端](./README.md#版本控制与工作台前端)。
+
+---
 
 ## 工作方式
 
-- **先理解再改**：先定位入口/调用链/配置来源，再做最小变更。
-- **保持聚焦**：一条任务只做一类事情（文档、忽略文件、修复、重构等），避免顺手大改。
-- **小步提交质量**：优先选择低风险的局部重构（删除死代码/冗余注释/重复逻辑、统一异常处理、简化控制流）。
-- **不破坏行为**：重构以“行为等价”为原则；若必须改变行为，明确写在变更说明里并给出验证方式。
+| 原则 | 说明 |
+|------|------|
+| **先理解再改** | 先定位入口 / 调用链 / 配置来源，再做最小变更 |
+| **保持聚焦** | 一条任务只做一类事（文档、修复、重构等），避免顺手大改 |
+| **小步提交质量** | 优先低风险局部重构：删死代码、统一异常处理、简化控制流 |
+| **不破坏行为** | 重构以行为等价为原则；若必须改变行为，写清验证方式 |
+
+---
 
 ## 关键规则
 
-- **配置优先**：运行参数优先来自 `data/ly_next/config.yaml`（或 `LY_NEXT_CONFIG_DIR` 指向目录）；代码里避免硬编码环境差异。
-- **鉴权保持一致**：API Key 鉴权逻辑集中在 `ly_next/main.py` 的中间件与 `/ly/login` 流程，新增接口时不要绕开既有鉴权约定。
-- **工具与 MCP**：工具的对外形态以 `ly_next/tools/` 注册与 MCP 适配为准；新增工具要同时考虑 LLM 调用与 MCP 暴露的一致性。
-- **可选依赖可降级**：Redis/DB/pgvector 不可用时尽量提供降级路径与可读错误信息。
+- **配置优先**：运行参数来自 `data/ly_next/config.yaml`（或 `LY_NEXT_CONFIG_DIR`）；避免硬编码环境差异
+- **鉴权一致**：API Key 逻辑在 `ly_next/main.py` 中间件与 `/ly/login`；新接口勿绕开既有约定
+- **工具与 MCP**：对外形态以 `ly_next/tools/` 注册与 MCP 适配为准；新增工具需兼顾 LLM 与 MCP
+- **可选依赖可降级**：Redis / DB / pgvector 不可用时提供降级路径与可读错误
+
+---
 
 ## 修改前的定位建议
 
-- **内置 HTTP 路由**（随应用启动注册）：`ly_next/api/`（`ly_api.py`、`ws_api.py`、`runs_api.py`、`threads_api.py` 等）。
-- 工作台静态页：`www/home.html`（首页）、`www/app.html`（应用）、`www/login.html`；轨道图 `www/orbit/`（源文件 `.workbench-src/public/orbit/`）。
-- 会话持久化：`ly_next/core/thread_persistence.py`（`sessions`/`messages` 表）；LangGraph checkpoint：`ly_next/core/checkpointer.py`（legacy react 图与 plan 图）；`thread_id`≠`task_id`/`run_id`。
-- **插件 API 目录**（扫描加载，默认仅放 `BaseAPI` 子类）：`ly_next/apis/`；由 `APILoader` 按 `api.api_dir` 配置加载，模块名 `ly_next_plugin_<stem>` 避免与内置包冲突。详见 `ly_next/apis/README.md`。
-- 工作台静态页：`www/home.html`（首页）、`www/app.html`（应用）、`www/login.html`；轨道图目录 `www/orbit/`（构建自 `.workbench-src/public/orbit/`）。
-- HTTP/WS 对话入口：`ly_next/api/ly_api.py`、`ly_next/api/ws_api.py`；Agent 提示词见 `ly_next/agent/prompt_templates.py`：`data/ly_next/prompts/` 优先于包内 `prompt_builtin/*.md`；`agent.prompts.enabled: false` 时仅读 data 目录、不用包内 md。
-- Agent 图实现：`ly_next/agent/react.py`、`plan.py`；JSON 解析与工具 streak 复用 `json_extract.py`、`tool_streak.py`（勿再引入已删除的 `langgraph_prebuilt` / `langchain_integration` 包装层）。
-- Agent 选择与 deps：`ly_next/agent/factory.py`、`ly_next/agent/deps.py`
-- OpenAI 兼容请求与流式：`ly_next/models/openai_compat.py`
-- RAG / 知识库：`ly_next/rag/document_retriever.py`（默认 `data/ly_next/knowledge/`）、`ly_next/rag/example_selector.py`；长期记忆写入工具 `remember_fact`：`ly_next/tools/memory_note.py`
+| 关注点 | 路径 |
+|--------|------|
+| 内置 HTTP 路由 | `ly_next/api/`（`ly_api.py`、`ws_api.py`、`runs_api.py`、`threads_api.py` 等） |
+| 工作台静态页 | `www/home.html`、`www/app.html`、`www/login.html`；轨道图 `www/orbit/`（源 `.workbench-src/public/orbit/`） |
+| 会话持久化 | `ly_next/core/thread_persistence.py`（`sessions` / `messages`）；checkpoint：`checkpointer.py` |
+| 插件 API 目录 | `ly_next/apis/` · `APILoader` · 模块名 `ly_next_plugin_<stem>` → [apis/README.md](./ly_next/apis/README.md) |
+| 对话入口 | `ly_api.py`、`ws_api.py`；提示词：`prompt_templates.py`（`data/ly_next/prompts/` 优先于 `prompt_builtin/`） |
+| Agent 图 | `react.py`、`plan.py`；`json_extract.py`、`tool_streak.py`（勿再引入已删的 prebuilt 包装层） |
+| 选择与依赖 | `factory.py`、`deps.py` |
+| OpenAI 兼容 | `models/openai_compat.py` |
+| RAG / 记忆 | `rag/document_retriever.py`、`example_selector.py`；`tools/memory_note.py`（`remember_fact`） |
+
+**标识符**：`thread_id`（跨轮会话）≠ `task_id` / `run_id`（单次请求）
+
+---
 
 ## 质量门槛（改完必须过）
 
@@ -45,7 +82,7 @@ uv run ruff format .
 uv run ruff check .
 ```
 
-如仓库包含测试用例，再运行：
+如仓库包含测试用例：
 
 ```bash
 uv run pytest -q

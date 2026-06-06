@@ -6,6 +6,7 @@ from typing import Any
 from ly_next.agent.llm_text import text_from_chat_response, text_from_stream_delta
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
+from ly_next.messaging.models import MixedMessage
 from ly_next.models.base_llm import BaseLLMClient
 from ly_next.models.factory import LLMFactory
 
@@ -40,6 +41,8 @@ class AgentDeps:
     tool_call_mode: str = "auto"
     stop_event: asyncio.Event | None = None
     thread_id: str | None = None
+    collected_tool_results: list[dict[str, Any]] = field(default_factory=list)
+    last_mixed_message: MixedMessage | None = None
 
     def __post_init__(self):
         if self.llm_client is None:

@@ -1,41 +1,57 @@
-# LY-NEXT 依赖安装
+<div align="center">
 
-一条命令完成：**检测 → 安装 Redis / PostgreSQL 17 / pgvector → 写入 `data/ly_next/config.yaml` → 建库**，装完可直接 `uv run ly`。
+# 依赖安装
+
+**Redis · PostgreSQL 17 · pgvector · 自动写入 config.yaml**
+
+[← 返回主 README](../README.md)
+
+</div>
+
+---
 
 ## 快速开始
 
 | 系统 | 命令（项目根目录） |
 |------|-------------------|
-| Windows | 管理员 PowerShell：`.\install.ps1 -Yes` |
-| Linux | `sudo bash install.sh -y` |
-| macOS | `sudo bash install.sh -y`（pgvector 见 `pgvector.md`） |
+| **Windows** | 管理员 PowerShell：`.\install.ps1 -Yes` |
+| **Linux** | `sudo bash install.sh -y` |
+| **macOS** | `sudo bash install.sh -y`（pgvector 见 [pgvector.md](./pgvector.md)） |
 
 安装脚本会自动：
 
-- 安装并启动 Redis、PostgreSQL（本机服务或子进程）
-- 将 **`database.*` / `redis.*`** 写入 `data/ly_next/config.yaml`（含密码、端口、`try_unix_socket: false`）
-- 创建数据库 **`ly_next`**，执行 **`CREATE EXTENSION vector`**
-- Windows 上 Chocolatey/winget 安装 PostgreSQL 时默认密码 **`postgres`**（与脚本探测一致）
+- 安装并启动 Redis、PostgreSQL
+- 写入 **`database.*` / `redis.*`** 到 `data/ly_next/config.yaml`
+- 创建数据库 **`ly_next`** 并执行 **`CREATE EXTENSION vector`**
+- Windows 上 Chocolatey/winget 安装 PG 时默认密码 **`postgres`**
+
+---
 
 ## 常用参数
 
+**PowerShell**
+
 ```powershell
-.\install.ps1 -Yes              # 安装所有未就绪项 + 写配置
-.\install.ps1 -ConfigureOnly    # 仅写配置 / 建库 / pgvector（已装服务时）
-.\install.ps1 -DetectOnly
+.\install.ps1 -Yes              # 安装未就绪项 + 写配置
+.\install.ps1 -ConfigureOnly    # 仅写配置 / 建库 / pgvector
+.\install.ps1 -DetectOnly       # 仅检测
 ```
+
+**Bash**
 
 ```bash
 sudo bash install.sh -y
 sudo bash install.sh --configure-only
 ```
 
-自定义 PostgreSQL 密码（安装前设置环境变量）：
+**自定义 PostgreSQL 密码**
 
 ```powershell
 $env:LY_NEXT_POSTGRES_PASSWORD = "你的密码"
 .\install.ps1 -ConfigureOnly
 ```
+
+---
 
 ## 安装后
 
@@ -43,15 +59,15 @@ $env:LY_NEXT_POSTGRES_PASSWORD = "你的密码"
 uv run ly
 ```
 
-一般**无需再改** `config.yaml`。若 winget 安装 PostgreSQL 时用了其它密码，运行：
+一般**无需再改** `config.yaml`。若 winget 安装 PG 时用了其它密码：
 
 ```powershell
 .\install.ps1 -ConfigureOnly
 ```
 
-按提示输入一次密码即可。
+---
 
-## 目录
+## 目录说明
 
 | 文件 | 说明 |
 |------|------|

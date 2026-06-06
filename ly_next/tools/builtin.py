@@ -9,6 +9,8 @@ from ly_next.tools.builtins_core import (
     url_parse,
 )
 from ly_next.tools.http_fetch import http_fetch
+from ly_next.tools.image_gen import generate_image
+from ly_next.tools.image_search import search_images
 from ly_next.tools.memory_note import remember_fact
 from ly_next.tools.registry import ToolRegistry
 from ly_next.tools.web_fetch import web_fetch_tool
@@ -28,6 +30,8 @@ BUILTIN_TOOLS_BY_NAME: dict[str, object] = {
     "remember_fact": remember_fact,
     "web_search": web_search_tool,
     "web_scrape": web_scrape_tool,
+    "generate_image": generate_image,
+    "search_images": search_images,
 }
 
 BUILTIN_TOOLS = [BUILTIN_TOOLS_BY_NAME[k] for k in sorted(BUILTIN_TOOLS_BY_NAME)]

@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
+from ly_next.agent.image_reply import format_image_tool_observation, record_tool_result
 from ly_next.agent.json_extract import parse_json_object
 from ly_next.agent.prompt_augment import last_user_query
 from ly_next.agent.scratchpad_compress import compress_scratchpad
@@ -106,6 +107,7 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
 
         try:
             result = await deps.tool_registry.call_tool(tool_name, args)
+            record_tool_result(deps, str(tool_name), result)
             streak = streak_after_tool_call(state, tool_name, args, result)
 
             plan_results = state.get("plan_results", [])
@@ -127,6 +129,7 @@ async def _execute_step(state: AgentState, deps: AgentDeps) -> AgentState:
                     run_tag=rt,
                 )
             )
+            obs = format_image_tool_observation(str(tool_name), obs)
             return {
                 "current_step": current_step + 1,
                 "plan_results": plan_results,

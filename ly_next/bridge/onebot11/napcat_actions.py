@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+_ACCOUNT = (
+    "get_login_info",
+    "get_status",
+    "get_version_info",
+    "bot_exit",
+    "clean_cache",
+    "set_self_longnick",
+    "set_input_status",
+    "set_diy_online_status",
+    "set_online_status",
+    "set_qq_profile",
+    "set_qq_avatar",
+    "get_clientkey",
+)
+
+_FRIEND = (
+    "get_friend_list",
+    "get_friends_with_category",
+    "send_private_msg",
+    "delete_msg",
+    "get_msg",
+    "send_like",
+    "set_friend_add_request",
+    "set_friend_remark",
+    "delete_friend",
+    "get_unidirectional_friend_list",
+    "friend_poke",
+    "mark_private_msg_as_read",
+    "get_friend_msg_history",
+    "forward_friend_single_msg",
+    "get_profile_like",
+    "fetch_emoji_like",
+    "nc_get_user_status",
+)
+
+_GROUP = (
+    "get_group_list",
+    "get_group_info",
+    "get_group_info_ex",
+    "send_group_msg",
+    "set_group_add_request",
+    "set_group_kick",
+    "set_group_ban",
+    "set_group_whole_ban",
+    "set_group_admin",
+    "set_group_card",
+    "set_group_name",
+    "set_group_leave",
+    "set_group_special_title",
+    "get_group_member_info",
+    "get_group_member_list",
+    "get_group_honor_info",
+    "get_essence_msg_list",
+    "set_essence_msg",
+    "delete_essence_msg",
+    "group_poke",
+    "mark_group_msg_as_read",
+    "forward_group_single_msg",
+    "set_group_portrait",
+    "_send_group_notice",
+    "_get_group_notice",
+    "_del_group_notice",
+    "get_group_at_all_remain",
+    "get_group_ignore_add_request",
+    "get_group_ignored_notifies",
+    "get_group_system_msg",
+    "get_group_shut_list",
+    "set_group_remark",
+    "set_group_sign",
+    "send_group_sign",
+    "get_group_msg_history",
+)
+
+_MESSAGE = (
+    "send_msg",
+    "get_record",
+    "get_image",
+    "can_send_image",
+    "can_send_record",
+    "get_file",
+    "_mark_all_as_read",
+    "ocr_image",
+    ".ocr_image",
+    "get_recent_contact",
+    "send_poke",
+    "get_forward_msg",
+    "mark_msg_as_read",
+)
+
+_FILE = (
+    "upload_group_file",
+    "delete_group_file",
+    "create_group_file_folder",
+    "delete_group_folder",
+    "get_group_file_system_info",
+    "get_group_root_files",
+    "get_group_files_by_folder",
+    "get_group_file_url",
+    "move_group_file",
+    "trans_group_file",
+    "rename_group_file",
+    "upload_private_file",
+    "get_private_file_url",
+    "download_file",
+)
+
+_AI = (
+    "get_ai_characters",
+    "get_ai_record",
+    "send_group_ai_record",
+)
+
+_FORWARD = (
+    "send_group_forward_msg",
+    "send_private_forward_msg",
+    "send_forward_msg",
+    "ArkSharePeer",
+    "ArkShareGroup",
+    "get_mini_app_ark",
+)
+
+_OTHER = (
+    "get_cookies",
+    "get_csrf_token",
+    "get_credentials",
+    "get_doubt_friends_add_request",
+    "set_doubt_friends_add_request",
+    "get_stranger_info",
+    "get_rkey",
+    "click_inline_keyboard_button",
+    "translate_en2zh",
+    "create_collection",
+    "get_collection_list",
+    "fetch_custom_face",
+    "nc_get_packet_status",
+    "get_robot_uin_range",
+    "get_guild_list",
+    "get_guild_service_profile",
+    "_get_model_show",
+    "_set_model_show",
+    "check_url_safely",
+    ".get_word_slices",
+    ".handle_quick_operation",
+    "send_packet",
+    "set_msg_emoji_like",
+    "get_online_clients",
+)
+
+_STREAM = (
+    "clean_stream_temp_file",
+    "test_download_stream",
+    "download_file_stream",
+    "upload_file_stream",
+)
+
+NAPCAT_ACTION_NAMES: tuple[str, ...] = (
+    *_ACCOUNT,
+    *_FRIEND,
+    *_GROUP,
+    *_MESSAGE,
+    *_FILE,
+    *_AI,
+    *_FORWARD,
+    *_OTHER,
+    *_STREAM,
+)
+
+NAPCAT_ACTION_SET: frozenset[str] = frozenset(NAPCAT_ACTION_NAMES)

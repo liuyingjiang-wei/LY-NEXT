@@ -55,6 +55,9 @@ agent:
   tool_call_mode: "auto"
   prefer_compat_when_mcp_tools: true
   stream_output: true
+  chat_pipeline:
+    parallel_prep: true
+    persist_user_async: true
   memory:
     enabled: true
     path: "MEMORY.md"
@@ -98,9 +101,6 @@ agent:
     reserve_completion_tokens: 2048
     prune_min_tool_chars: 400
     tool_placeholder: "[Earlier tool output removed to fit context window.]"
-  stdin_journal:
-    enabled: true
-    relative_path: "logs/stdin_journal.jsonl"
   error_recovery:
     enabled: true
     max_retries: 2
@@ -257,6 +257,31 @@ tools:
     - "remember_fact"
     - "web_search"
     - "web_scrape"
+    - "generate_image"
+    - "search_images"
+  # 生图: 仅 openai_compat（/images/generations，配置块见 config_ref + 下方覆盖项）
+  # 搜图: tavily | bing | unsplash | pexels | pixabay | serpapi | brave | duckduckgo
+  image:
+    provider: "openai_compat"
+    config_ref: "openai_compat_llm"
+    model: "gpt-image-1"
+    size: "1024x1024"
+    quality: "auto"
+    api_key: ""
+    base_url: ""
+    auth_mode: "bearer"
+    auth_header_name: ""
+    search_provider: "tavily"
+    tavily_api_key: "${TAVILY_API_KEY:-}"
+    bing_search_api_key: ""
+    unsplash_access_key: ""
+    pexels_api_key: ""
+    pixabay_api_key: ""
+    serpapi_api_key: ""
+    brave_search_api_key: ""
+    daily_limit: 20
+    cache_ttl: 3600
+    loading_text: "正在为你创作图片，稍等一下哦~"
   web_search:
     provider: "duckduckgo"
     api_key: ""
@@ -310,6 +335,42 @@ logging:
   max_bytes: 10485760
   backup_count: 5
 
+bridge:
+  onebot11:
+    enabled: true
+    max_concurrent_replies: 8
+    access_token: "${ONEBOT11_ACCESS_TOKEN:-}"
+    ws_paths:
+      - "/onebot/v11/ws"
+      - "/OneBotv11"
+    new_chat_commands:
+      - "/新对话"
+      - "/new"
+      - "#新对话"
+      - "新对话"
+      - "/重置"
+    help_commands:
+      - "/帮助"
+      - "/help"
+    new_chat_reply: "已开始新对话。发送「/新对话」可清空当前上下文；此前对话仍保存在数据库中。"
+    help_reply: "命令：/新对话 或 /new — 开始新对话（不继承此前聊天记录）。/帮助 — 显示本说明。"
+    memory:
+      max_messages: 40
+      include_global_memory: false
+    auto_reply:
+      enabled: true
+      mode: "react"
+      temperature: 0.7
+      max_tokens: 2048
+      skip_rag: true
+      skip_context: true
+    triggers:
+      private: true
+      group: true
+      group_at_only: true
+      prefixes: []
+      ignore_self: true
+
 auth:
   enabled: true
   api_key: "${LY_NEXT_API_KEY}"
@@ -325,3 +386,5 @@ auth:
     - "/api/info"
     - "/ly/login"
     - "/ly/static/*"
+    - "/onebot/v11/ws"
+    - "/OneBotv11"

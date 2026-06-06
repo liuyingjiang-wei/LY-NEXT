@@ -1,4 +1,4 @@
-"""Resolve PostgreSQL TCP port (Windows install dir vs config)."""
+"""Resolve PostgreSQL TCP port and credentials (Windows install dir vs config)."""
 
 from __future__ import annotations
 
@@ -40,6 +40,23 @@ def read_windows_postgresql_conf_port() -> int | None:
                 except OSError:
                     continue
     return None
+
+
+def resolve_database_password(db_config: dict[str, Any] | None = None) -> str:
+    """Config password, else ``POSTGRES_PASSWORD`` when config value is empty."""
+    if db_config is None:
+        from ly_next.core.config import config
+
+        raw = config.get("database", {})
+        db_config = raw if isinstance(raw, dict) else {}
+
+    raw = db_config.get("password", "")
+    if raw is None:
+        raw = ""
+    pw = str(raw).strip()
+    if pw:
+        return pw
+    return os.environ.get("POSTGRES_PASSWORD", "").strip()
 
 
 def resolve_database_port(db_config: dict[str, Any] | None = None) -> int:

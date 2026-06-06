@@ -50,7 +50,19 @@ def message_row_to_chat(row: Any) -> dict[str, Any]:
 
 def message_row_to_dict(row: Any) -> dict[str, Any]:
     meta = row.metadata_ if isinstance(getattr(row, "metadata_", None), dict) else {}
-    return {**message_row_to_chat(row), "metadata": meta}
+    out = {**message_row_to_chat(row), "metadata": meta}
+    mid = getattr(row, "id", None)
+    if mid is not None:
+        sid = str(mid)
+        out["id"] = sid
+        out["message_id"] = sid
+    return out
+
+
+def is_external_thread_key(thread_id: str) -> bool:
+    if _parse_uuid(thread_id) is not None:
+        return False
+    return thread_id.startswith("onebot:")
 
 
 def _parse_uuid(value: str | UUID | None) -> UUID | None:
@@ -91,7 +103,9 @@ def _session_to_api(row: Any) -> dict[str, Any]:
     }
 
 
-async def create_thread(name: str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+async def create_thread(
+    name: str | None = None, metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
     if not persistence_active():
         raise RuntimeError("Thread persistence requires a connected database")
     session = await db.create_session(name=name or "New conversation", metadata=metadata or {})
@@ -120,6 +134,16 @@ async def delete_thread(thread_id: str) -> bool:
     if uid is None:
         return False
     return await db.delete_session(uid)
+
+
+async def get_message_by_id(message_id: str) -> dict[str, Any] | None:
+    uid = _parse_uuid(message_id)
+    if uid is None:
+        return None
+    row = await db.get_message(uid)
+    if row is None:
+        return None
+    return message_row_to_dict(row)
 
 
 async def list_thread_messages(
@@ -176,35 +200,50 @@ def extract_new_user_messages(
     merged = merge_thread_messages(stored, incoming)
     if len(merged) <= len(stored):
         return []
-    return [
-        m
-        for m in merged[len(stored) :]
-        if str(m.get("role", "")).lower() == "user"
-    ]
+    return [m for m in merged[len(stored) :] if str(m.get("role", "")).lower() == "user"]
 
 
-async def resolve_thread_id(
-    thread_id: str | None, *, seed_messages: list[dict[str, Any]]
+async def resolve_external_thread_id(
+    external_key: str, *, seed_messages: list[dict[str, Any]]
 ) -> str:
+    if not persistence_active():
+        return external_key
+    existing = await db.find_session_by_external_key(external_key)
+    if existing is not None:
+        return str(existing.id)
+    session = await db.create_session(
+        name=_thread_title_from_messages(seed_messages),
+        metadata={"external_key": external_key, "channel": external_key.split(":", 1)[0]},
+    )
+    return str(session.id)
+
+
+async def resolve_thread_id(thread_id: str | None, *, seed_messages: list[dict[str, Any]]) -> str:
     if thread_id:
         uid = _parse_uuid(thread_id)
-        if uid is None:
-            raise ValueError(f"Invalid thread_id: {thread_id}")
-        if await db.get_session(uid) is None:
-            raise ValueError(f"Thread not found: {thread_id}")
-        return str(uid)
+        if uid is not None:
+            if await db.get_session(uid) is None:
+                raise ValueError(f"Thread not found: {thread_id}")
+            return str(uid)
+        if is_external_thread_key(thread_id):
+            return await resolve_external_thread_id(thread_id, seed_messages=seed_messages)
+        raise ValueError(f"Invalid thread_id: {thread_id}")
     row = await create_thread(name=_thread_title_from_messages(seed_messages))
     return row["thread_id"]
 
 
 async def prepare_messages_for_agent(
-    thread_id: str | None, client_messages: list[dict[str, Any]]
+    thread_id: str | None,
+    client_messages: list[dict[str, Any]],
+    *,
+    history_limit: int | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:
     if not persistence_active():
         return thread_id, list(client_messages), []
 
     tid = await resolve_thread_id(thread_id, seed_messages=client_messages)
-    stored = await list_thread_messages(tid)
+    cap = history_limit if history_limit is not None else max_messages_per_thread()
+    stored = await list_thread_messages(tid, limit=cap)
     merged = merge_thread_messages(stored, client_messages)
     to_persist = extract_new_user_messages(stored, client_messages)
     return tid, merged, to_persist

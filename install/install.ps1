@@ -1,3 +1,4 @@
+﻿# PowerShell 5.1: use UTF-8 with BOM; format strings use single quotes (avoid "{0}" in "...").
 param(
     [switch]$Redis,
     [switch]$PostgreSQL,
@@ -143,8 +144,9 @@ function Show-LyNextInstallStatus {
         if ($c.Version) { $extra += $c.Version }
         if ($c.Service) { $extra += $c.Service }
         if ($c.Reachable) { $extra += "可连接" }
-        $suffix = if ($extra.Count -gt 0) { " - " + ($extra -join ', ') } else { "" }
-        Write-Host ("  {0,-12} {1}{2}" -f $c.Name, $tag, $suffix) -ForegroundColor $color
+        $suffix = if ($extra.Count -gt 0) { ' - ' + ($extra -join ', ') } else { '' }
+        $line = '  {0,-12} {1}{2}' -f $c.Name, $tag, $suffix
+        Write-Host $line -ForegroundColor $color
     }
     Write-Host ""
 }
@@ -312,7 +314,8 @@ function Show-LyNextMainMenu {
     $missing = Get-LyNextMissingComponents -Status $Status
     Write-Host "Choose:" -ForegroundColor Cyan
     if ($missing.Count -gt 0) {
-        Write-Host ("  1) Install all missing (recommended): " + ($missing -join ', ')) -ForegroundColor Green
+        $rec = '  1) Install all missing (recommended): ' + ($missing -join ', ')
+        Write-Host $rec -ForegroundColor Green
     } else {
         Write-Host "  1) Nothing to install" -ForegroundColor DarkGray
     }
@@ -341,7 +344,8 @@ function Show-LyNextCustomMenu {
     )
     foreach ($it in $items) {
         $st = if ($it.Ok) { "[ok]" } else { "[missing]" }
-        Write-Host ("  {0}) {1,-12} {2}" -f $it.N, $it.Label, $st)
+        $menuLine = '  {0}) {1,-12} {2}' -f $it.N, $it.Label, $st
+        Write-Host $menuLine
     }
     $choice = Read-Host "Numbers, comma-separated (Enter=cancel)"
     if ([string]::IsNullOrWhiteSpace($choice)) { return @("__exit__") }

@@ -19,7 +19,6 @@ from starlette.staticfiles import StaticFiles
 
 from ly_next import __version__
 from ly_next.api import api_router, mcp_router, ws_public_router
-from ly_next.api.bridge import SUPPORTED_CHANNELS
 from ly_next.api.loader import APILoader
 from ly_next.api.mcp_api import get_mcp_mount_prefix
 from ly_next.core.auth_http import extract_api_key_from_request
@@ -79,7 +78,11 @@ async def _ensure_external_service(
 
 
 def _auth_exempt_path(path: str) -> bool:
+    from ly_next.bridge.onebot11.paths import is_onebot11_ws_path
+
     if path.startswith("/ly/static/"):
+        return True
+    if is_onebot11_ws_path(path):
         return True
     return path in (
         "/",
@@ -249,6 +252,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     header_name = config.get("auth.header_name", "X-API-Key")
 
     ws_host = "localhost" if host in ("0.0.0.0", "::") else host
+    onebot_paths = getattr(app.state, "onebot11_ws_paths", None) or []
+    if onebot_paths:
+        ws_service_line = f"ws://{ws_host}:{port}{onebot_paths[0]} (NapCat OneBot11)"
+    else:
+        ws_service_line = f"ws://{ws_host}:{port}/api/ws (workbench chat)"
     report = {
         "title": "运行快照",
         "startup_ms": startup_ms,
@@ -262,7 +270,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "ws": {
             "url": f"ws://{host}:{port}",
             "paths": f"{len(ws_paths)}个 [{', '.join(ws_paths) if ws_paths else ''}]",
-            "service_line": f"ws://{ws_host}:{port}/ [{', '.join(sorted(SUPPORTED_CHANNELS))}]",
+            "service_line": ws_service_line,
         },
         "perf": {
             "mem": mem_str,
@@ -281,6 +289,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Redis": redis_info.status == ServiceStatus.RUNNING,
         },
     }
+    if config.get("bridge.onebot11.enabled", False):
+        if onebot_paths:
+            logger.info(
+                "OneBot11 reverse WS listening (NapCat WebSocket client): %s",
+                ", ".join(onebot_paths),
+            )
+        else:
+            logger.warning(
+                "bridge.onebot11.enabled is true but no WS paths registered; "
+                "check attach_onebot_routes runs before include_router(ws_public_router)"
+            )
+
     await print_startup_report(report)
 
     logger.info(f"LY-Next v{__version__} started successfully")
@@ -322,6 +342,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    from ly_next.bridge.onebot11 import attach_onebot_routes
+
+    onebot_ws_paths = attach_onebot_routes(ws_public_router)
+    app.state.onebot11_ws_paths = onebot_ws_paths
+
     app.include_router(api_router)
     if config.get("tools.mcp.enabled", True):
         app.include_router(mcp_router, prefix=get_mcp_mount_prefix())
@@ -335,8 +360,7 @@ def create_app() -> FastAPI:
     removed = config.sanitize_auth_whitelist()
     if removed:
         logger.info(
-            "已从 auth.whitelist 移除工作台路径（未登录不可访问 /ly/）："
-            + ", ".join(removed)
+            "已从 auth.whitelist 移除工作台路径（未登录不可访问 /ly/）：" + ", ".join(removed)
         )
 
     def _is_whitelisted(path: str) -> bool:

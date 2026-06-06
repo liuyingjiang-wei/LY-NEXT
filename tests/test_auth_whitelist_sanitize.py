@@ -1,4 +1,4 @@
-from ly_next.core.config import UNSAFE_WORKBENCH_WHITELIST, Config
+from ly_next.core.config import Config
 
 
 def test_sanitize_auth_whitelist_removes_workbench_paths(tmp_path, monkeypatch):

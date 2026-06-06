@@ -314,6 +314,27 @@ class Database:
             await s.refresh(session)
             return session
 
+    async def patch_session_metadata(
+        self, session_id, metadata: dict[str, Any], *, replace: bool = False
+    ) -> Session | None:
+        uid = self._parse_task_uuid(session_id)
+        if uid is None:
+            return None
+        async with self.session() as s:
+            result = await s.execute(select(Session).where(Session.id == uid))
+            row = result.scalar_one_or_none()
+            if row is None:
+                return None
+            if replace:
+                row.metadata_ = dict(metadata or {})
+            else:
+                merged = dict(row.metadata_ or {})
+                merged.update(metadata or {})
+                row.metadata_ = merged
+            await s.flush()
+            await s.refresh(row)
+            return row
+
     async def list_sessions(self, limit: int = 100, status: str = None) -> list[Session]:
         async with self.session() as s:
             query = select(Session).order_by(desc(Session.created_at)).limit(limit)
@@ -321,6 +342,19 @@ class Database:
                 query = query.where(Session.status == status)
             result = await s.execute(query)
             return list(result.scalars().all())
+
+    async def find_session_by_external_key(self, external_key: str) -> Session | None:
+        key = str(external_key or "").strip()
+        if not key:
+            return None
+        async with self.session() as s:
+            result = await s.execute(
+                select(Session)
+                .where(Session.metadata_.contains({"external_key": key}))
+                .order_by(desc(Session.updated_at))
+                .limit(1)
+            )
+            return result.scalar_one_or_none()
 
     async def create_message(
         self, session_id, role: str, content: str, metadata: dict = None
@@ -343,6 +377,14 @@ class Database:
                 .limit(limit)
             )
             return list(result.scalars().all())
+
+    async def get_message(self, message_id) -> Message | None:
+        uid = self._parse_task_uuid(message_id)
+        if uid is None:
+            return None
+        async with self.session() as s:
+            result = await s.execute(select(Message).where(Message.id == uid))
+            return result.scalar_one_or_none()
 
     async def get_messages_chronological(self, session_id, limit: int = 100) -> list[Message]:
         async with self.session() as s:

@@ -82,8 +82,12 @@ def compress_orbit_images() -> int:
         deploy_targets.append(DEV_PUBLIC_DIR)
 
     if not sources:
-        copied = _deploy_webp_only(WWW_ORBIT_DIR, *([DEV_PUBLIC_DIR] if DEV_PUBLIC_DIR.parent.parent.is_dir() else []))
-        if copied and all((ORBIT_WEBP_DIR / f"orbit-{i}.webp").is_file() for i in range(1, ORBIT_COUNT + 1)):
+        copied = _deploy_webp_only(
+            WWW_ORBIT_DIR, *([DEV_PUBLIC_DIR] if DEV_PUBLIC_DIR.parent.parent.is_dir() else [])
+        )
+        if copied and all(
+            (ORBIT_WEBP_DIR / f"orbit-{i}.webp").is_file() for i in range(1, ORBIT_COUNT + 1)
+        ):
             print(f"缺少轨道图源，已从 assets/orbit/webp 同步到 www（约 {copied // 1024}KB）")
             return copied
         if not ORBIT_SRC.is_dir():
@@ -110,7 +114,9 @@ def compress_orbit_images() -> int:
     for target in deploy_targets:
         _remove_legacy_png(target)
 
-    print(f"轨道图已生成 WebP，单套约 {total // ORBIT_COUNT // 1024}KB x {ORBIT_COUNT}（请提交 assets/orbit/webp）")
+    print(
+        f"轨道图已生成 WebP，单套约 {total // ORBIT_COUNT // 1024}KB x {ORBIT_COUNT}（请提交 assets/orbit/webp）"
+    )
     return total
 
 

@@ -9,6 +9,12 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
+from ly_next.agent.image_reply import (
+    begin_agent_run,
+    finalize_agent_reply,
+    format_image_tool_observation,
+    record_tool_result,
+)
 from ly_next.agent.json_extract import parse_json_object
 from ly_next.agent.prompt_augment import last_user_query
 from ly_next.agent.prompt_templates import (
@@ -39,6 +45,7 @@ from ly_next.core.run_telemetry import (
     set_run_loop_kind,
 )
 from ly_next.core.tool_result_spill import format_tool_result_for_llm
+from ly_next.messaging.models import mixed_message_to_dict
 
 logger = get_logger(__name__)
 
@@ -83,6 +90,24 @@ def _auto_use_compat_first_for_mcp(deps: AgentDeps) -> bool:
     if not config.get("agent.prefer_compat_when_mcp_tools", True):
         return False
     return _visible_tools_include_mcp(deps)
+
+
+async def _run_tool_with_obs(
+    deps: AgentDeps,
+    name: str,
+    args: dict[str, Any],
+    *,
+    call_id: str,
+    run_tag: str,
+) -> tuple[Any, str]:
+    if deps.tool_registry is None:
+        raise RuntimeError("tool_registry is not configured")
+    result = await deps.tool_registry.call_tool(name, args)
+    record_tool_result(deps, name, result)
+    obs = await asyncio.to_thread(
+        partial(format_tool_result_for_llm, name, call_id, result, run_tag=run_tag)
+    )
+    return result, format_image_tool_observation(name, obs)
 
 
 def _tool_result_as_text(result: Any) -> str:
@@ -365,18 +390,15 @@ async def _iter_compat_react(
         }
 
         t_tool = time.perf_counter()
-        result = await deps.tool_registry.call_tool(name, args)
+        result, obs = await _run_tool_with_obs(
+            deps,
+            name,
+            args,
+            call_id=f"compat_{iteration}_{name}",
+            run_tag=run_tag_c,
+        )
         ok = not (isinstance(result, dict) and result.get("success") is False)
         record_tool_timing(name, (time.perf_counter() - t_tool) * 1000.0, ok)
-        obs = await asyncio.to_thread(
-            partial(
-                format_tool_result_for_llm,
-                name,
-                f"compat_{iteration}_{name}",
-                result,
-                run_tag=run_tag_c,
-            )
-        )
         preview = obs if len(obs) <= 2000 else obs[:1999] + "…"
         yield {
             "type": "tool_done",
@@ -603,18 +625,23 @@ async def _iter_native_react(
             t_tool = time.perf_counter()
             if allowed_set and name not in allowed_set:
                 result = {"success": False, "error": f"Tool not allowed: {name}"}
+                tool_body = str(result.get("error") or "")
             else:
                 try:
-                    result = await deps.tool_registry.call_tool(name, args)
+                    result, tool_body = await _run_tool_with_obs(
+                        deps,
+                        name,
+                        args,
+                        call_id=str(tcid),
+                        run_tag=run_tag,
+                    )
                 except Exception as e:
                     logger.error("[agent.native] tool %s failed: %s", name, e)
                     result = {"success": False, "error": str(e)}
+                    tool_body = str(e)
 
             ok = not (isinstance(result, dict) and result.get("success") is False)
             record_tool_timing(name, (time.perf_counter() - t_tool) * 1000.0, ok)
-            tool_body = await asyncio.to_thread(
-                partial(format_tool_result_for_llm, name, str(tcid), result, run_tag=run_tag)
-            )
             preview = tool_body if len(tool_body) <= 2000 else tool_body[:1999] + "…"
             yield {
                 "type": "tool_done",
@@ -758,21 +785,24 @@ async def _act_node(state: AgentState, deps: AgentDeps) -> AgentState:
         }
 
     try:
-        result = await deps.tool_registry.call_tool(name, args)
+        result, obs = await _run_tool_with_obs(
+            deps,
+            str(name),
+            args if isinstance(args, dict) else {},
+            call_id=f"lg_{name}_{secrets.token_hex(5)}",
+            run_tag=secrets.token_hex(5),
+        )
         streak = streak_after_tool_call(state, name, args, result)
 
         scratch = state.get("scratchpad", "")
-        rt = secrets.token_hex(5)
-        obs = await asyncio.to_thread(
-            partial(format_tool_result_for_llm, str(name), f"lg_{name}_{rt}", result, run_tag=rt)
-        )
         scratch += f"\nCALL {name} args={json.dumps(args, ensure_ascii=False)}\nOBS {obs}\n"
+        tool_row = {"tool": name, "result": result}
 
         return {
             "scratchpad": scratch,
             "last_tool": name,
             "last_result": result,
-            "tool_results": state.get("tool_results", []) + [{"tool": name, "result": result}],
+            "tool_results": state.get("tool_results", []) + [tool_row],
             **streak,
         }
     except Exception as e:
@@ -906,10 +936,19 @@ class ReactAgent:
                         return
 
     async def _iter_react(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+        begin_agent_run(self.deps)
         kind = _react_loop_kind(self.deps)
         set_run_loop_kind(kind)
         async for ev in self._iter_react_inner(messages, kind):
             record_stream_event(ev)
+            if isinstance(ev, dict) and ev.get("type") == "final":
+                text = str(ev.get("content") or "")
+                _, mixed, _ = await finalize_agent_reply(self.deps, text)
+                ev = {
+                    **ev,
+                    "mixed_message": mixed_message_to_dict(mixed),
+                    "image_urls": mixed.image_urls(),
+                }
             yield ev
 
     async def _iter_react_inner(

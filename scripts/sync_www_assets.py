@@ -16,7 +16,9 @@ def _deploy_site_icons() -> None:
     try:
         from PIL import Image
     except ImportError as e:
-        raise SystemExit("需要 Pillow: uv run --with pillow python scripts/sync_www_assets.py") from e
+        raise SystemExit(
+            "需要 Pillow: uv run --with pillow python scripts/sync_www_assets.py"
+        ) from e
 
     WWW.mkdir(parents=True, exist_ok=True)
     brand_dir = WWW / "brand"

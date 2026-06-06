@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -56,39 +57,63 @@ def merge_system_context(
     return out
 
 
-async def augment_messages_async(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def augment_messages_async(
+    messages: list[dict[str, Any]],
+    *,
+    skip_rag: bool = False,
+    skip_context: bool = False,
+    skip_memory: bool = False,
+) -> list[dict[str, Any]]:
     if not messages:
         return messages
 
-    memory_block = get_startup_memory_block()
-    if memory_block:
-        messages = merge_system_context(messages, memory_block)
+    if not skip_memory:
+        memory_block = get_startup_memory_block()
+        if memory_block:
+            messages = merge_system_context(messages, memory_block)
 
     query = last_user_query(messages)
     if not query:
         return messages
 
-    rag_on = bool(config.get("agent.rag.enabled", False))
-    ctx_on = bool(config.get("agent.context.enabled", True))
+    rag_on = bool(config.get("agent.rag.enabled", False)) and not skip_rag
+    ctx_on = bool(config.get("agent.context.enabled", True)) and not skip_context
     if not rag_on and not ctx_on:
         return messages
 
     parts: list[str] = []
-    if ctx_on:
+
+    async def _examples() -> str | None:
         try:
             ex_block = await get_example_selector().select_formatted(query)
             if ex_block:
-                parts.append("## 相似示例\n" + ex_block)
+                return "## 相似示例\n" + ex_block
         except Exception as e:
             logger.warning("[prompt_augment] Example selection failed: %s", e)
+        return None
 
-    if rag_on:
+    async def _rag() -> str | None:
         try:
             rag_block = await get_document_retriever().retrieve_formatted(query)
             if rag_block:
-                parts.append("## 知识库片段\n" + rag_block)
+                return "## 知识库片段\n" + rag_block
         except Exception as e:
             logger.warning("[prompt_augment] RAG retrieve failed: %s", e)
+        return None
+
+    tasks: list[tuple[str, asyncio.Task[str | None]]] = []
+    if ctx_on:
+        tasks.append(("ctx", asyncio.create_task(_examples())))
+    if rag_on:
+        tasks.append(("rag", asyncio.create_task(_rag())))
+    if tasks:
+        results = await asyncio.gather(*(t for _, t in tasks), return_exceptions=True)
+        for (label, _), result in zip(tasks, results, strict=True):
+            if isinstance(result, Exception):
+                logger.warning("[prompt_augment] %s failed: %s", label, result)
+                continue
+            if result:
+                parts.append(result)
 
     logger.debug(
         "[prompt_augment] ctx_on=%s rag_on=%s parts=%s ex=%s rag=%s",
