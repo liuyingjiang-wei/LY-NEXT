@@ -30,7 +30,7 @@ docker compose up -d
 
 ## 构建并运行应用
 
-> 构建前请确认仓库根目录 **`www/`** 已存在且完整（`Dockerfile` 会 `COPY www`，不在镜像内构建前端）。
+仓库已包含 Web 静态资源（`www/`），直接构建镜像即可：
 
 ```bash
 docker compose -f docker/docker-compose.yml --profile app up -d --build

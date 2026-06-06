@@ -13,7 +13,7 @@
 
 ---
 
-本仓库为 **LY-NEXT**：基于 FastAPI + LangGraph 的 Agent 服务，可选 PostgreSQL / pgvector / Redis，Web 工作台静态资源在 `www/`。
+本仓库为 **LY-NEXT**：基于 FastAPI + LangGraph 的 Agent 服务，可选 PostgreSQL / pgvector / Redis，并内置 Web 工作台（`/` · `/ly/`）。
 
 ---
 
@@ -32,6 +32,7 @@
 | 路径 | 职责 |
 |------|------|
 | `ly_next/main.py` | FastAPI 应用、生命周期、路由、工作台静态资源、鉴权中间件 |
+| `www/` | Web 首页、工作台、登录页与静态资源 |
 | `ly_next/api/` | HTTP / WS / MCP 等接口 |
 | `ly_next/agent/` | Agent 图与模式（react / plan / chat）、依赖注入 |
 | `ly_next/models/` | LLM provider 适配 |
@@ -51,6 +52,10 @@ uv sync --extra dev
 # 启动
 uv run ly
 uv run ly --reload
+uv run ly --port 9000
+
+# Web 工作台 UI（需 pnpm）
+pnpm run build:workbench
 
 # 代码质量
 uv run ruff format .

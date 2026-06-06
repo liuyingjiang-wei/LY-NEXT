@@ -51,7 +51,7 @@ LY-NEXT 是一套可自托管的 Agent 运行时：HTTP / WebSocket 对话、MCP
 | `config/` | 默认配置模板（首次运行参与生成用户配置） |
 | `install/` | 本机 Redis / PostgreSQL 安装脚本 |
 | `data/` | 运行时数据、`config.yaml`、提示词与日志 |
-| `www/` | 前端静态资源（首页 / 工作台 / 登录） |
+| `www/` | Web 首页、工作台与登录页 |
 
 ---
 
@@ -134,16 +134,18 @@ uv run ly --host 127.0.0.1 --port 8000   # 仅本机
 
 ## Web 工作台
 
+内置 Web 控制台，用于配置模型、管理会话、调试 API、查看 Run 追踪与 NapCat 状态，无需单独部署前端服务。
+
 | 路径 | 说明 |
 |------|------|
-| `/` | 营销首页（`www/home.html`） |
-| `/ly/` | 控制台（`www/app.html`，需登录） |
-| `/ly/login` | 登录；`POST /ly/login` 提交 `api_key` 写入 Cookie |
-| `/ly/static/*` | 静态资源 |
+| `/` | 产品首页 |
+| `/ly/` | 工作台（需登录） |
+| `/ly/login` | 登录页；提交 `api_key` 后写入 Cookie |
+| `/ly/static/*` | 样式、脚本与图片等静态资源 |
 
-默认启用服务鉴权：请求头 `X-API-Key` 或登录 Cookie，对应 `auth.api_key`（与 LLM 密钥无关）。
+**鉴权：** 默认开启。请求需携带 `X-API-Key` 请求头，或通过 `/ly/login` 登录后使用 Cookie。密钥对应 `auth.api_key`，与 LLM 提供商密钥无关。
 
-工作台 **「应用配置」** / **「模型配置」** 通过 `GET/PATCH /api/system/settings` 读写同一配置文件。自检：`GET /api/system/extensions`。
+**配置：** 工作台 **「应用配置」** / **「模型配置」** 通过 `GET/PATCH /api/system/settings` 读写 `data/ly_next/config.yaml`。扩展与插件状态见 `GET /api/system/extensions`。
 
 ---
 
@@ -213,6 +215,7 @@ powershell -ExecutionPolicy Bypass -File ".\install.ps1"
 |----------|------|
 | `LY_NEXT_CONFIG_DIR` | 用户配置目录（可写） |
 | `LY_NEXT_PROJECT_ROOT` | 项目根 |
+| `LY_NEXT_PORT` | 启动监听端口（配合 `--no-prompt`） |
 | `DATABASE_HOST` / `REDIS_HOST` | 容器或远程主机名 |
 
 常用项：`openai_llm.api_key`、`llm.default_provider`、`database.*`、`redis.*`、`auth.*`
@@ -268,6 +271,25 @@ uv run ruff format .
 uv run ruff check .
 uv run pytest -q
 ```
+
+**启动与端口**
+
+```bash
+uv run ly                    # 交互选择端口
+uv run ly --port 9000        # 指定端口
+uv run ly --reload           # 热重载（开发）
+uv run ly --no-prompt        # 使用配置或 LY_NEXT_PORT，不询问
+```
+
+**修改 Web 工作台 UI**（需 [Node.js](https://nodejs.org/) 与 pnpm）：
+
+```bash
+pnpm install
+pnpm run dev:workbench       # 本地预览
+pnpm run build:workbench     # 构建到 www/
+```
+
+构建完成后重启 `uv run ly` 即可在浏览器看到更新。
 
 ---
 

@@ -32,8 +32,7 @@
 | [`MEMORY.md`](./MEMORY.md) | 长期记忆（提炼后的要点与经验） |
 | [`TOOLS.md`](./TOOLS.md) | 本机工具与常用操作（**勿**记录明文密钥） |
 | [`docker/`](./docker/README.md) | Compose、`Dockerfile`、pgvector 叠加与部署说明 |
-
-> **前端源码不入库**：`.workbench-src/` 在 `.gitignore` 中；静态页以 `www/` 为准。策略见 [README — 版本控制与工作台前端](./README.md#版本控制与工作台前端)。
+| [`www/`](./www/) | Web 首页、工作台、登录页等静态资源 |
 
 ---
 
@@ -62,7 +61,7 @@
 | 关注点 | 路径 |
 |--------|------|
 | 内置 HTTP 路由 | `ly_next/api/`（`ly_api.py`、`ws_api.py`、`runs_api.py`、`threads_api.py` 等） |
-| 工作台静态页 | `www/home.html`、`www/app.html`、`www/login.html`；轨道图 `www/orbit/`（源 `.workbench-src/public/orbit/`） |
+| 工作台 Web UI | `www/`（`home.html` · `app.html` · `login.html` · `orbit/` 等） |
 | 会话持久化 | `ly_next/core/thread_persistence.py`（`sessions` / `messages`）；checkpoint：`checkpointer.py` |
 | 插件 API 目录 | `ly_next/apis/` · `APILoader` · 模块名 `ly_next_plugin_<stem>` → [apis/README.md](./ly_next/apis/README.md) |
 | 对话入口 | `ly_api.py`、`ws_api.py`；提示词：`prompt_templates.py`（`data/ly_next/prompts/` 优先于 `prompt_builtin/`） |
