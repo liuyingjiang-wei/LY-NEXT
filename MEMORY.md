@@ -4,7 +4,7 @@
 
 **长期记忆 · 提炼要点与经验**
 
-[![Local Notes](https://img.shields.io/badge/Scope-Project_Memory-64748b?style=for-the-badge)](./MEMORY.md)
+[![Local Notes](https://img.shields.io/badge/Scope-Project_Memory-64748b?style=plastic)](./MEMORY.md)
 
 [← 返回 README](./README.md)
 

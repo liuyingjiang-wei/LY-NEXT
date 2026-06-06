@@ -2,9 +2,9 @@
 
 # LY-NEXT 技术说明
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](./pyproject.toml)
-[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-6366f1?style=flat-square)](https://github.com/langchain-ai/langgraph)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=plastic&logo=python&logoColor=white)](./pyproject.toml)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=plastic&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-6366f1?style=plastic)](https://github.com/langchain-ai/langgraph)
 
 [← 返回 README](./README.md)
 

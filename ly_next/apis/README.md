@@ -4,8 +4,8 @@
 
 **用户自定义 `.py` 插件 · 由 `APILoader` 启动时扫描加载**
 
-[![Plugin](https://img.shields.io/badge/Type-BaseAPI_Plugin-6366f1?style=for-the-badge)](./README.md)
-[![Security](https://img.shields.io/badge/Security-Security_Profile-2563eb?style=flat-square)](../../SECURITY.md)
+[![Plugin](https://img.shields.io/badge/Type-BaseAPI_Plugin-6366f1?style=plastic)](./README.md)
+[![Security](https://img.shields.io/badge/Security-Security_Profile-2563eb?style=flat)](../../SECURITY.md)
 
 [← 返回 README](../../README.md) · [AGENTS.md](../../AGENTS.md)
 

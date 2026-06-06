@@ -4,8 +4,8 @@
 
 **PostgreSQL vector 扩展 · RAG 依赖**
 
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![pgvector](https://img.shields.io/badge/pgvector-Extension-6366f1?style=flat-square)](https://github.com/pgvector/pgvector)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-336791?style=plastic&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![pgvector](https://img.shields.io/badge/pgvector-Extension-6366f1?style=flat)](https://github.com/pgvector/pgvector)
 
 [← 安装说明](./README.md) · [Docker pgvector](../docker/README.md#pgvector)
 

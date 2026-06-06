@@ -4,7 +4,7 @@
 
 **给在本仓库写代码的 AI 助手与人类用的规则块**
 
-[![Not Runtime](https://img.shields.io/badge/Runtime-Not_Loaded-64748b?style=for-the-badge)](./README.md)
+[![Not Runtime](https://img.shields.io/badge/Runtime-Not_Loaded-64748b?style=plastic)](./README.md)
 
 [← 返回 README](../README.md) · [AGENTS.md](../AGENTS.md)
 

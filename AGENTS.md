@@ -4,8 +4,8 @@
 
 **编码智能体在 LY-NEXT 仓库中的统一约定**
 
-[![Docs](https://img.shields.io/badge/Docs-Agent_Guide-6366f1?style=for-the-badge)](./AGENTS.md)
-[![Security](https://img.shields.io/badge/Security-SECURITY.md-2563eb?style=flat-square)](./SECURITY.md)
+[![Docs](https://img.shields.io/badge/Docs-Agent_Guide-6366f1?style=plastic)](./AGENTS.md)
+[![Security](https://img.shields.io/badge/Security-SECURITY.md-2563eb?style=flat)](./SECURITY.md)
 
 [← 返回 README](./README.md)
 

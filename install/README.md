@@ -4,6 +4,12 @@
 
 **Redis · PostgreSQL 17 · pgvector · 自动写入 config.yaml**
 
+[![Redis](https://img.shields.io/badge/Redis-6379-DC382D?style=plastic&logo=redis&logoColor=white)](https://redis.io/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-336791?style=plastic&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![pgvector](https://img.shields.io/badge/pgvector-Enabled-6366f1?style=flat)](./pgvector.md)
+
+<br />
+
 [← 返回主 README](../README.md)
 
 </div>

@@ -6,18 +6,18 @@
 
 <br />
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-2563eb?style=for-the-badge)](./LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Agent-6366f1?style=for-the-badge)](https://github.com/langchain-ai/langgraph)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](./docker/README.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2563eb?style=plastic)](./LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=plastic&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=plastic&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Agent-6366f1?style=plastic)](https://github.com/langchain-ai/langgraph)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=plastic&logo=docker&logoColor=white)](./docker/README.md)
 
 <br />
 
-[![GitHub](https://img.shields.io/badge/GitHub-liuyingjiang--wei%2FLY--NEXT-181717?style=flat-square&logo=github)](https://github.com/liuyingjiang-wei/LY-NEXT)
-[![Gitee](https://img.shields.io/badge/Gitee-wei2335%2FLY--NEXT-C71D23?style=flat-square&logo=gitee)](https://gitee.com/wei2335/LY-NEXT)
-[![GitCode](https://img.shields.io/badge/GitCode-liuyingjiang%2Fly--next-FF6A00?style=flat-square)](https://gitcode.com/liuyingjiang/ly-next)
-[![Version](https://img.shields.io/badge/version-1.0.1-orange?style=flat-square)](./pyproject.toml)
+[![GitHub](https://img.shields.io/badge/GitHub-liuyingjiang--wei%2FLY--NEXT-181717?style=social&logo=github)](https://github.com/liuyingjiang-wei/LY-NEXT)
+[![Gitee](https://img.shields.io/badge/Gitee-wei2335%2FLY--NEXT-C71D23?style=social&logo=gitee)](https://gitee.com/wei2335/LY-NEXT)
+[![GitCode](https://img.shields.io/badge/GitCode-liuyingjiang%2Fly--next-FF6A00?style=social)](https://gitcode.com/liuyingjiang/ly-next)
+[![Version](https://img.shields.io/badge/version-1.0.1-orange?style=flat)](./pyproject.toml)
 
 </div>
 

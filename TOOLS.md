@@ -4,7 +4,7 @@
 
 **本机环境工具与常用操作备忘**
 
-[![Local Only](https://img.shields.io/badge/Scope-Local_Environment-64748b?style=for-the-badge)](./TOOLS.md)
+[![Local Only](https://img.shields.io/badge/Scope-Local_Environment-64748b?style=plastic)](./TOOLS.md)
 
 [← 返回 README](./README.md)
 

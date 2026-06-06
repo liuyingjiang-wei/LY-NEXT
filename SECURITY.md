@@ -2,8 +2,8 @@
 
 # LY-NEXT 安全说明
 
-[![Security](https://img.shields.io/badge/Security-Review-2563eb?style=for-the-badge)](./SECURITY.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](./LICENSE)
+[![Security](https://img.shields.io/badge/Security-Review-2563eb?style=plastic)](./SECURITY.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat)](./LICENSE)
 
 [← 返回 README](./README.md)
 

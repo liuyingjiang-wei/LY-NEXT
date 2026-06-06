@@ -4,8 +4,8 @@
 
 **Claude Code 在 LY-NEXT 仓库中的协作说明**
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-6366f1?style=flat-square)](https://github.com/langchain-ai/langgraph)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=plastic&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-6366f1?style=plastic)](https://github.com/langchain-ai/langgraph)
 
 [← 返回 README](./README.md) · [AGENTS.md](./AGENTS.md)
 

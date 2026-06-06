@@ -2,7 +2,7 @@
 
 # Docker 部署
 
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=plastic&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
 [← 返回主 README](../README.md)
 
