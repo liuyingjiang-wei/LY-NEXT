@@ -100,9 +100,7 @@ async def _send_text(
         await session.send_text_message(message_type="private", user_id=user_id, text=text)
 
 
-async def _handle_message(
-    session: OneBotSession, data: dict[str, Any], *, scope_key: str
-) -> None:
+async def _handle_message(session: OneBotSession, data: dict[str, Any], *, scope_key: str) -> None:
     settings = get_onebot11_settings()
     if not settings.auto_reply.enabled:
         return

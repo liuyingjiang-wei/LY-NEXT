@@ -14,7 +14,7 @@ from ly_next.agent.chat_pipeline import (
     run_agent_on_prepared,
     run_agent_stream_on_prepared,
 )
-from ly_next.agent.image_reply import finalize_agent_reply
+from ly_next.agent.image_reply import ensure_mixed_reply
 from ly_next.api.websocket import get_task_broadcaster, get_ws_manager
 from ly_next.core.auth_http import extract_api_key_from_websocket
 from ly_next.core.config import config
@@ -31,7 +31,7 @@ public_router = APIRouter(tags=["websocket"])
 ws_manager = get_ws_manager()
 logger = get_logger(__name__)
 
-_STREAM_CANCEL_POLL_SEC = 0.15
+_STREAM_CANCEL_POLL_SEC = 0.05
 
 
 class _ChatUserCancelError(Exception):
@@ -270,9 +270,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             _listen_cancel_ws(websocket, task_id, manager, pump_holder)
         )
         _abort_if_stopped()
-        logger.debug(
-            "[ws.chat] task=%s prepare done (messages=%s)", task_id, len(messages)
-        )
+        logger.debug("[ws.chat] task=%s prepare done (messages=%s)", task_id, len(messages))
         deps = build_agent_deps(
             prepared,
             temperature=float(data.get("temperature", 0.7)),
@@ -296,9 +294,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
         if use_stream:
             logger.debug("[ws.chat] task=%s run_stream begin", task_id)
             q: asyncio.Queue = asyncio.Queue()
-            pump_task = asyncio.create_task(
-                _pump_chat_stream_prepared(prepared, deps, mode, q)
-            )
+            pump_task = asyncio.create_task(_pump_chat_stream_prepared(prepared, deps, mode, q))
             pump_holder["task"] = pump_task
             end_reason = "finished"
             try:
@@ -308,12 +304,22 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                         if not pump_task.done():
                             pump_task.cancel()
                         break
+                    get_task = asyncio.create_task(q.get())
                     try:
-                        kind, payload = await asyncio.wait_for(
-                            q.get(), timeout=_STREAM_CANCEL_POLL_SEC
+                        done, pending = await asyncio.wait(
+                            {get_task},
+                            timeout=_STREAM_CANCEL_POLL_SEC,
                         )
-                    except asyncio.TimeoutError:
-                        continue
+                        for task in pending:
+                            task.cancel()
+                        if get_task not in done:
+                            continue
+                        kind, payload = get_task.result()
+                    finally:
+                        if not get_task.done():
+                            get_task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await get_task
                     if kind != "ev":
                         end_reason = str(payload or "finished")
                         break
@@ -367,7 +373,8 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                         c = event.get("content") or ""
                         if c:
                             full_response = c
-                            await websocket.send_json({"type": "chat_chunk", "content": c})
+                            if not event.get("chunked"):
+                                await websocket.send_json({"type": "chat_chunk", "content": c})
             finally:
                 if not pump_task.done():
                     pump_task.cancel()
@@ -419,7 +426,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
         if pending_stopped is None:
             if run_status == "ok" and deps is not None:
                 await await_user_persist(prepared)
-                _, mixed, _ = await finalize_agent_reply(deps, full_response)
+                mixed = await ensure_mixed_reply(deps, full_response)
                 mixed_payload = mixed_message_to_dict(mixed)
                 image_urls = mixed.image_urls()
                 await persist_chat_turn(

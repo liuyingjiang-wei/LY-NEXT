@@ -40,11 +40,11 @@ class ChatAgent:
 
         try:
             full_response = ""
-            async for chunk in self.deps.call_llm_stream(prompt):
+            async for chunk in self.deps.iter_llm_stream(prompt):
                 full_response += chunk
                 yield {"type": "chunk", "content": chunk}
 
-            yield {"type": "final", "content": full_response}
+            yield {"type": "final", "content": full_response, "chunked": bool(full_response)}
         except Exception as e:
             logger.error(f"[chat] Stream failed: {e}")
             yield {"type": "error", "content": str(e)}

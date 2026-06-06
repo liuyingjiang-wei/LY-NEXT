@@ -1,7 +1,5 @@
 """CLI entry point for ly-next."""
 
-import sys
-
 from ly_next.main import run
 
 

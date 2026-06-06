@@ -213,6 +213,6 @@ def resolve_startup_port(
             return candidate
 
     default = _parse_port(config_port) or DEFAULT_LISTEN_PORT
-    if interactive is False or _is_non_interactive():
+    if interactive is False or (interactive is not True and _is_non_interactive()):
         return default
     return prompt_listen_port(default, host=host)

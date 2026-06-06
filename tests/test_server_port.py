@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import importlib
 
 from ly_next.core.server_port import (
     DEFAULT_LISTEN_PORT,
@@ -47,10 +47,15 @@ def test_resolve_startup_port_fallback(monkeypatch):
     assert resolve_startup_port(None, None, interactive=False) == DEFAULT_LISTEN_PORT
 
 
+def _patch_data_root(monkeypatch, data_root):
+    cfg = importlib.import_module("ly_next.core.config")
+    monkeypatch.setattr(cfg, "get_data_root", lambda: data_root)
+
+
 def test_remember_port_dedupes_and_orders(tmp_path, monkeypatch):
     data_root = tmp_path / "data" / "ly_next"
     data_root.mkdir(parents=True)
-    monkeypatch.setattr("ly_next.core.config.get_data_root", lambda: data_root)
+    _patch_data_root(monkeypatch, data_root)
 
     remember_port(9000)
     remember_port(9100)
@@ -62,7 +67,7 @@ def test_remember_port_dedupes_and_orders(tmp_path, monkeypatch):
 def test_build_port_options_puts_recent_first(tmp_path, monkeypatch):
     data_root = tmp_path / "data" / "ly_next"
     data_root.mkdir(parents=True)
-    monkeypatch.setattr("ly_next.core.config.get_data_root", lambda: data_root)
+    _patch_data_root(monkeypatch, data_root)
 
     remember_port(8765)
     remember_port(7654)
@@ -75,7 +80,7 @@ def test_build_port_options_puts_recent_first(tmp_path, monkeypatch):
 def test_load_recent_ports_invalid_file(tmp_path, monkeypatch):
     data_root = tmp_path / "data" / "ly_next"
     data_root.mkdir(parents=True)
-    monkeypatch.setattr("ly_next.core.config.get_data_root", lambda: data_root)
+    _patch_data_root(monkeypatch, data_root)
     (data_root / "recent_ports.json").write_text("{not json", encoding="utf-8")
 
     assert load_recent_ports() == []

@@ -75,7 +75,9 @@ def _collect_tavily_image_urls(data: dict[str, Any], *, limit: int) -> list[str]
 
 async def search_tavily(query: str, count: int, api_key: str) -> list[str]:
     if not api_key:
-        raise ValueError("未配置 tavily_api_key（可在 tools.image 或 tools.web_search.api_key 填写）")
+        raise ValueError(
+            "未配置 tavily_api_key（可在 tools.image 或 tools.web_search.api_key 填写）"
+        )
     payload = {
         "api_key": api_key,
         "query": query,
@@ -240,7 +242,9 @@ async def search_duckduckgo(query: str, count: int) -> list[str]:
         return await asyncio.to_thread(_sync)
 
 
-async def search_with_provider(query: str, *, count: int = 3, provider: str | None = None) -> list[str]:
+async def search_with_provider(
+    query: str, *, count: int = 3, provider: str | None = None
+) -> list[str]:
     cfg = image_cfg()
     pid = (provider or str(cfg.get("search_provider") or "bing")).strip().lower()
     query = (query or "").strip()

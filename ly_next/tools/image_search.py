@@ -15,8 +15,7 @@ logger = get_logger(__name__)
 @tool(
     name="search_images",
     description=(
-        "在网络上搜索与关键词相关的图片，返回最多 3 张图片 URL。"
-        "用户要找图、搜图、发参考图时使用。"
+        "在网络上搜索与关键词相关的图片，返回最多 3 张图片 URL。用户要找图、搜图、发参考图时使用。"
     ),
     category="image",
 )

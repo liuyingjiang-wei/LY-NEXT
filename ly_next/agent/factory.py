@@ -1,5 +1,6 @@
 from typing import Any
 
+from ly_next.agent.base import validate_agent_class
 from ly_next.agent.chat import ChatAgent
 from ly_next.agent.coordinator import CoordinatorAgent
 from ly_next.agent.deps import AgentDeps, create_agent_deps
@@ -22,6 +23,7 @@ class AgentFactory:
 
     @classmethod
     def register_agent_type(cls, name: str, agent_class: type) -> None:
+        validate_agent_class(agent_class)
         cls._agent_types[name.lower()] = agent_class
         logger.info(f"Registered agent type: {name}")
 

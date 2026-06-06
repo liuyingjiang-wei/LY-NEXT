@@ -26,7 +26,9 @@ _IMAGE_GEN_OVERRIDE_KEYS = frozenset(
 def _resolve_image_block() -> dict[str, Any]:
     """Merge ``tools.image`` overrides onto ``config_ref`` LLM block."""
     cfg = image_cfg()
-    ref = str(cfg.get("config_ref") or cfg.get("openai_compat_config_ref") or "openai_compat_llm").strip()
+    ref = str(
+        cfg.get("config_ref") or cfg.get("openai_compat_config_ref") or "openai_compat_llm"
+    ).strip()
     block: dict[str, Any] = {}
     ref_block = config.get(ref) or {}
     if isinstance(ref_block, dict):

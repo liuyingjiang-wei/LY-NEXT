@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from ly_next.core.observability import clamp_runs_query_limit, observability_enabled
+from ly_next.core.observability import clamp_runs_query_limit, observability_enabled, store_prompts
 from ly_next.core.run_store import get_run_store
 
 router = APIRouter(tags=["runs"])
@@ -34,4 +34,9 @@ async def list_run_events(run_id: str):
     if await store.get_run(run_id) is None:
         raise HTTPException(status_code=404, detail="Run not found")
     events = await store.get_events(run_id)
-    return {"run_id": run_id, "events": events, "count": len(events)}
+    return {
+        "run_id": run_id,
+        "events": events,
+        "count": len(events),
+        "store_prompts": store_prompts(),
+    }

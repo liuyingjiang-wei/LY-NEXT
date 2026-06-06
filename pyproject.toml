@@ -49,6 +49,9 @@ dev = [
 [tool.uv]
 default-groups = ["dev"]
 
+[project.entry-points."ly_next.plugins"]
+# Example: my-plugin = "my_package.plugin:MyPlugin"
+
 [project.scripts]
 ly = "ly_next.main:run"
 

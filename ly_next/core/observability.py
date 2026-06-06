@@ -34,6 +34,34 @@ def store_prompts() -> bool:
     return bool(_obs_cfg().get("store_prompts", False))
 
 
+def serialize_messages_for_event(messages: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Trim message list for run event storage when store_prompts is enabled."""
+    if not messages:
+        return []
+    max_messages = 40
+    max_chars = 4000
+    out: list[dict[str, Any]] = []
+    for m in messages[:max_messages]:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "unknown")[:32]
+        content = m.get("content")
+        if isinstance(content, str):
+            text = content[:max_chars] + ("…" if len(content) > max_chars else "")
+            out.append({"role": role, "content": text})
+        elif isinstance(content, list):
+            out.append({"role": role, "content_parts": len(content)})
+        elif content is not None:
+            out.append({"role": role, "content": str(content)[:max_chars]})
+        else:
+            out.append({"role": role})
+        if m.get("tool_calls"):
+            out[-1]["tool_calls_count"] = (
+                len(m["tool_calls"]) if isinstance(m["tool_calls"], list) else 1
+            )
+    return out
+
+
 def ws_run_summary_enabled() -> bool:
     return bool(_obs_cfg().get("ws_run_summary", True))
 

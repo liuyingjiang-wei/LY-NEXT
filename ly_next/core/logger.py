@@ -629,10 +629,19 @@ async def print_startup_report(report: dict[str, Any]) -> None:
     kv("HTTP 路由数", api.get("http_routes", "—"))
     kv("WS 路由数", api.get("ws_routes", "—"))
 
+    from ly_next.core.system_readiness import mask_api_key, show_full_api_key
+
     auth = report.get("auth") or {}
     section("鉴权与白名单")
     api_key_raw = str(auth.get("api_key") or "").strip()
-    kv("API 密钥", api_key_raw if api_key_raw else "—")
+    kv("API 密钥", mask_api_key(api_key_raw) if api_key_raw else "—")
+
+    if api_key_raw and not show_full_api_key():
+        for ln in textwrap.wrap(
+            "完整密钥见 data/ly_next/FIRST_RUN.txt，或设置 LY_NEXT_SHOW_FULL_API_KEY=1 / ly --show-full-api-key",
+            width=wrap_w,
+        ):
+            print(f"{margin}{c.DIM}{ln}{c.RESET}")
     kv("请求头", str(auth.get("header", "X-API-Key")))
     wl = auth.get("whitelist") or []
     kv("白名单条数", str(len(wl)))

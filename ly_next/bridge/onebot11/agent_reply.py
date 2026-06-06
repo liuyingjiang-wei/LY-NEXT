@@ -7,7 +7,7 @@ from ly_next.agent.chat_pipeline import (
     prepare_chat_turn,
     run_agent_on_prepared,
 )
-from ly_next.agent.image_reply import finalize_agent_reply
+from ly_next.agent.image_reply import ensure_mixed_reply
 from ly_next.bridge.onebot11.config import OneBot11AutoReply
 from ly_next.bridge.onebot11.memory import onebot_history_limit, onebot_include_global_memory
 from ly_next.core.config import config
@@ -98,7 +98,7 @@ async def run_onebot_chat_turn(
             max_tokens=auto.max_tokens,
         )
         result_text = await run_agent_on_prepared(prepared, deps, mode=auto.mode)
-        _, mixed, _ = await finalize_agent_reply(deps, result_text)
+        mixed = await ensure_mixed_reply(deps, result_text)
 
         assist_meta = {
             **prepared.turn_meta,

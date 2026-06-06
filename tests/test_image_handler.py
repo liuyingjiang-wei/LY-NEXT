@@ -55,6 +55,4 @@ def test_extract_urls_from_nested_dict_result():
             },
         }
     ]
-    assert extract_image_urls_from_tool_results(tool_results) == [
-        "https://cdn.example/y.png"
-    ]
+    assert extract_image_urls_from_tool_results(tool_results) == ["https://cdn.example/y.png"]

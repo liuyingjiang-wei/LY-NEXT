@@ -9,7 +9,10 @@ from ly_next.agent.factory import AgentFactory
 from ly_next.agent.image_reply import begin_agent_run
 from ly_next.agent.model_router import ModelRoutingResult, resolve_model_routing, routing_payload
 from ly_next.agent.prompt_augment import augment_messages_async
-from ly_next.agent.vision_precaption import apply_vision_precaption_if_needed
+from ly_next.agent.vision_precaption import (
+    apply_vision_precaption_if_needed,
+    messages_need_vision_precaption,
+)
 from ly_next.core.config import config
 from ly_next.core.thread_persistence import persist_chat_turn, prepare_messages_for_agent
 from ly_next.tools import get_tool_registry
@@ -71,33 +74,48 @@ async def prepare_chat_turn(req: ChatTurnRequest) -> PreparedChatTurn:
         if req.parallel_prep is not None
         else bool(_pipeline_cfg("parallel_prep", True))
     )
+    overlap_augment = bool(_pipeline_cfg("overlap_augment", True))
+    needs_vision = messages_need_vision_precaption(
+        messages, skip_precaption=req.skip_vision_precaption
+    )
 
-    if parallel:
-        messages, routed = await asyncio.gather(
-            apply_vision_precaption_if_needed(
-                messages,
-                skip_precaption=req.skip_vision_precaption,
-            ),
-            resolve_model_routing(
-                messages,
-                request_provider=req.provider,
-                request_model=req.model,
-                router_hint=req.router_hint,
-                enabled_override=req.use_model_router,
-            ),
-        )
-    else:
-        messages = await apply_vision_precaption_if_needed(
-            messages,
-            skip_precaption=req.skip_vision_precaption,
-        )
-        routed = await resolve_model_routing(
-            messages,
+    async def _route(msgs: list[dict[str, Any]]) -> ModelRoutingResult:
+        return await resolve_model_routing(
+            msgs,
             request_provider=req.provider,
             request_model=req.model,
             router_hint=req.router_hint,
             enabled_override=req.use_model_router,
         )
+
+    async def _augment(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if req.skip_augment is True:
+            return msgs
+        return await augment_messages_async(
+            msgs,
+            skip_rag=req.skip_rag,
+            skip_context=req.skip_context,
+            skip_memory=req.skip_memory,
+        )
+
+    if parallel and overlap_augment and not needs_vision:
+        messages, routed = await asyncio.gather(_augment(messages), _route(messages))
+    elif parallel:
+        messages, routed = await asyncio.gather(
+            apply_vision_precaption_if_needed(
+                messages,
+                skip_precaption=req.skip_vision_precaption,
+            ),
+            _route(messages),
+        )
+        messages = await _augment(messages)
+    else:
+        messages = await apply_vision_precaption_if_needed(
+            messages,
+            skip_precaption=req.skip_vision_precaption,
+        )
+        routed = await _route(messages)
+        messages = await _augment(messages)
 
     turn_meta = {"mode": req.mode, **(req.turn_meta_extra or {})}
     persist_async = (
@@ -114,15 +132,6 @@ async def prepare_chat_turn(req: ChatTurnRequest) -> PreparedChatTurn:
             )
         else:
             await persist_chat_turn(thread_id, user_to_persist, None, metadata=turn_meta)
-
-    skip_augment = req.skip_augment is True
-    if not skip_augment:
-        messages = await augment_messages_async(
-            messages,
-            skip_rag=req.skip_rag,
-            skip_context=req.skip_context,
-            skip_memory=req.skip_memory,
-        )
 
     return PreparedChatTurn(
         thread_id=thread_id,

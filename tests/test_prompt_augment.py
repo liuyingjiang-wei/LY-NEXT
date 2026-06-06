@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from ly_next.agent.prompt_augment import augment_messages_async, merge_system_context
+from ly_next.agent.prompt_augment import (
+    augment_messages_async,
+    merge_system_context,
+    should_skip_retrieval_augment,
+)
 
 
 def test_merge_system_context_inserts_prefix():
@@ -46,3 +50,16 @@ async def test_augment_no_user_query_returns_early(monkeypatch):
     msgs = [{"role": "system", "content": "s"}]
     out = await augment_messages_async(list(msgs))
     assert out == msgs
+
+
+def test_should_skip_retrieval_greeting():
+    assert should_skip_retrieval_augment("你好") is True
+    assert should_skip_retrieval_augment("hello!") is True
+
+
+def test_should_skip_retrieval_short_query():
+    assert should_skip_retrieval_augment("hi") is True
+
+
+def test_should_not_skip_retrieval_real_question():
+    assert should_skip_retrieval_augment("请解释 React 的 useEffect 用法") is False

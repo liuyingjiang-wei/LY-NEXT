@@ -129,6 +129,22 @@ def test_llm_start_and_failed_events():
         end_run(tok)
 
 
+def test_llm_start_stores_messages_when_store_prompts(monkeypatch):
+    import ly_next.core.observability as obs
+
+    monkeypatch.setattr(obs, "store_prompts", lambda: True)
+    tok = begin_run("tid-prompt")
+    try:
+        record_llm_call_start(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+        events = get_run_events()
+        assert events[0]["payload"]["messages"][0]["content"] == "hello"
+    finally:
+        end_run(tok)
+
+
 def test_telemetry_coerces_float_usage_tokens():
     tok = begin_run("tid-f")
     try:

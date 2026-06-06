@@ -191,6 +191,7 @@ def record_llm_call_start(
     model: str | None = None,
     messages_count: int | None = None,
     provider: str | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> None:
     payload: dict[str, Any] = {}
     if model:
@@ -199,6 +200,12 @@ def record_llm_call_start(
         payload["provider"] = provider
     if messages_count is not None:
         payload["messages_count"] = messages_count
+    from ly_next.core.observability import serialize_messages_for_event, store_prompts
+
+    if store_prompts() and messages:
+        serialized = serialize_messages_for_event(messages)
+        if serialized:
+            payload["messages"] = serialized
     emit_run_event("llm_start", payload)
 
 

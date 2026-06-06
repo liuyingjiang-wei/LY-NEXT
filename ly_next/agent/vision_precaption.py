@@ -154,6 +154,21 @@ def _apply_precaption_failure(
     return out
 
 
+def messages_need_vision_precaption(
+    messages: list[dict[str, Any]], *, skip_precaption: bool = False
+) -> bool:
+    raw = config.get("agent.vision_precaption", {}) or {}
+    if skip_precaption or not isinstance(raw, dict) or not raw.get("enabled"):
+        return False
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if (m.get("role") or "").strip().lower() != "user":
+            continue
+        if _user_has_image_parts(m):
+            return True
+    return False
+
+
 async def apply_vision_precaption_if_needed(
     messages: list[dict[str, Any]],
     *,

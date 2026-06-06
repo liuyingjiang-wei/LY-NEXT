@@ -45,7 +45,17 @@ async def finalize_agent_reply(
     return text, mixed, updates
 
 
+async def ensure_mixed_reply(deps: AgentDeps, text: str) -> MixedMessage:
+    """Build MixedMessage once per turn; skip if the agent loop already finalized."""
+    if deps.last_mixed_message is not None:
+        return deps.last_mixed_message
+    _, mixed, _ = await finalize_agent_reply(deps, text)
+    return mixed
+
+
 def begin_agent_run(deps: AgentDeps) -> None:
     deps.collected_tool_results = []
     deps.last_mixed_message = None
+    deps._filtered_tools_cache = None
+    deps._openai_tools_cache = None
     set_current_thread_id(deps.thread_id)

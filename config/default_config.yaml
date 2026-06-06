@@ -14,6 +14,14 @@ api:
   security_profile: "development"
   trusted_module_hashes: {}
 
+plugins:
+  enabled: true
+  dir: "plugins"
+  modules: []
+  entry_points: true
+  security_profile: "development"
+  trusted_module_hashes: {}
+
 llm:
   default_provider: "openai"
   request_timeout: 60
@@ -55,6 +63,10 @@ agent:
   tool_call_mode: "auto"
   prefer_compat_when_mcp_tools: true
   stream_output: true
+  chat_pipeline:
+    parallel_prep: true
+    persist_user_async: true
+    middleware: []
   memory:
     enabled: true
     path: "MEMORY.md"
@@ -239,6 +251,8 @@ agent:
       config_ref: "rag_embedding_llm"
 
 tools:
+  plugin_dir: ""
+  security_profile: "development"
   built_in:
     - "calculator"
     - "format_json"

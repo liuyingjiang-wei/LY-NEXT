@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -19,8 +19,10 @@ from ly_next.agent.chat_pipeline import (
     run_agent_on_prepared,
 )
 from ly_next.agent.factory import AgentFactory
-from ly_next.agent.image_reply import finalize_agent_reply
+from ly_next.agent.image_reply import ensure_mixed_reply
 from ly_next.agent.startup_memory import invalidate_startup_memory_cache
+from ly_next.core.plugin.loader import _plugin_dir
+from ly_next.core.plugin.loader_security import plugin_security_profile
 from ly_next.core.cache import cache
 from ly_next.core.config import config
 from ly_next.core.database import db
@@ -33,6 +35,7 @@ from ly_next.core.thread_persistence import persist_chat_turn
 from ly_next.messaging.models import mixed_message_to_dict
 from ly_next.models.factory import LLMFactory
 from ly_next.rag import reset_document_retriever, reset_example_selector
+from ly_next.rag.document_retriever import get_document_retriever
 from ly_next.tools import get_tool_registry
 
 router = APIRouter()
@@ -76,6 +79,26 @@ _SETTINGS_EDITABLE_ROOTS = frozenset(
     }
 )
 _SETTINGS_RESTART_ROOTS = frozenset({"server", "database", "redis", "services", "bridge"})
+_SETTINGS_RESTART_LABELS = {
+    "server": "server（监听地址/端口）",
+    "database": "database（PostgreSQL）",
+    "redis": "redis",
+    "services": "services（托管进程）",
+    "bridge": "bridge（QQ / OneBot 桥接）",
+}
+_SETTINGS_HOT_LABELS = {
+    "llm": "LLM 默认提供商",
+    "openai_llm": "OpenAI",
+    "anthropic_llm": "Anthropic",
+    "ollama_llm": "Ollama",
+    "openai_compat_llm": "OpenAI 兼容网关",
+    "rag_embedding_llm": "Embedding",
+    "agent": "Agent / RAG",
+    "tools": "工具与 MCP",
+    "logging": "日志级别",
+    "auth": "访问控制",
+    "api": "动态 API",
+}
 _SETTINGS_MASK = "***"
 _SETTINGS_SECRET_NORMALIZED = frozenset(
     {
@@ -122,11 +145,43 @@ def _extract_editable_settings(full: dict[str, Any]) -> dict[str, Any]:
 
 
 def _restart_hints(patch: dict[str, Any]) -> list[str]:
-    hints: list[str] = []
-    for root in _SETTINGS_RESTART_ROOTS:
-        if root in patch:
-            hints.append(root)
-    return hints
+    return _settings_effects(patch)["restart_required"]
+
+
+def _settings_effects(patch: dict[str, Any]) -> dict[str, Any]:
+    restart: list[str] = []
+    hot: list[str] = []
+    notes: list[str] = []
+
+    for root, fragment in patch.items():
+        if root in _SETTINGS_RESTART_ROOTS:
+            restart.append(_SETTINGS_RESTART_LABELS.get(root, root))
+        elif root == "tools" and isinstance(fragment, dict):
+            hot.append(_SETTINGS_HOT_LABELS["tools"])
+            mcp = fragment.get("mcp")
+            if isinstance(mcp, dict) and any(
+                k in mcp for k in ("remote", "enabled", "transport", "path")
+            ):
+                notes.append("远程 MCP 在进程启动时连接，修改后请重启 uv run ly")
+        elif root == "auth":
+            notes.append("鉴权变更后，已登录 Cookie 可能需要重新登录")
+        elif root == "api" and isinstance(fragment, dict):
+            hot.append(_SETTINGS_HOT_LABELS["api"])
+            if any(k in fragment for k in ("auto_load", "security_profile", "api_dir")):
+                notes.append("动态 API 加载策略变更后建议重启进程")
+        elif root in _SETTINGS_HOT_LABELS:
+            hot.append(_SETTINGS_HOT_LABELS[root])
+        elif root == "agent" and isinstance(fragment, dict):
+            hot.append(_SETTINGS_HOT_LABELS["agent"])
+
+    restart = list(dict.fromkeys(restart))
+    hot = list(dict.fromkeys(hot))
+    notes = list(dict.fromkeys(notes))
+    return {
+        "restart_required": restart,
+        "hot_reload": hot,
+        "notes": notes,
+    }
 
 
 def _apply_settings_patch(dst: dict[str, Any], patch: dict[str, Any]) -> None:
@@ -238,6 +293,15 @@ class TaskCreateRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class RouterPreviewRequest(BaseModel):
+    text: str
+    router_hint: str | None = None
+
+
+class RagTryRequest(BaseModel):
+    query: str
+
+
 @router.get("/health")
 async def health_check():
     return {"status": "ok", "service": "ly-next"}
@@ -256,8 +320,46 @@ async def get_info():
     }
 
 
+@router.get("/system/readiness")
+async def get_system_readiness():
+    from ly_next.core.system_readiness import gather_readiness
+
+    return await gather_readiness()
+
+
+@router.get("/system/security/health")
+async def get_security_health():
+    from ly_next.core.security_health import gather_security_health
+
+    return gather_security_health()
+
+
+@router.post("/system/router/preview")
+async def preview_model_router(body: RouterPreviewRequest):
+    from ly_next.agent.model_router import resolve_model_routing, routing_payload
+
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text 不能为空")
+    messages = [{"role": "user", "content": text}]
+    result = await resolve_model_routing(messages, router_hint=body.router_hint)
+    mr_cfg = config.get("agent.model_router", {}) or {}
+    return {
+        "router_enabled": bool(mr_cfg.get("enabled", False) if isinstance(mr_cfg, dict) else False),
+        "router": routing_payload(result),
+    }
+
+
+@router.post("/system/rag/try")
+async def try_rag_retrieval(body: RagTryRequest):
+    query = (body.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query 不能为空")
+    return await get_document_retriever().retrieve_results(query)
+
+
 @router.get("/system/extensions")
-async def get_system_extensions():
+async def get_system_extensions(request: Request):
     vector = {"available": False, "installed": False, "version": None, "error": None}
     db_status = {"connected": False, "database": None, "error": None}
     redis_status = {"connected": False, "error": None}
@@ -297,10 +399,48 @@ async def get_system_extensions():
     except Exception as e:
         redis_status["error"] = str(e)
 
+    plugin_reg = getattr(request.app.state, "plugin_registry", None)
+    ctx = getattr(request.app.state, "app_context", None)
+    if plugin_reg is None and ctx is not None:
+        plugin_reg = ctx.plugin_registry
+
+    plugin_info: list[dict[str, Any]] = []
+    bridge_info: list[dict[str, str | bool]] = []
+    plugin_extras: dict[str, Any] = {}
+    if plugin_reg is not None:
+        plugin_info = plugin_reg.list_info()
+        bridge_info = plugin_reg.bridge_registry.list_info()
+    if ctx is not None:
+        plugin_extras = {
+            k: v
+            for k, v in (ctx.extras or {}).items()
+            if k.endswith("_registered") or k.endswith("_count")
+        }
+
+    user_plugins = [p for p in plugin_info if not p.get("builtin")]
+    tool_registry = get_tool_registry()
+
     return {
         "database": db_status,
         "redis": redis_status,
         "extensions": {"vector": vector},
+        "plugins": plugin_info,
+        "plugins_summary": {
+            "total": len(plugin_info),
+            "builtin": sum(1 for p in plugin_info if p.get("builtin")),
+            "user": len(user_plugins),
+        },
+        "plugins_config": {
+            "enabled": bool(config.get("plugins.enabled", True)),
+            "dir": str(_plugin_dir()),
+            "security_profile": plugin_security_profile(),
+            "entry_points": bool(config.get("plugins.entry_points", True)),
+            "tools_plugin_dir": str(config.get("tools.plugin_dir") or ""),
+        },
+        "plugin_extras": plugin_extras,
+        "bridges": bridge_info,
+        "agent_modes": AgentFactory.list_agent_types(),
+        "tool_count": len(tool_registry.list_tools()),
     }
 
 
@@ -448,6 +588,7 @@ async def patch_workbench_settings(body: dict[str, Any]):
         rel_path = str(abs_path.relative_to(config.project_root.resolve()))
     except ValueError:
         rel_path = str(abs_path)
+    effects = _settings_effects(body)
     return {
         "ok": True,
         "editable": _extract_editable_settings(full),
@@ -459,7 +600,8 @@ async def patch_workbench_settings(body: dict[str, Any]):
             "parent_writable": init["parent_writable"],
         },
         "tool_catalog": _tool_catalog(),
-        "restart_required": _restart_hints(body),
+        "restart_required": effects["restart_required"],
+        "settings_effects": effects,
     }
 
 
@@ -579,7 +721,7 @@ async def chat(request: ChatRequest):
         )
         result = await run_agent_on_prepared(prepared, deps, mode=request.mode)
         await await_user_persist(prepared)
-        _, mixed, _ = await finalize_agent_reply(deps, result)
+        mixed = await ensure_mixed_reply(deps, result)
         mixed_payload = mixed_message_to_dict(mixed)
         image_urls = mixed.image_urls()
 

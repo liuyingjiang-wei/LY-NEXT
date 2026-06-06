@@ -22,6 +22,11 @@ from ly_next.models.openai_compat_auth import (
     openai_compat_auth_headers,
     require_remote_api_key,
 )
+from ly_next.models.stream_assemble import (
+    accumulate_tool_call_delta,
+    build_chat_completion_from_stream,
+)
+from ly_next.agent.llm_text import text_from_stream_delta
 
 logger = get_logger(__name__)
 
@@ -215,10 +220,18 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             )
             h = merge_optional_headers(auth, self._extra_headers)
             h.setdefault("Content-Type", "application/json")
+            read_timeout = self._timeout_sec
+            connect_timeout = min(10.0, read_timeout)
             self._client = httpx.AsyncClient(
                 base_url=self.base_url.rstrip("/"),
                 headers=h,
-                timeout=httpx.Timeout(self._timeout_sec),
+                timeout=httpx.Timeout(
+                    connect=connect_timeout,
+                    read=read_timeout,
+                    write=min(30.0, read_timeout),
+                    pool=5.0,
+                ),
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             )
         return self._client
 
@@ -263,6 +276,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             model=log_ctx.model,
             provider=self.provider_name,
             messages_count=len(msgs) if isinstance(msgs, list) else None,
+            messages=msgs if isinstance(msgs, list) else None,
         )
 
         for attempt in range(retries + 1):
@@ -398,6 +412,84 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             pt = cfg.get("parallelToolCalls")
         attach_tools(body, tools, tool_choice, pt if isinstance(pt, bool) else None)
         return await self._post_chat_completions_json(client, body)
+
+    async def stream_chat_complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ):
+        require_remote_api_key(
+            self.api_key,
+            self.base_url,
+            auth_mode=self._auth_mode,
+            auth_header_name=self._auth_header_name,
+        )
+        cfg = self._merged_runtime_config()
+        overrides = {k: v for k, v in kwargs.items() if v is not None}
+        body = build_openai_chat_completions_body(
+            messages,
+            cfg,
+            overrides,
+            default_model=self.model,
+        )
+        self._apply_model_aliases(body)
+        pt = overrides.get("parallel_tool_calls")
+        if pt is None:
+            pt = cfg.get("parallel_tool_calls")
+        if pt is None:
+            pt = cfg.get("parallelToolCalls")
+        attach_tools(body, tools, tool_choice, pt if isinstance(pt, bool) else None)
+        body["stream"] = True
+
+        content_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}
+        finish_reason: str | None = None
+        usage: dict[str, Any] | None = None
+        tool_phase = False
+        model_name = str(body.get("model") or self.model)
+        record_llm_call_start(model=model_name, messages_count=len(messages), provider=self.provider_name)
+
+        try:
+            async for chunk in self._stream_chat(body):
+                if not isinstance(chunk, dict):
+                    continue
+                usage_raw = chunk.get("usage")
+                if isinstance(usage_raw, dict):
+                    usage = usage_raw
+                choices = chunk.get("choices") or []
+                if not choices or not isinstance(choices[0], dict):
+                    continue
+                choice0 = choices[0]
+                fr = choice0.get("finish_reason")
+                if isinstance(fr, str) and fr:
+                    finish_reason = fr
+                delta = choice0.get("delta")
+                if not isinstance(delta, dict):
+                    continue
+                tc_deltas = delta.get("tool_calls")
+                if tc_deltas:
+                    tool_phase = True
+                    for tc in tc_deltas:
+                        if isinstance(tc, dict):
+                            accumulate_tool_call_delta(tool_calls, tc)
+                text = text_from_stream_delta(delta)
+                if text and not tool_phase:
+                    content_parts.append(text)
+                    yield {"kind": "content", "text": text}
+        except Exception as e:
+            record_llm_call_failed(model=model_name, error=str(e))
+            raise
+
+        response = build_chat_completion_from_stream(
+            content="".join(content_parts),
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            usage=usage,
+        )
+        record_llm_usage_from_chat_response(response)
+        yield {"kind": "done", "response": response}
 
     @property
     def provider_name(self) -> str:

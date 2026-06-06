@@ -38,6 +38,49 @@ docker compose -f docker/docker-compose.yml --profile app up -d --build
 
 ---
 
+## 一键 Demo
+
+在仓库根目录：
+
+```bash
+# Linux / macOS
+bash docker/demo-up.sh
+
+# Windows
+powershell -ExecutionPolicy Bypass -File docker/demo-up.ps1
+```
+
+或手动：
+
+```bash
+cd docker
+cp .env.example .env   # 可选，填入 OPENAI_API_KEY
+docker compose --profile app up -d --build
+```
+
+| 地址 | 说明 |
+|------|------|
+| `http://127.0.0.1:8000/ly/login` | 工作台登录 |
+| `http://127.0.0.1:8000/docs` | OpenAPI |
+
+**API 密钥：** 首次启动写入数据卷 `ly-app-data`：
+
+```bash
+docker exec ly-next-app cat /app/data/ly_next/FIRST_RUN.txt
+```
+
+**容器内诊断：**
+
+```bash
+docker exec ly-next-app ly doctor
+```
+
+**仅 Ollama、无云 API Key：** 见 [docs/QUICKSTART.md](../docs/QUICKSTART.md) 路径 ①，在工作台将默认 provider 改为 Ollama。
+
+停止 Demo：`docker compose -f docker/docker-compose.yml --profile app down`
+
+---
+
 ## pgvector
 
 使用带 vector 扩展的 PostgreSQL 镜像：

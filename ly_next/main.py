@@ -1,4 +1,5 @@
 import asyncio
+import os
 import secrets
 import sys
 import time
@@ -20,8 +21,9 @@ from starlette.staticfiles import StaticFiles
 
 from ly_next import __version__
 from ly_next.api import api_router, mcp_router, ws_public_router
-from ly_next.api.loader import APILoader
+from ly_next.api.base import APIRegistry
 from ly_next.api.mcp_api import get_mcp_mount_prefix
+from ly_next.core.app_context import AppContext, set_app_context
 from ly_next.core.auth_http import extract_api_key_from_request
 from ly_next.core.cache import cache
 from ly_next.core.checkpointer import init_checkpointer, shutdown_checkpointer
@@ -33,6 +35,7 @@ from ly_next.core.logger import (
     refresh_ly_next_log_level_from_config,
     setup_logging,
 )
+from ly_next.core.plugin import PluginLoader
 from ly_next.core.service_manager import (
     InstallStatus,
     ServiceInfo,
@@ -42,9 +45,33 @@ from ly_next.core.service_manager import (
 from ly_next.core.startup_manager import get_startup_manager
 from ly_next.core.task_manager import get_task_manager
 from ly_next.mcp.remote_bridge import load_remote_mcp_tools
-from ly_next.tools import get_tool_registry, register_builtin_tools
 
 logger = setup_logging()
+
+
+def _write_first_run_notice(api_key: str) -> None:
+    """Write one-time login hint; avoids printing full key in shared terminals."""
+    try:
+        from ly_next.core.config import get_data_root
+
+        path = get_data_root() / "FIRST_RUN.txt"
+        if path.exists():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = (
+            "LY-NEXT 首次启动 — 工作台登录密钥\n"
+            "================================\n\n"
+            f"API Key: {api_key}\n\n"
+            "用法:\n"
+            "  1. 浏览器打开 /ly/login\n"
+            "  2. 粘贴上方 API Key 登录\n\n"
+            "生产环境请尽快在「访问控制」中更换密钥，并勿将此文件提交到版本库。\n"
+        )
+        path.write_text(body, encoding="utf-8")
+        logger.info("已写入首次登录说明: %s", path)
+    except OSError as e:
+        logger.warning("无法写入 FIRST_RUN.txt: %s", e)
+
 
 _LOGIN_BUILD_MISSING = (
     '<!doctype html><html lang="zh-CN"><meta charset="utf-8"/><title>登录</title>'
@@ -205,8 +232,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except Exception as e:
                 logger.warning("LangGraph checkpointer init skipped: %s", e)
 
-    registry = get_tool_registry()
-    n_bi = register_builtin_tools(registry)
+    ctx = AppContext.create()
+    set_app_context(ctx)
+    app.state.app_context = ctx
+
+    api_registry = APIRegistry()
+    plugin_loader = PluginLoader()
+    plugin_registry = plugin_loader.load_all(ctx, api_registry=api_registry)
+    app.state.plugin_registry = plugin_registry
+
+    n_bi = ctx.extras.get("builtin_tools_registered", 0)
+    registry = ctx.tool_registry
     logger.debug("Registered %s built-in tools (%s total in registry)", n_bi, len(registry))
 
     try:
@@ -214,10 +250,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as e:
         logger.warning("Remote MCP init: %s", e)
 
-    api_loader = APILoader()
-    api_loader.load_apis()
-    await api_loader.registry.startup(app)
-    logger.debug(f"Loaded {len(api_loader.registry.list_apis())} APIs")
+    await api_registry.startup(app)
+    await plugin_registry.startup(app, ctx)
+    app.state.api_registry = api_registry
+    logger.debug(
+        "Loaded %s APIs, %s plugins",
+        len(api_registry.list_apis()),
+        len(plugin_registry.list_plugins()),
+    )
 
     host = config.get("server.host", "0.0.0.0")
     port = config.get("server.port", 8000)
@@ -280,7 +320,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "python": __import__("sys").version.split()[0],
         },
         "api": {
-            "modules": str(len(api_loader.registry.list_apis())),
+            "modules": str(len(api_registry.list_apis())),
             "http_routes": str(http_routes),
             "ws_routes": str(ws_routes),
         },
@@ -309,7 +349,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     logger.info("Shutting down LY-Next...")
-    await api_loader.registry.shutdown(app)
+    plugin_reg = getattr(app.state, "plugin_registry", None)
+    app_ctx = getattr(app.state, "app_context", None)
+    if plugin_reg is not None and app_ctx is not None:
+        await plugin_reg.shutdown(app, app_ctx)
+    api_reg = getattr(plugin_reg, "api_registry", None) if plugin_reg else None
+    if api_reg is not None:
+        await api_reg.shutdown(app)
 
     with suppress(Exception):
         await shutdown_checkpointer()
@@ -343,9 +389,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from ly_next.bridge.onebot11 import attach_onebot_routes
+    from ly_next.core.plugin.bridge_plugin import BridgePlugin
+    from ly_next.core.plugin.bridge_registry import BridgeRegistry
 
-    onebot_ws_paths = attach_onebot_routes(ws_public_router)
+    _bridge_reg = BridgeRegistry()
+    BridgePlugin().register_bridges(_bridge_reg, AppContext.create())
+    onebot_ws_paths: list[str] = []
+    for _bridge in _bridge_reg.enabled():
+        onebot_ws_paths.extend(_bridge.attach_routes(ws_public_router, app))
     app.state.onebot11_ws_paths = onebot_ws_paths
 
     app.include_router(api_router)
@@ -356,7 +407,9 @@ def create_app() -> FastAPI:
     app.include_router(ws_public_router)
 
     if config.get("auth.enabled", True) and not config.get("auth.api_key"):
-        config.set("auth.api_key", secrets.token_urlsafe(32), save=True)
+        new_key = secrets.token_urlsafe(32)
+        config.set("auth.api_key", new_key, save=True)
+        _write_first_run_notice(new_key)
 
     removed = config.sanitize_auth_whitelist()
     if removed:
@@ -509,6 +562,12 @@ def create_app() -> FastAPI:
 
 def run():
     import argparse
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
+        from ly_next.core.doctor import run_doctor_cli
+
+        raise SystemExit(run_doctor_cli(sys.argv[2:]))
 
     from ly_next.core.server_port import (
         ENV_PORT,
@@ -526,6 +585,7 @@ Examples:
   %(prog)s --port 9000         # 指定端口 9000
   %(prog)s --host 127.0.0.1    # 仅本机监听
   %(prog)s --reload            # 开发热重载
+  %(prog)s doctor              # 环境诊断（依赖、安全、配置）
   LY_NEXT_PORT=9000 %(prog)s   # 环境变量指定端口（非交互）
         """,
     )
@@ -544,7 +604,15 @@ Examples:
         help="Skip interactive port prompt; use config / env / default",
     )
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
+    parser.add_argument(
+        "--show-full-api-key",
+        action="store_true",
+        help="Print full auth API key in startup report (default: masked)",
+    )
     args = parser.parse_args()
+
+    if args.show_full_api_key:
+        os.environ["LY_NEXT_SHOW_FULL_API_KEY"] = "1"
 
     host = args.host or config.get("server.host", "0.0.0.0")
     config_port = config.get("server.port", 8000)

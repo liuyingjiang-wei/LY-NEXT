@@ -54,6 +54,7 @@ services:
     container_name: ly-next-app
     restart: unless-stopped
     environment:
+      LY_NEXT_NO_PROMPT: "1"
       DOCKER_CONTAINER: "1"
       LY_NEXT_PROJECT_ROOT: /app
       DATABASE_HOST: postgres

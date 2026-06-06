@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 from ly_next.core.config import config, get_data_root, get_project_root
 from ly_next.core.database import RAG_EMBEDDING_DIM, db
@@ -104,6 +105,81 @@ class DocumentRetriever:
         if not self._chunks or not user_query.strip():
             return ""
 
+        show_src = bool(config.get("agent.rag.show_source", True))
+        picked = await self._pick_for_query(user_query)
+        if not picked:
+            return ""
+
+        parts = []
+        for i, (score, ch, src) in enumerate(picked, 1):
+            head = f"片段{i}（相关度 {score:.3f}）"
+            if show_src and src:
+                head += f" · 来源 {src}"
+            parts.append(f"{head}\n{ch}")
+        return "\n\n---\n\n".join(parts)
+
+    async def retrieve_results(self, user_query: str) -> dict[str, Any]:
+        """Structured hits for workbench RAG trial retrieval."""
+        enabled = bool(config.get("agent.rag.enabled", False))
+        path_cfg = str(config.get("agent.rag.documents_path", "") or "").strip()
+        if not enabled:
+            return {
+                "enabled": False,
+                "documents_path": path_cfg,
+                "chunks_loaded": 0,
+                "hits": [],
+                "hint": "agent.rag.enabled 为 false",
+            }
+        if not self._configured_once or self._loaded_path != path_cfg:
+            self.configure()
+        q = user_query.strip()
+        if not q:
+            return {
+                "enabled": True,
+                "documents_path": self._loaded_path,
+                "chunks_loaded": len(self._chunks),
+                "hits": [],
+                "hint": "请输入检索问题",
+            }
+        if not self._chunks:
+            return {
+                "enabled": True,
+                "documents_path": self._loaded_path,
+                "chunks_loaded": 0,
+                "hits": [],
+                "hint": "知识库为空或路径无效，请检查 documents_path",
+            }
+        picked = await self._pick_for_query(q)
+        hits = [
+            {
+                "rank": i,
+                "score": round(float(score), 4),
+                "source": src or "",
+                "text": ch,
+                "preview": ch[:320] + ("…" if len(ch) > 320 else ""),
+            }
+            for i, (score, ch, src) in enumerate(picked, 1)
+        ]
+        return {
+            "enabled": True,
+            "documents_path": self._loaded_path,
+            "chunks_loaded": len(self._chunks),
+            "hits": hits,
+            "hint": None if hits else "未命中片段，可调低 min_similarity 或检查文档内容",
+        }
+
+    def _source_for_chunk(self, ch: str) -> str:
+        if not self._sources or not self._chunks:
+            return ""
+        try:
+            ix = self._chunks.index(ch)
+            if 0 <= ix < len(self._sources):
+                return self._sources[ix]
+        except ValueError:
+            pass
+        return ""
+
+    async def _pick_for_query(self, user_query: str) -> list[tuple[float, str, str]]:
         top_k = int(config.get("agent.rag.top_k", 5) or 5)
         min_sim = float(config.get("agent.rag.min_similarity", 0.12) or 0.0)
         use_emb = bool(config.get("agent.rag.use_embeddings", True))
@@ -112,7 +188,6 @@ class DocumentRetriever:
         mmr_on = bool(config.get("agent.rag.mmr_enabled", False))
         mmr_lambda = float(config.get("agent.rag.mmr_lambda", 0.55) or 0.55)
         mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 3) or 3))
-        show_src = bool(config.get("agent.rag.show_source", True))
 
         q_vec: list[float] | None = None
         ranked: list[tuple[float, str]] = []
@@ -121,11 +196,10 @@ class DocumentRetriever:
             try:
                 ranked, q_vec = await self._rank_embedding_with_query_vec(user_query)
             except Exception as e:
-                msg = str(e).strip() or repr(e)
                 logger.warning(
                     "[rag.docs] Embedding retrieve failed, fallback lexical (%s): %s",
                     type(e).__name__,
-                    msg,
+                    str(e).strip() or repr(e),
                 )
                 ranked = self._rank_lexical(user_query)
                 q_vec = None
@@ -169,24 +243,7 @@ class DocumentRetriever:
                 cosine_fn=cosine_similarity,
             )
 
-        if not picked:
-            return ""
-
-        parts = []
-        for i, (score, ch) in enumerate(picked, 1):
-            src = ""
-            if show_src and self._sources and self._chunks:
-                try:
-                    ix = self._chunks.index(ch)
-                    if 0 <= ix < len(self._sources):
-                        src = self._sources[ix]
-                except ValueError:
-                    src = ""
-            head = f"片段{i}（相关度 {score:.3f}）"
-            if src:
-                head += f" · 来源 {src}"
-            parts.append(f"{head}\n{ch}")
-        return "\n\n---\n\n".join(parts)
+        return [(float(s), ch, self._source_for_chunk(ch)) for s, ch in picked]
 
     def _rank_lexical(self, user_query: str) -> list[tuple[float, str]]:
         ranked: list[tuple[float, str]] = []

@@ -1,3 +1,4 @@
+from ly_next.agent.base import BaseAgent, validate_agent_class
 from ly_next.agent.chat import ChatAgent
 from ly_next.agent.coordinator import CoordinatorAgent
 from ly_next.agent.deps import AgentDeps, create_agent_deps
@@ -18,6 +19,8 @@ __all__ = [
     "create_initial_state",
     "AgentDeps",
     "create_agent_deps",
+    "BaseAgent",
+    "validate_agent_class",
     "ReactAgent",
     "PlanAgent",
     "ChatAgent",

@@ -85,9 +85,7 @@ def _valid_uuid(value: str) -> bool:
         return False
 
 
-async def _create_conversation(
-    scope_key: str, seed_messages: list[dict[str, Any]]
-) -> str:
+async def _create_conversation(scope_key: str, seed_messages: list[dict[str, Any]]) -> str:
     title = _thread_title_from_messages(seed_messages) or "QQ 对话"
     row = await db.create_session(
         name=title,

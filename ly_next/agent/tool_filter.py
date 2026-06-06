@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ly_next.agent.deps import AgentDeps
 from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -116,3 +117,42 @@ def filter_tools_for_agent(
     names = [t.definition.name for t in picked]
     logger.debug("[tool_filter] visible tools (%s): %s", len(names), names)
     return picked, names
+
+
+def get_filtered_tools_for_deps(deps: AgentDeps) -> tuple[list[Any], list[str]]:
+    """Return visible tools for this run, cached on deps for the agent loop."""
+    cached = getattr(deps, "_filtered_tools_cache", None)
+    if cached is not None:
+        return cached
+
+    registry = deps.tool_registry
+    if not registry:
+        empty: tuple[list[Any], list[str]] = ([], [])
+        deps._filtered_tools_cache = empty
+        return empty
+
+    picked = filter_tools_for_agent(
+        registry,
+        allow_tools=deps.tool_allow_tools,
+        deny_tools=deps.tool_deny_tools,
+        allow_categories=deps.tool_allow_categories,
+        max_tier=deps.tool_max_tier,
+        max_tools=deps.max_tools,
+    )
+    deps._filtered_tools_cache = picked
+    return picked
+
+
+def get_openai_tools_for_deps(
+    deps: AgentDeps,
+) -> tuple[list[dict[str, Any]], list[str], list[Any]]:
+    """OpenAI tool schemas + allowed names, cached per agent run."""
+    cached = getattr(deps, "_openai_tools_cache", None)
+    if cached is not None:
+        return cached
+
+    objs, names = get_filtered_tools_for_deps(deps)
+    openai_tools = [t.definition.to_openai_format() for t in objs]
+    result: tuple[list[dict[str, Any]], list[str], list[Any]] = (openai_tools, names, objs)
+    deps._openai_tools_cache = result
+    return result

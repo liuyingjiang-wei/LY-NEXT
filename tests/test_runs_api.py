@@ -66,6 +66,7 @@ async def test_get_run_and_events():
 
     ev = await runs_api.list_run_events(run_id)
     assert ev["count"] == 2
+    assert "store_prompts" in ev
     kinds = {e["kind"] for e in ev["events"]}
     assert "llm_start" in kinds
     assert "tool_end" in kinds

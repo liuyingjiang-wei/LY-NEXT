@@ -22,6 +22,16 @@ def test_onebot11_status_endpoint():
     assert data["actions_count"] == len(NAPCAT_ACTION_NAMES)
 
 
+def test_system_readiness_endpoint():
+    client = TestClient(create_app())
+    r = client.get("/api/system/readiness", headers=_api_headers())
+    assert r.status_code == 200
+    data = r.json()
+    assert "ready_for_chat" in data
+    assert "checks" in data
+    assert "llm" in data["checks"]
+
+
 def test_settings_includes_bridge_editable():
     client = TestClient(create_app())
     r = client.get("/api/system/settings", headers=_api_headers())
@@ -60,3 +70,14 @@ def test_onebot11_call_invalid_action():
         json={"action": "not valid!", "params": {}},
     )
     assert r.status_code == 400
+
+
+def test_onebot11_diagnostics_endpoint():
+    client = TestClient(create_app())
+    r = client.get("/api/onebot11/diagnostics", headers=_api_headers())
+    assert r.status_code == 200
+    data = r.json()
+    assert data["napcat_ws_url"].startswith("ws://")
+    assert isinstance(data.get("checks"), list)
+    assert "all_ok" in data
+    assert "suggestions" in data

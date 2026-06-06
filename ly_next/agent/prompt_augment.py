@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 from ly_next.agent.startup_memory import get_startup_memory_block
@@ -11,6 +12,11 @@ from ly_next.rag.document_retriever import get_document_retriever
 from ly_next.rag.example_selector import get_example_selector
 
 logger = get_logger(__name__)
+
+_CHAT_GREETING = re.compile(
+    r"^(你好|您好|hi\b|hello\b|嗨|在吗|早上好|晚上好|thanks|thank you|ok\b|okay\b)[\s!！。.?？]*$",
+    re.IGNORECASE,
+)
 
 
 def _message_text(content: Any) -> str:
@@ -32,6 +38,22 @@ def last_user_query(messages: list[dict[str, Any]]) -> str:
             if t:
                 return t
     return ""
+
+
+def should_skip_retrieval_augment(query: str) -> bool:
+    """Skip embedding/RAG/example retrieval for greetings and very short queries."""
+    q = (query or "").strip()
+    if not q:
+        return True
+    cfg = config.get("agent.prompt_augment", {}) or {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    min_len = max(0, int(cfg.get("min_query_chars", 12) or 12))
+    if min_len and len(q) < min_len:
+        return True
+    if cfg.get("skip_greetings", True) and _CHAT_GREETING.match(q):
+        return True
+    return False
 
 
 def merge_system_context(
@@ -78,6 +100,9 @@ async def augment_messages_async(
 
     rag_on = bool(config.get("agent.rag.enabled", False)) and not skip_rag
     ctx_on = bool(config.get("agent.context.enabled", True)) and not skip_context
+    if should_skip_retrieval_augment(query):
+        rag_on = False
+        ctx_on = False
     if not rag_on and not ctx_on:
         return messages
 

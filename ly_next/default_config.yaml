@@ -55,9 +55,14 @@ agent:
   tool_call_mode: "auto"
   prefer_compat_when_mcp_tools: true
   stream_output: true
+  stream_tokens: true
   chat_pipeline:
     parallel_prep: true
+    overlap_augment: true
     persist_user_async: true
+  prompt_augment:
+    min_query_chars: 12
+    skip_greetings: true
   memory:
     enabled: true
     path: "MEMORY.md"
@@ -182,6 +187,7 @@ agent:
   model_router:
     enabled: false
     mode: "hybrid"
+    hybrid_skip_llm_below_chars: 80
     match_scope: "last_user"
     match_recent_chars: 8000
     match_rules: []

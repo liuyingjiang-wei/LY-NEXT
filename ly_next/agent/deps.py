@@ -13,6 +13,12 @@ from ly_next.models.factory import LLMFactory
 logger = get_logger(__name__)
 
 
+def _stream_tokens_enabled() -> bool:
+    if config.get("agent.stream_tokens") is not None:
+        return bool(config.get("agent.stream_tokens"))
+    return bool(config.get("agent.stream_output", True))
+
+
 @dataclass
 class AgentDeps:
     llm_client: BaseLLMClient | None = None
@@ -43,6 +49,10 @@ class AgentDeps:
     thread_id: str | None = None
     collected_tool_results: list[dict[str, Any]] = field(default_factory=list)
     last_mixed_message: MixedMessage | None = None
+    _filtered_tools_cache: tuple[list[Any], list[str]] | None = field(default=None, repr=False)
+    _openai_tools_cache: tuple[list[dict[str, Any]], list[str], list[Any]] | None = field(
+        default=None, repr=False
+    )
 
     def __post_init__(self):
         if self.llm_client is None:
@@ -110,6 +120,86 @@ class AgentDeps:
             max_tokens=self.max_tokens,
         )
 
+    async def _iter_response_stream(self, response):
+        async for chunk in response:
+            if self.stop_event and self.stop_event.is_set():
+                break
+            content = ""
+            if isinstance(chunk, dict):
+                choices = chunk.get("choices") or [{}]
+                delta = choices[0].get("delta", {}) if choices else {}
+                content = text_from_stream_delta(delta if isinstance(delta, dict) else {})
+            else:
+                content = str(chunk)
+            if content:
+                if self.stream_callback:
+                    await self.stream_callback({"content": content, "done": False})
+                yield content
+        if self.stream_callback:
+            await self.stream_callback({"content": "", "done": True})
+
+    async def iter_messages_stream(self, messages: list[dict[str, Any]]):
+        if self._custom_llm_call:
+            text = await self._custom_llm_call(
+                "\n".join(f"{m.get('role')}: {m.get('content')}" for m in messages)
+            )
+            if text:
+                yield text
+            return
+
+        if self.llm_client is None:
+            raise RuntimeError("No LLM client configured")
+
+        response = await self.llm_client.chat(
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=True,
+        )
+        async for piece in self._iter_response_stream(response):
+            yield piece
+
+    async def iter_chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        *,
+        tool_choice: str | None = None,
+    ):
+        if self._custom_llm_call:
+            raise RuntimeError("Tool calling requires a standard LLM client")
+        if self.llm_client is None:
+            raise RuntimeError("No LLM client configured")
+
+        stream_fn = getattr(self.llm_client, "stream_chat_complete", None)
+        if _stream_tokens_enabled() and callable(stream_fn):
+            async for item in stream_fn(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            ):
+                if self.stop_event and self.stop_event.is_set():
+                    break
+                kind = item.get("kind")
+                if kind == "content":
+                    text = str(item.get("text") or "")
+                    if text:
+                        if self.stream_callback:
+                            await self.stream_callback({"content": text, "done": False})
+                        yield {"type": "chunk", "content": text}
+                elif kind == "done":
+                    if self.stream_callback:
+                        await self.stream_callback({"content": "", "done": True})
+                    yield {"type": "completion", "response": item.get("response") or {}}
+            return
+
+        resp = await self.chat_with_tools(
+            messages, tools, tool_choice=tool_choice
+        )
+        yield {"type": "completion", "response": resp}
+
     async def call_llm_limited(
         self, prompt: str, *, max_tokens: int, temperature: float = 0.25
     ) -> str:
@@ -137,43 +227,19 @@ class AgentDeps:
 
         return str(response)
 
-    async def call_llm_stream(self, prompt: str) -> str:
+    async def iter_llm_stream(self, prompt: str):
         if self.llm_client is None:
             raise RuntimeError("No LLM client configured")
 
         messages = [{"role": "user", "content": prompt}]
+        async for piece in self.iter_messages_stream(messages):
+            yield piece
 
-        if self.verbose:
-            logger.debug("[agent] Streaming LLM call")
-
-        response = await self.llm_client.chat(
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=True,
-        )
-
-        full_response = ""
-        async for chunk in response:
-            if self.stop_event and self.stop_event.is_set():
-                break
-            content = ""
-            if isinstance(chunk, dict):
-                choices = chunk.get("choices") or [{}]
-                delta = choices[0].get("delta", {}) if choices else {}
-                content = text_from_stream_delta(delta if isinstance(delta, dict) else {})
-            else:
-                content = str(chunk)
-
-            full_response += content
-
-            if self.stream_callback:
-                await self.stream_callback({"content": content, "done": False})
-
-        if self.stream_callback:
-            await self.stream_callback({"content": "", "done": True})
-
-        return full_response
+    async def call_llm_stream(self, prompt: str) -> str:
+        parts: list[str] = []
+        async for chunk in self.iter_llm_stream(prompt):
+            parts.append(chunk)
+        return "".join(parts)
 
 
 def create_agent_deps(

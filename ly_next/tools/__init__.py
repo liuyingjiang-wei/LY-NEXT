@@ -13,4 +13,13 @@ __all__ = [
     "BUILTIN_TOOLS",
     "BUILTIN_TOOLS_BY_NAME",
     "register_builtin_tools",
+    "register_tools_from_directory",
 ]
+
+
+def __getattr__(name: str):
+    if name == "register_tools_from_directory":
+        from ly_next.tools.loader import register_tools_from_directory
+
+        return register_tools_from_directory
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

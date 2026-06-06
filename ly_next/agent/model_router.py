@@ -361,6 +361,14 @@ async def resolve_task_kind(
     if h != TaskKind.GENERAL:
         return h, "heuristic"
 
+    text, _ = _extract_last_user_payload(messages)
+    t = (text or "").strip()
+    mr_cfg = config.get("agent.model_router", {}) or {}
+    if isinstance(mr_cfg, dict):
+        skip_below = int(mr_cfg.get("hybrid_skip_llm_below_chars", 80) or 80)
+        if skip_below > 0 and len(t) <= skip_below:
+            return h, "heuristic"
+
     kind = await _llm_classify_task_kind(messages)
     return kind, "llm"
 
