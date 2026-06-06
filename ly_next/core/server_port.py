@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sys
+from pathlib import Path
 from typing import Any
 
 DEFAULT_LISTEN_PORT = 8000
 ENV_PORT = "LY_NEXT_PORT"
+MAX_RECENT_PORTS = 8
+RECENT_PORTS_FILENAME = "recent_ports.json"
 
 
 def is_port_in_use(host: str, port: int) -> bool:
@@ -43,6 +47,55 @@ def _parse_port(raw: Any) -> int | None:
     return None
 
 
+def _recent_ports_path() -> Path:
+    from ly_next.core.config import get_data_root
+
+    root = get_data_root()
+    root.mkdir(parents=True, exist_ok=True)
+    return root / RECENT_PORTS_FILENAME
+
+
+def load_recent_ports() -> list[int]:
+    path = _recent_ports_path()
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    ports: list[int] = []
+    for item in data:
+        port = _parse_port(item)
+        if port is not None and port not in ports:
+            ports.append(port)
+    return ports[:MAX_RECENT_PORTS]
+
+
+def remember_port(port: int) -> None:
+    parsed = _parse_port(port)
+    if parsed is None:
+        return
+    recent = [parsed, *[p for p in load_recent_ports() if p != parsed]]
+    recent = recent[:MAX_RECENT_PORTS]
+    path = _recent_ports_path()
+    try:
+        path.write_text(json.dumps(recent, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        return
+
+
+def _build_port_options(default: int) -> list[int]:
+    options: list[int] = []
+    for port in load_recent_ports():
+        if port not in options:
+            options.append(port)
+    if default not in options:
+        options.append(default)
+    return options
+
+
 def _is_non_interactive() -> bool:
     if os.environ.get("LY_NEXT_NO_PROMPT", "").strip().lower() in ("1", "true", "yes"):
         return True
@@ -71,7 +124,7 @@ def _prompt_busy_port(port: int, host: str) -> int:
         if choice == "3":
             break
         print(f"  {c.RED}✖{c.RESET} 请输入 1、2 或 3")
-    return _read_port_input(f"  监听端口: ", default=alt, host=host)
+    return _read_port_input("  监听端口: ", default=alt, host=host)
 
 
 def _read_port_input(label: str, *, default: int, host: str) -> int:
@@ -91,13 +144,57 @@ def _read_port_input(label: str, *, default: int, host: str) -> int:
         return port
 
 
+def _finalize_port_choice(port: int, host: str) -> int:
+    if is_port_in_use(host, port):
+        port = _prompt_busy_port(port, host)
+    remember_port(port)
+    return port
+
+
 def prompt_listen_port(default: int, *, host: str = "0.0.0.0") -> int:
     from ly_next.core.logger import LogColors as c
 
+    options = _build_port_options(default)
+    recent = load_recent_ports()
+    last_port = recent[0] if recent else None
+
     print()
     print(f"  {c.CYAN}◆{c.RESET} {c.BRIGHT}选择监听端口{c.RESET}")
-    print(f"  {c.DIM}直接回车使用默认 {default}{c.RESET}")
-    return _read_port_input("  端口: ", default=default, host=host)
+
+    for index, port in enumerate(options, start=1):
+        tags: list[str] = []
+        if last_port is not None and port == last_port:
+            tags.append("上次")
+        if port == default and port != last_port:
+            tags.append("默认")
+        if is_port_in_use(host, port):
+            tags.append("占用")
+        tag_text = f" {c.DIM}({', '.join(tags)}){c.RESET}" if tags else ""
+        print(f"     {c.DIM}[{index}]{c.RESET} {port}{tag_text}")
+
+    custom_index = len(options) + 1
+    print(f"     {c.DIM}[{custom_index}]{c.RESET} 手动输入端口")
+    quick_default = options[0] if options else default
+    print(f"  {c.DIM}直接回车使用 {quick_default}{c.RESET}")
+
+    while True:
+        raw = input(
+            f"  选择 {c.CYAN}[1-{custom_index}]{c.RESET}（默认 1）: ",
+        ).strip()
+        if not raw:
+            choice = 1
+        else:
+            if not raw.isdigit():
+                print(f"  {c.RED}✖{c.RESET} 请输入 1–{custom_index} 之间的数字")
+                continue
+            choice = int(raw)
+        if 1 <= choice <= len(options):
+            return _finalize_port_choice(options[choice - 1], host)
+        if choice == custom_index:
+            port = _read_port_input("  端口: ", default=quick_default, host=host)
+            remember_port(port)
+            return port
+        print(f"  {c.RED}✖{c.RESET} 请输入 1–{custom_index} 之间的数字")
 
 
 def resolve_startup_port(

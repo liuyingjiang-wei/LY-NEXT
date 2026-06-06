@@ -3,6 +3,7 @@ import secrets
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
 from urllib.parse import quote
 
 # psycopg / LangGraph AsyncPostgresSaver 在 Windows 上需要 SelectorEventLoop，不能是默认的 ProactorEventLoop
@@ -481,19 +482,21 @@ def create_app() -> FastAPI:
             api_key = (form.get("api_key") or "").strip()
             key = config.get("auth.api_key", "")
             cookie_name = config.get("auth.cookie_name", "ly_api_key")
+            remember = str(form.get("remember") or "").strip().lower() in ("1", "true", "yes", "on")
             if not api_key:
                 return RedirectResponse(url="/ly/login?e=2", status_code=302)
             if key and api_key == key:
                 next_path = _safe_ly_next_path(str(form.get("next") or ""))
                 resp = RedirectResponse(url=next_path, status_code=302)
                 cookie_secure = bool(config.get("auth.cookie_secure", False))
-                resp.set_cookie(
-                    cookie_name,
-                    api_key,
-                    httponly=True,
-                    samesite="lax",
-                    secure=cookie_secure,
-                )
+                cookie_kwargs: dict[str, Any] = {
+                    "httponly": True,
+                    "samesite": "lax",
+                    "secure": cookie_secure,
+                }
+                if remember:
+                    cookie_kwargs["max_age"] = 30 * 24 * 3600
+                resp.set_cookie(cookie_name, api_key, **cookie_kwargs)
                 return resp
             return RedirectResponse(url="/ly/login?e=1", status_code=302)
 
@@ -510,6 +513,7 @@ def run():
     from ly_next.core.server_port import (
         ENV_PORT,
         is_port_in_use,
+        remember_port,
         resolve_startup_port,
     )
 
@@ -559,6 +563,8 @@ Examples:
         config.set("server.port", port)
     if args.reload:
         config.set("server.reload", reload)
+
+    remember_port(port)
 
     refresh_ly_next_log_level_from_config()
 
