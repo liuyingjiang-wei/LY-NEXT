@@ -263,7 +263,6 @@ uv sync
 uv run ruff format .
 uv run ruff check .
 uv run pytest -q
-npm run build:workbench   # 构建 www/ 前端
 ```
 
 ---
