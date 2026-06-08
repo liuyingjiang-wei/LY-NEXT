@@ -175,6 +175,20 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             },
         },
         "tools": {
+            "host": {
+                "enabled": True,
+                "roots": ["~"],
+                "deny_paths": [],
+                "max_read_bytes": 2_097_152,
+                "max_write_bytes": 4_194_304,
+                "max_list_entries": 500,
+                "exec": {
+                    "enabled": True,
+                    "default_cwd": "~",
+                    "timeout_seconds": 300,
+                    "max_output_chars": 120_000,
+                },
+            },
             "built_in": [
                 "calculator",
                 "format_json",
@@ -332,7 +346,44 @@ class Config:
         self._migrate_legacy_server_bind()
         self._migrate_auth_whitelist()
         self._migrate_onebot11_config()
+        self._migrate_telegram_config()
         self._cache.clear()
+
+    def _migrate_telegram_config(self) -> None:
+        bridge = self._config.get("bridge")
+        if not isinstance(bridge, dict):
+            return
+        tg = bridge.get("telegram")
+        if not isinstance(tg, dict):
+            return
+        changed = False
+        allow_raw = tg.get("allow_from")
+        if allow_raw is None:
+            allow_raw = tg.get("allowed_user_ids")
+        ids: list[int] = []
+        try:
+            from telegram_bot.allowlist import parse_allow_from
+
+            ids, _ = parse_allow_from(allow_raw)
+            if ids and list(tg.get("allowed_user_ids") or []) != ids:
+                tg["allowed_user_ids"] = ids
+                changed = True
+            if ids and list(tg.get("allow_from") or []) != ids:
+                tg["allow_from"] = ids
+                changed = True
+        except Exception:
+            pass
+        policy = str(tg.get("dm_policy") or "").strip().lower()
+        if policy not in ("pairing", "allowlist", "open", "disabled"):
+            if ids:
+                tg["dm_policy"] = "allowlist"
+            else:
+                tg["dm_policy"] = "pairing"
+            changed = True
+        if changed:
+            bridge["telegram"] = tg
+            self._config["bridge"] = bridge
+            self.save()
 
     def sanitize_auth_whitelist(self) -> list[str]:
         """移除放行工作台的不安全白名单项，若有变更则写回配置。"""
@@ -353,7 +404,24 @@ class Config:
         self.sanitize_auth_whitelist()
 
     def _migrate_onebot11_config(self) -> None:
-        from ly_next.bridge.onebot11.paths import DEFAULT_ONEBOT11_WS_PATHS, merge_ws_paths
+        try:
+            from ly_next.core.plugin.loader import _ensure_plugins_import_path
+
+            _ensure_plugins_import_path()
+            from qq_onebot.bridge.paths import DEFAULT_ONEBOT11_WS_PATHS, merge_ws_paths
+        except ImportError:
+            DEFAULT_ONEBOT11_WS_PATHS = ("/OneBotv11", "/onebot/v11/ws")
+
+            def merge_ws_paths(configured: tuple[str, ...]) -> tuple[str, ...]:
+                seen: set[str] = set()
+                out: list[str] = []
+                for item in (*configured, *DEFAULT_ONEBOT11_WS_PATHS):
+                    norm = item if item.startswith("/") else f"/{item}"
+                    if norm in seen:
+                        continue
+                    seen.add(norm)
+                    out.append(norm)
+                return tuple(out)
 
         bridge = self._config.get("bridge")
         if not isinstance(bridge, dict):

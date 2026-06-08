@@ -71,6 +71,12 @@ npm-debug.log*
 .envrc
 !.env.example
 
+# --- 插件（独立仓库 / 本地安装，勿提交；保留 plugins/*.py 示例与 plugins/local/.gitkeep）---
+plugins/*/
+!plugins/local/
+plugins/local/*
+!plugins/local/.gitkeep
+
 # --- 其他 ---
 .DS_Store
 Thumbs.db

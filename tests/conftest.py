@@ -10,6 +10,12 @@ from pathlib import Path
 
 import pytest
 
+_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "plugins"
+_PLUGINS_LOCAL = _PLUGINS_DIR / "local"
+for _p in (_PLUGINS_DIR, _PLUGINS_LOCAL):
+    if _p.is_dir() and str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
 from ly_next.tools.base import BaseTool, ToolDefinition, ToolResult
 from ly_next.tools.registry import ToolRegistry
 
@@ -58,4 +64,5 @@ def fake_registry() -> ToolRegistry:
     reg.register(FakeTool("http_fetch", "network"))
     reg.register(FakeTool("web_search", "network"))
     reg.register(FakeTool("mcp_search", "mcp"))
+    reg.register(FakeTool("host_read_file", "host"))
     return reg

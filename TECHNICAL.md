@@ -30,13 +30,13 @@
 | # | 路径 | 关注点 |
 |---|------|--------|
 | 1 | `ly_next/main.py` | 启动、路由挂载、生命周期 |
-| 2 | `ly_next/api/` | `ly_api` · `ws_api` · `runs_api` · `threads_api` · `loader` · `mcp_api` |
+| 2 | `ly_next/api/` | `ly_api` · `ws_api` · `runs_api` · `threads_api` · `models_api` · `loader` · `mcp_api` |
 | 3 | `ly_next/agent/factory.py` | 模式选择 react / plan / chat / coordinator |
 | 4 | `ly_next/agent/react.py` 等 | 各模式实现 |
 | 5 | `prompt_augment.py` · `prompt_templates.py` | 上下文增强与提示词 |
 | 6 | `agent/deps.py` | LLM、工具、运行参数 |
-| 7 | `model_router.py` · `vision_precaption.py` | 路由与识图预描述 |
-| 8 | `models/factory.py` · `openai_compat.py` | 模型客户端 |
+| 7 | `chat_model.py` · `vision_precaption.py` | 默认模型解析与识图预描述 |
+| 8 | `models/registry.py` · `models/factory.py` · `openai_compat.py` | 模型注册表与客户端 |
 | 9 | `tools/` · `mcp/` | 工具与 MCP |
 | 10 | `rag/` | 检索与 embedding |
 | 11 | `core/` | 配置、DB、缓存、checkpoint、run 存储 |
@@ -55,7 +55,7 @@ sequenceDiagram
   participant O as Observability
 
   C->>API: POST /api/chat
-  API->>API: prepare_messages / vision_precaption / routing
+  API->>API: prepare_messages / vision_precaption / resolve_chat_model
   API->>O: start_observed_run
   API->>A: augment → create_agent → run
   API->>O: finish_observed_run
@@ -100,7 +100,10 @@ sequenceDiagram
 
 ## LLM 层
 
-- `models/factory.py` — provider 解析与客户端缓存
+- `models/registry.py` — 命名模型注册表（`llm.models[]`），启动时从旧版 `*_llm` 块自动迁移
+- `models/factory.py` — 按 format（openai / anthropic / ollama / openai_compat）创建客户端并缓存
+- `agent/chat_model.py` — 解析对话轮次使用的默认或指定注册模型
+- `api/models_api.py` — `GET/POST/DELETE /api/models`、切换默认、连通性测试
 - `models/openai_compat.py` — 请求/流式/错误处理
 - `models/openai_chat_body.py` — token 字段组装策略
 
@@ -110,7 +113,7 @@ sequenceDiagram
 
 - 主配置：`data/ly_next/config.yaml`
 - 接口：`GET/PATCH /api/system/settings`（深度合并）
-- 关键项：`llm.default_provider` · `agent.reasoning_mode` · `agent.stream_output`
+- 关键项：`llm.default_model` · `llm.models` · `agent.reasoning_mode` · `agent.stream_output`
 
 ---
 
@@ -131,6 +134,6 @@ sequenceDiagram
 
 1. **入口层** — `ly_api.py` / `ws_api.py` 请求与响应
 2. **Agent 层** — 模式与工具是否按预期
-3. **Model 层** — `openai_compat.py` 组包与返回码；`model_router` / `vision_precaption` 是否改写 provider 与消息
+3. **Model 层** — `openai_compat.py` 组包与返回码；`chat_model` / `vision_precaption` 是否改写 provider 与消息
 4. **RAG 层** — `rag/*` 是否回退 lexical，embedding 是否可用
 5. **基础设施层** — `core/logger.py`、数据库 / Redis 状态、任务与 run 记录

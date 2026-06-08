@@ -2,8 +2,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from ly_next.bridge.onebot11.call import call_onebot_action, normalize_action_name
-from ly_next.bridge.onebot11.session import OneBotSession
+pytest.importorskip("qq_onebot")
+
+from qq_onebot.bridge.call import call_onebot_action, normalize_action_name
+from qq_onebot.bridge.session import OneBotSession
 
 
 def test_normalize_action_name_accepts_napcat_extensions():
@@ -23,7 +25,7 @@ async def test_call_onebot_action_via_session():
     )
 
     with patch(
-        "ly_next.bridge.onebot11.call.list_sessions",
+        "qq_onebot.bridge.call.list_sessions",
         return_value=[session],
     ):
         raw = await call_onebot_action("get_login_info", {})

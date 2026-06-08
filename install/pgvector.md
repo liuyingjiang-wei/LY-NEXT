@@ -50,6 +50,15 @@ sudo bash install.sh
 .\install.ps1 -Pgvector
 ```
 
+安装脚本会自动测速常用 GitHub 代理并选用最快的（默认列表含 `gh-proxy.com`、`ghfast.top`、`ghproxy.net` 等）。指定固定代理：
+
+```powershell
+$env:LY_NEXT_GITHUB_PROXY = "https://gh-proxy.com/"
+.\install.ps1 -Pgvector
+```
+
+跳过测速、按默认顺序尝试：`$env:LY_NEXT_GITHUB_PROXY_SKIP_PROBE = "1"`
+
 ---
 
 ## 前置条件
@@ -78,7 +87,7 @@ SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
 需要：Git、Visual Studio 2022 **C++ 桌面开发** 或 Build Tools（含 `vcvars64.bat`）。
 
 1. 确认 `C:\Program Files\PostgreSQL\17\share\extension\vector.control` 是否存在
-2. 若不存在，从 [pgvector](https://github.com/pgvector/pgvector) 克隆对应 tag，在 **x64 Native Tools** 环境中：
+2. 若不存在，从 [pgvector](https://github.com/pgvector/pgvector) 获取对应 tag 源码。安装脚本会缓存到 `data/ly_next/cache/pgvector_src/pgvector`；若 GitHub 不通，可手动下载 [v0.8.0 zip](https://github.com/pgvector/pgvector/archive/refs/tags/v0.8.0.zip) 解压到该目录（须含 `Makefile.win`）。在 **x64 Native Tools**（建议**管理员** PowerShell）环境中：
 
 ```bat
 set PGROOT=C:\Program Files\PostgreSQL\17

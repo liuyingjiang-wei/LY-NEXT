@@ -9,13 +9,7 @@ from typing import Any
 
 from ly_next.core.config import config
 from ly_next.core.thread_persistence import persistence_active, persistence_enabled
-
-_LLM_PROVIDER_BLOCKS: dict[str, str] = {
-    "openai": "openai_llm",
-    "anthropic": "anthropic_llm",
-    "ollama": "ollama_llm",
-    "openai_compat": "openai_compat_llm",
-}
+from ly_next.models.registry import ModelRegistry
 
 _PLACEHOLDER_RE = re.compile(r"\$\{\w+")
 
@@ -50,28 +44,40 @@ def _is_unset_secret(value: str) -> bool:
 
 
 def llm_provider_status(provider: str | None = None) -> dict[str, Any]:
+    ModelRegistry.ensure_loaded()
+    name = str(provider or ModelRegistry.default_name()).strip()
+    entry = ModelRegistry.get_entry(name)
+
+    if entry:
+        fmt = str(entry.get("format") or "openai").strip().lower()
+        api_key = str(entry.get("api_key") or "").strip()
+        base_url = str(entry.get("base_url") or "").strip()
+        model = str(entry.get("model") or "").strip()
+
+        if fmt == "ollama":
+            ok = bool(model)
+            hint = None if ok else "请为 Ollama 模型填写模型 ID"
+            return {"ok": ok, "provider": name, "format": fmt, "model": model, "base_url": base_url, "hint": hint}
+
+        if fmt == "openai_compat" and api_key.lower() in ("not-needed", "not_needed"):
+            ok = bool(base_url and model)
+            hint = None if ok else "请填写 OpenAI 兼容网关的 Base URL 与模型"
+            return {"ok": ok, "provider": name, "format": fmt, "model": model, "base_url": base_url, "hint": hint}
+
+        ok = not _is_unset_secret(api_key) and bool(model)
+        hint = None if ok else f"请在「模型配置」为「{name}」填写 API 密钥与模型 ID"
+        return {"ok": ok, "provider": name, "format": fmt, "model": model, "base_url": base_url, "hint": hint}
+
     prov = str(provider or config.get("llm.default_provider") or "openai").strip().lower()
-    block_key = _LLM_PROVIDER_BLOCKS.get(prov, f"{prov}_llm")
+    block_key = f"{prov}_llm"
     block = config.get(block_key, {}) or {}
     if not isinstance(block, dict):
         block = {}
-
     api_key = str(block.get("api_key") or "").strip()
     base_url = str(block.get("base_url") or "").strip()
     model = str(block.get("model") or "").strip()
-
-    if prov == "ollama":
-        ok = bool(model)
-        hint = None if ok else "请在「模型网关」配置 Ollama 模型名，并确认 Ollama 服务可访问"
-        return {"ok": ok, "provider": prov, "model": model, "base_url": base_url, "hint": hint}
-
-    if prov == "openai_compat" and api_key.lower() in ("not-needed", "not_needed"):
-        ok = bool(base_url)
-        hint = None if ok else "请在「模型网关」填写 OpenAI 兼容网关的 base_url"
-        return {"ok": ok, "provider": prov, "model": model, "base_url": base_url, "hint": hint}
-
-    ok = not _is_unset_secret(api_key)
-    hint = None if ok else f"请在「模型网关」为 {prov} 填写 API 密钥，或设置对应环境变量"
+    ok = not _is_unset_secret(api_key) if prov != "ollama" else bool(model)
+    hint = None if ok else f"请配置默认模型（llm.models 或 {block_key}）"
     return {"ok": ok, "provider": prov, "model": model, "base_url": base_url, "hint": hint}
 
 

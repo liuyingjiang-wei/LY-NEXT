@@ -60,9 +60,18 @@ def message_row_to_dict(row: Any) -> dict[str, Any]:
 
 
 def is_external_thread_key(thread_id: str) -> bool:
+    """Channel-scoped keys (onebot:, telegram:, etc.) map to DB sessions via external_key."""
     if _parse_uuid(thread_id) is not None:
         return False
-    return thread_id.startswith("onebot:")
+    text = str(thread_id or "").strip()
+    if ":" not in text:
+        return False
+    channel, _, rest = text.partition(":")
+    if not channel or not rest:
+        return False
+    if not channel[0].isalpha():
+        return False
+    return all(c.isalnum() or c in "-_" for c in channel)
 
 
 def _parse_uuid(value: str | UUID | None) -> UUID | None:

@@ -80,18 +80,31 @@ class ReactAgent:
         if kind == "native":
             saw_tool = False
             final_text = ""
-            preview_events: list[dict[str, Any]] = []
+            pending_final: dict[str, Any] | None = None
             try:
                 async for ev in iter_native_react(messages, self.deps):
-                    if isinstance(ev, dict):
-                        if ev.get("type") == "tool_start":
-                            saw_tool = True
-                        if ev.get("type") == "final":
-                            final_text = str(ev.get("content") or "")
-                    if saw_tool:
+                    if not isinstance(ev, dict):
+                        yield ev
+                        continue
+                    et = ev.get("type")
+                    if et == "tool_start":
+                        saw_tool = True
+                        if pending_final is not None:
+                            yield pending_final
+                            pending_final = None
+                        yield ev
+                        continue
+                    if et == "final":
+                        final_text = str(ev.get("content") or "")
+                        if saw_tool:
+                            yield ev
+                        else:
+                            pending_final = ev
+                        continue
+                    if saw_tool or et in ("chunk", "status"):
                         yield ev
                     else:
-                        preview_events.append(ev)
+                        yield ev
                 if not saw_tool and looks_tool_blind_response(final_text):
                     fb = tool_blind_fallback(self.deps)
                     logger.warning("[agent] native tool-blind; fallback=%s", fb)
@@ -104,8 +117,8 @@ class ReactAgent:
                     async for ev in self._iter_legacy_graph(messages):
                         yield ev
                     return
-                for ev in preview_events:
-                    yield ev
+                if pending_final is not None:
+                    yield pending_final
                 return
             except Exception as e:
                 logger.warning("[agent] native ReAct failed, legacy graph: %s", e)

@@ -1,4 +1,8 @@
-from ly_next.bridge.onebot11.cq import (
+import pytest
+
+pytest.importorskip("qq_onebot")
+
+from qq_onebot.bridge.cq import (
     apply_prefix_trigger,
     is_at_self,
     message_to_text,

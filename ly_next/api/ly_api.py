@@ -10,20 +10,24 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import text
+from starlette.responses import FileResponse
 
 from ly_next.agent.chat_pipeline import (
     ChatTurnRequest,
     await_user_persist,
     build_agent_deps,
+    effective_turn_mode,
     prepare_chat_turn,
     run_agent_on_prepared,
 )
 from ly_next.agent.factory import AgentFactory
 from ly_next.agent.image_reply import ensure_mixed_reply
 from ly_next.agent.startup_memory import invalidate_startup_memory_cache
-from ly_next.core.plugin.loader import _plugin_dir
+from ly_next.core.config import get_project_root
 from ly_next.core.plugin.loader_security import plugin_security_profile
 from ly_next.core.cache import cache
+from ly_next.core.chat_trace_log import chat_info as chat_trace_info
+from ly_next.core.chat_trace_log import chat_warn as chat_trace_warn
 from ly_next.core.config import config
 from ly_next.core.database import db
 from ly_next.core.logger import get_logger, refresh_ly_next_log_level_from_config
@@ -34,12 +38,22 @@ from ly_next.core.task_manager import get_task_manager
 from ly_next.core.thread_persistence import persist_chat_turn
 from ly_next.messaging.models import mixed_message_to_dict
 from ly_next.models.factory import LLMFactory
+from ly_next.models.registry import ModelRegistry
 from ly_next.rag import reset_document_retriever, reset_example_selector
 from ly_next.rag.document_retriever import get_document_retriever
 from ly_next.tools import get_tool_registry
+from ly_next.tools.export_paths import resolve_export_path
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+def _resolve_plugins_dir() -> Path:
+    raw = config.get("plugins.dir", "plugins")
+    path = Path(str(raw or "plugins"))
+    if not path.is_absolute():
+        path = get_project_root() / path
+    return path
 
 
 def _tool_catalog() -> list[dict[str, Any]]:
@@ -84,10 +98,10 @@ _SETTINGS_RESTART_LABELS = {
     "database": "database（PostgreSQL）",
     "redis": "redis",
     "services": "services（托管进程）",
-    "bridge": "bridge（QQ / OneBot 桥接）",
+    "bridge": "bridge（QQ / Telegram 消息桥接）",
 }
 _SETTINGS_HOT_LABELS = {
-    "llm": "LLM 默认提供商",
+    "llm": "LLM 模型注册表",
     "openai_llm": "OpenAI",
     "anthropic_llm": "Anthropic",
     "ollama_llm": "Ollama",
@@ -109,6 +123,7 @@ _SETTINGS_SECRET_NORMALIZED = frozenset(
         "authorization",
         "x-api-key",
         "proxy-authorization",
+        "bot-token",
     }
 )
 
@@ -148,13 +163,54 @@ def _restart_hints(patch: dict[str, Any]) -> list[str]:
     return _settings_effects(patch)["restart_required"]
 
 
+_TELEGRAM_HOT_KEYS = frozenset(
+    {
+        "allow_from",
+        "allowed_user_ids",
+        "dm_policy",
+        "approved_user_ids",
+        "pairing",
+        "auto_reply",
+    }
+)
+_TELEGRAM_POLLER_KEYS = frozenset({"enabled", "bot_token", "poll_timeout"})
+
+
+def _bridge_settings_effects(fragment: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    restart: list[str] = []
+    hot: list[str] = []
+    notes: list[str] = []
+
+    tg = fragment.get("telegram")
+    if isinstance(tg, dict) and tg:
+        tg_keys = set(tg.keys())
+        if tg_keys & _TELEGRAM_HOT_KEYS:
+            hot.append("Telegram 白名单/私聊策略/自动回复")
+        if tg_keys & _TELEGRAM_POLLER_KEYS:
+            notes.append("Telegram 连接参数已保存，轮询将自动重载")
+        token_val = tg.get("bot_token")
+        if token_val not in (None, "", _SETTINGS_MASK) and "bot_token" in tg_keys:
+            notes.append("Telegram 连接参数已保存，轮询将自动重载")
+
+    ob = fragment.get("onebot11")
+    if isinstance(ob, dict) and ob:
+        restart.append("QQ OneBot 桥接（onebot11）")
+
+    return restart, hot, notes
+
+
 def _settings_effects(patch: dict[str, Any]) -> dict[str, Any]:
     restart: list[str] = []
     hot: list[str] = []
     notes: list[str] = []
 
     for root, fragment in patch.items():
-        if root in _SETTINGS_RESTART_ROOTS:
+        if root == "bridge" and isinstance(fragment, dict):
+            br_restart, br_hot, br_notes = _bridge_settings_effects(fragment)
+            restart.extend(br_restart)
+            hot.extend(br_hot)
+            notes.extend(br_notes)
+        elif root in _SETTINGS_RESTART_ROOTS:
             restart.append(_SETTINGS_RESTART_LABELS.get(root, root))
         elif root == "tools" and isinstance(fragment, dict):
             hot.append(_SETTINGS_HOT_LABELS["tools"])
@@ -282,10 +338,9 @@ class ChatRequest(BaseModel):
     mode: str = "react"
     temperature: float = 0.7
     max_tokens: int = 2048
-    router_hint: str | None = None
-    use_model_router: bool | None = None
     vision_precaption: bool | None = None
     thread_id: str | None = None
+    channel: str | None = "web"
 
 
 class TaskCreateRequest(BaseModel):
@@ -293,13 +348,14 @@ class TaskCreateRequest(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
-class RouterPreviewRequest(BaseModel):
-    text: str
-    router_hint: str | None = None
-
-
 class RagTryRequest(BaseModel):
     query: str
+
+
+class LlmTestRequest(BaseModel):
+    provider: str | None = None
+    overrides: dict[str, Any] | None = None
+    timeout: int | None = None
 
 
 @router.get("/health")
@@ -334,28 +390,23 @@ async def get_security_health():
     return gather_security_health()
 
 
-@router.post("/system/router/preview")
-async def preview_model_router(body: RouterPreviewRequest):
-    from ly_next.agent.model_router import resolve_model_routing, routing_payload
-
-    text = (body.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text 不能为空")
-    messages = [{"role": "user", "content": text}]
-    result = await resolve_model_routing(messages, router_hint=body.router_hint)
-    mr_cfg = config.get("agent.model_router", {}) or {}
-    return {
-        "router_enabled": bool(mr_cfg.get("enabled", False) if isinstance(mr_cfg, dict) else False),
-        "router": routing_payload(result),
-    }
-
-
 @router.post("/system/rag/try")
 async def try_rag_retrieval(body: RagTryRequest):
     query = (body.query or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="query 不能为空")
     return await get_document_retriever().retrieve_results(query)
+
+
+@router.post("/system/llm/test")
+async def test_llm_connectivity(body: LlmTestRequest):
+    from ly_next.core.llm_probe import probe_llm_connectivity
+
+    return await probe_llm_connectivity(
+        provider=body.provider,
+        overrides=body.overrides,
+        timeout=body.timeout,
+    )
 
 
 @router.get("/system/extensions")
@@ -432,7 +483,7 @@ async def get_system_extensions(request: Request):
         },
         "plugins_config": {
             "enabled": bool(config.get("plugins.enabled", True)),
-            "dir": str(_plugin_dir()),
+            "dir": str(_resolve_plugins_dir()),
             "security_profile": plugin_security_profile(),
             "entry_points": bool(config.get("plugins.entry_points", True)),
             "tools_plugin_dir": str(config.get("tools.plugin_dir") or ""),
@@ -441,7 +492,124 @@ async def get_system_extensions(request: Request):
         "bridges": bridge_info,
         "agent_modes": AgentFactory.list_agent_types(),
         "tool_count": len(tool_registry.list_tools()),
+        "host_platform": _host_platform_info(),
+        "skills": _skills_extensions_info(),
+        "host_approvals_pending": _host_approvals_pending_count(),
     }
+
+
+def _host_approvals_pending_count() -> int:
+    try:
+        from ly_next.tools.host_approvals import list_approvals
+
+        return len(list_approvals(status="pending"))
+    except Exception:
+        return 0
+
+
+def _host_platform_info() -> dict[str, Any]:
+    try:
+        from ly_next.tools.host_platform import detect_host_platform, platform_label
+
+        return {
+            "platform": detect_host_platform(),
+            "label": platform_label(),
+        }
+    except Exception as e:
+        return {"platform": "unknown", "label": str(e)}
+
+
+def _skills_extensions_info() -> dict[str, Any]:
+    try:
+        from ly_next.agent.skills_loader import discover_skills, skills_enabled
+
+        if not skills_enabled():
+            return {"enabled": False, "count": 0, "skills": []}
+        items = discover_skills(force=True)
+        return {
+            "enabled": True,
+            "count": len(items),
+            "skills": [
+                {"id": s.id, "name": s.name, "description": s.description, "path": s.rel_path}
+                for s in items
+            ],
+        }
+    except Exception as e:
+        return {"enabled": False, "count": 0, "error": str(e)}
+
+
+@router.get("/system/host-approvals")
+async def list_host_approvals(status: str | None = None):
+    from ly_next.tools.host_approvals import list_approvals
+
+    allowed = {"pending", "approved", "denied", "expired", "consumed"}
+    st = str(status or "").strip().lower() or None
+    if st and st not in allowed:
+        raise HTTPException(status_code=400, detail=f"invalid status: {status}")
+    return {"approvals": list_approvals(status=st)}
+
+
+@router.post("/system/host-approvals/{approval_id}/approve")
+async def approve_host_action(approval_id: str):
+    from ly_next.tools.host_approvals import decide_approval
+
+    item, err = decide_approval(approval_id, approve=True)
+    if item is None:
+        raise HTTPException(status_code=404, detail=err or "not found")
+    if err:
+        raise HTTPException(status_code=409, detail=err)
+    return {"approval": {"id": item.id, "status": item.status, "summary": item.summary}}
+
+
+@router.get("/workspace/roots")
+async def workspace_roots():
+    from ly_next.tools.host_sandbox import host_roots, host_tools_enabled
+
+    if not host_tools_enabled():
+        return {
+            "enabled": False,
+            "roots": [],
+            "hint": "请在配置中开启 tools.host.enabled",
+        }
+    roots = host_roots()
+    return {
+        "enabled": True,
+        "roots": [{"path": str(p), "name": p.name or str(p)} for p in roots],
+    }
+
+
+@router.get("/workspace/tree")
+async def workspace_tree(path: str = ".", recursive: bool = True):
+    from ly_next.tools.host_files import host_list_dir
+    from ly_next.tools.host_sandbox import host_tools_enabled
+
+    if not host_tools_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="host tools disabled; enable tools.host.enabled in config",
+        )
+    result = await host_list_dir(path=path, recursive=recursive)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error or "list failed")
+    payload = result.result if isinstance(result.result, dict) else {}
+    return {
+        "path": payload.get("path"),
+        "entries": payload.get("entries") or [],
+        "truncated": bool(payload.get("truncated")),
+        "limit": payload.get("limit"),
+    }
+
+
+@router.post("/system/host-approvals/{approval_id}/deny")
+async def deny_host_action(approval_id: str):
+    from ly_next.tools.host_approvals import decide_approval
+
+    item, err = decide_approval(approval_id, approve=False)
+    if item is None:
+        raise HTTPException(status_code=404, detail=err or "not found")
+    if err:
+        raise HTTPException(status_code=409, detail=err)
+    return {"approval": {"id": item.id, "status": item.status, "summary": item.summary}}
 
 
 @router.get("/system/metrics")
@@ -529,6 +697,10 @@ async def get_system_metrics():
 @router.get("/system/settings")
 async def get_workbench_settings():
     init = config.ensure_initialized()
+    from ly_next.models.migrate import ensure_llm_models_migrated
+
+    ensure_llm_models_migrated(save=False)
+    ModelRegistry.ensure_loaded()
     full = config.to_dict()
     abs_path = Path(init["path"])
     try:
@@ -545,6 +717,8 @@ async def get_workbench_settings():
             "parent_writable": init["parent_writable"],
         },
         "llm_providers": LLMFactory.list_providers(),
+        "model_formats": sorted(["openai", "openai_compat", "anthropic", "ollama"]),
+        "registered_models": ModelRegistry.list_model_infos(),
         "agent_modes": AgentFactory.list_agent_types(),
         "tool_catalog": _tool_catalog(),
     }
@@ -576,8 +750,26 @@ async def patch_workbench_settings(body: dict[str, Any]):
         config.set(root, merged, save=False)
     config.save()
     config.load()
+    from ly_next.models.migrate import ensure_llm_models_migrated
+
+    ensure_llm_models_migrated(save=False)
+    if "auth" in body:
+        from ly_next.core.first_run import sync_first_run_notice
+
+        sync_first_run_notice(str(config.get("auth.api_key") or ""))
+    bridge_patch = body.get("bridge")
+    if isinstance(bridge_patch, dict) and isinstance(bridge_patch.get("telegram"), dict):
+        try:
+            from telegram_bot.api import reload_telegram_poller
+
+            await reload_telegram_poller(bridge_patch["telegram"])
+        except ImportError:
+            pass
+        except Exception:
+            pass
     refresh_ly_next_log_level_from_config()
     LLMFactory.clear_cache()
+    ModelRegistry.reload()
     reset_document_retriever()
     reset_example_selector()
     invalidate_startup_memory_cache()
@@ -600,6 +792,8 @@ async def patch_workbench_settings(body: dict[str, Any]):
             "parent_writable": init["parent_writable"],
         },
         "tool_catalog": _tool_catalog(),
+        "llm_providers": LLMFactory.list_providers(),
+        "registered_models": ModelRegistry.list_model_infos(),
         "restart_required": effects["restart_required"],
         "settings_effects": effects,
     }
@@ -675,35 +869,70 @@ async def call_tool(tool_name: str, arguments: dict[str, Any]):
     return await registry.call_tool(tool_name, arguments)
 
 
+@router.get("/exports/{filename}")
+async def download_export(filename: str):
+    path = resolve_export_path(filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="export not found")
+    return FileResponse(
+        path,
+        filename=path.name,
+        media_type="application/octet-stream",
+    )
+
+
 @router.post("/chat")
 async def chat(request: ChatRequest):
     manager = get_task_manager()
     task_id = await manager.create_task(name="Chat Request")
     await manager.update(task_id, status="running")
 
+    chat_trace_info(
+        "recv",
+        task_id=task_id,
+        requested_mode=request.mode,
+        thread_id=request.thread_id,
+        channel=request.channel or "web",
+        client_messages=list(request.messages),
+    )
+
     try:
-        prepared = await prepare_chat_turn(
-            ChatTurnRequest(
-                client_messages=list(request.messages),
-                thread_id=request.thread_id,
-                mode=request.mode,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                provider=request.provider,
-                model=request.model,
-                router_hint=request.router_hint,
-                use_model_router=request.use_model_router,
-                skip_vision_precaption=request.vision_precaption is False,
-                turn_meta_extra={"task_id": task_id, "mode": request.mode},
-            )
+        chat_req = ChatTurnRequest(
+            client_messages=list(request.messages),
+            thread_id=request.thread_id,
+            mode=request.mode,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            provider=request.provider,
+            model=request.model,
+            skip_vision_precaption=request.vision_precaption is False,
+            channel=request.channel or "web",
+            turn_meta_extra={
+                "task_id": task_id,
+                "requested_mode": request.mode,
+                "channel": request.channel or "web",
+            },
+        )
+        prepared = await prepare_chat_turn(chat_req)
+        mode = effective_turn_mode(prepared)
+        chat_trace_info(
+            "prepared",
+            task_id=task_id,
+            effective_mode=mode,
+            thread_id=prepared.thread_id,
+            provider=prepared.routed.provider,
+            model=prepared.routed.model,
+            plan=prepared.plan,
+            messages=prepared.messages,
         )
     except ValueError as e:
+        chat_trace_warn("prepare_failed", task_id=task_id, error=str(e))
         await manager.fail(task_id, str(e))
         raise HTTPException(status_code=404, detail=str(e)) from e
 
     telemetry_token = await start_observed_run(
         task_id,
-        mode=request.mode,
+        mode=mode,
         thread_id=prepared.thread_id,
         router=prepared.router_payload,
     )
@@ -718,8 +947,9 @@ async def chat(request: ChatRequest):
             prepared,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            agent_mode=mode,
         )
-        result = await run_agent_on_prepared(prepared, deps, mode=request.mode)
+        result = await run_agent_on_prepared(prepared, deps, mode=mode)
         await await_user_persist(prepared)
         mixed = await ensure_mixed_reply(deps, result)
         mixed_payload = mixed_message_to_dict(mixed)

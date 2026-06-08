@@ -87,41 +87,16 @@ class TaskManager:
         self._event(tid)
         return tid
 
-    async def get_task(self, task_id: str) -> TaskEntry | None:
-        if self._db_ready():
-            try:
-                row = await db.get_task_row(task_id)
-                if row:
-                    return _row_to_entry(row)
-            except Exception as e:
-                logger.warning("Task get DB failed: %s", e)
-        return self._mem_tasks.get(task_id)
-
-    async def update(
+    def _apply_entry_update(
         self,
-        task_id: str,
+        task: TaskEntry,
+        *,
         status: str | None = None,
         progress: float | None = None,
         message: str | None = None,
         result: Any = None,
         error: str | None = None,
-    ) -> bool:
-        if self._db_ready():
-            try:
-                row = await db.update_task(
-                    task_id,
-                    status=status,
-                    progress=progress,
-                    result=result,
-                    error=error,
-                    message=message,
-                )
-                return row is not None
-            except Exception as e:
-                logger.warning("Task update DB failed: %s", e)
-        task = self._mem_tasks.get(task_id)
-        if not task:
-            return False
+    ) -> None:
         if status:
             task.status = status
             if status == "running" and not task.started_at:
@@ -136,6 +111,53 @@ class TaskManager:
             task.result = result
         if error is not None:
             task.error = error
+
+    async def get_task(self, task_id: str) -> TaskEntry | None:
+        mem = self._mem_tasks.get(task_id)
+        if self._db_ready():
+            try:
+                row = await db.get_task_row(task_id)
+                if row:
+                    return _row_to_entry(row)
+            except Exception as e:
+                logger.warning("Task get DB failed: %s", e)
+        return mem
+
+    async def update(
+        self,
+        task_id: str,
+        status: str | None = None,
+        progress: float | None = None,
+        message: str | None = None,
+        result: Any = None,
+        error: str | None = None,
+    ) -> bool:
+        mem = self._mem_tasks.get(task_id)
+        if self._db_ready():
+            try:
+                row = await db.update_task(
+                    task_id,
+                    status=status,
+                    progress=progress,
+                    result=result,
+                    error=error,
+                    message=message,
+                )
+                if row is not None:
+                    return True
+            except Exception as e:
+                logger.warning("Task update DB failed: %s", e)
+        task = mem
+        if not task:
+            return False
+        self._apply_entry_update(
+            task,
+            status=status,
+            progress=progress,
+            message=message,
+            result=result,
+            error=error,
+        )
         return True
 
     async def complete(self, task_id: str, result: Any = None) -> bool:
@@ -145,17 +167,17 @@ class TaskManager:
         return await self.update(task_id, status="failed", error=error)
 
     async def stop(self, task_id: str) -> bool:
+        mem = self._mem_tasks.get(task_id)
         if self._db_ready():
             try:
                 row = await db.get_task_row(task_id)
-                if not row:
-                    return False
-                await db.update_task(task_id, status="stopped")
-                self._event(task_id).set()
-                return True
+                if row:
+                    await db.update_task(task_id, status="stopped")
+                    self._event(task_id).set()
+                    return True
             except Exception as e:
                 logger.warning("Task stop DB failed: %s", e)
-        task = self._mem_tasks.get(task_id)
+        task = mem
         if not task:
             return False
         task.status = "stopped"
@@ -195,16 +217,20 @@ class TaskManager:
         return existed
 
     async def list_tasks(self, status: str | None = None, limit: int = 100) -> list[TaskEntry]:
+        merged: dict[str, TaskEntry] = {}
         if self._db_ready():
             try:
                 rows = await db.list_tasks(status=status, limit=limit)
-                return [_row_to_entry(r) for r in rows]
+                for row in rows:
+                    entry = _row_to_entry(row)
+                    merged[entry.id] = entry
             except Exception as e:
-                logger.warning("Task list DB failed, memory only: %s", e)
-        tasks = list(self._mem_tasks.values())
-        if status:
-            tasks = [t for t in tasks if t.status == status]
-        tasks.sort(key=lambda t: t.created_at, reverse=True)
+                logger.warning("Task list DB failed, merging memory only: %s", e)
+        for entry in self._mem_tasks.values():
+            if status and entry.status != status:
+                continue
+            merged.setdefault(entry.id, entry)
+        tasks = sorted(merged.values(), key=lambda t: t.created_at, reverse=True)
         return tasks[:limit]
 
     async def clear_completed(self) -> int:

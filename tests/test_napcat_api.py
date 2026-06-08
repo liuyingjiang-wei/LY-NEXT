@@ -1,11 +1,13 @@
-"""NapCatV11 全量 action 绑定与调用。"""
+"""NapCatV11 action binding and invoke tests."""
 
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from ly_next.bridge.onebot11.napcat_actions import NAPCAT_ACTION_NAMES
-from ly_next.bridge.onebot11.napcat_api import NapCatV11, is_bindable_action_name, napcat
+pytest.importorskip("qq_onebot")
+
+from qq_onebot.bridge.napcat_actions import NAPCAT_ACTION_NAMES
+from qq_onebot.bridge.napcat_api import NapCatV11, is_bindable_action_name, napcat
 
 
 def test_action_count_matches_napcat_doc():
@@ -30,7 +32,7 @@ def test_dot_prefixed_use_invoke_only():
 async def test_invoke_delegates_to_session():
     api = napcat()
     with patch(
-        "ly_next.bridge.onebot11.napcat_api.call_onebot_action_data",
+        "qq_onebot.bridge.napcat_api.call_onebot_action_data",
         new_callable=AsyncMock,
         return_value={"user_id": 1},
     ) as m:
@@ -43,7 +45,7 @@ async def test_invoke_delegates_to_session():
 async def test_bound_method_send_private_msg():
     api = napcat()
     with patch(
-        "ly_next.bridge.onebot11.napcat_api.call_onebot_action_data",
+        "qq_onebot.bridge.napcat_api.call_onebot_action_data",
         new_callable=AsyncMock,
         return_value={"message_id": 9},
     ) as m:
@@ -58,7 +60,7 @@ async def test_bound_method_send_private_msg():
 async def test_dot_action_via_invoke():
     api = napcat()
     with patch(
-        "ly_next.bridge.onebot11.napcat_api.call_onebot_action_data",
+        "qq_onebot.bridge.napcat_api.call_onebot_action_data",
         new_callable=AsyncMock,
         return_value={},
     ) as m:

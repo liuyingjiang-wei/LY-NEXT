@@ -35,6 +35,7 @@ from ly_next.core.logger import (
     refresh_ly_next_log_level_from_config,
     setup_logging,
 )
+from ly_next.core.first_run import sync_first_run_notice
 from ly_next.core.plugin import PluginLoader
 from ly_next.core.service_manager import (
     InstallStatus,
@@ -47,30 +48,6 @@ from ly_next.core.task_manager import get_task_manager
 from ly_next.mcp.remote_bridge import load_remote_mcp_tools
 
 logger = setup_logging()
-
-
-def _write_first_run_notice(api_key: str) -> None:
-    """Write one-time login hint; avoids printing full key in shared terminals."""
-    try:
-        from ly_next.core.config import get_data_root
-
-        path = get_data_root() / "FIRST_RUN.txt"
-        if path.exists():
-            return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        body = (
-            "LY-NEXT 首次启动 — 工作台登录密钥\n"
-            "================================\n\n"
-            f"API Key: {api_key}\n\n"
-            "用法:\n"
-            "  1. 浏览器打开 /ly/login\n"
-            "  2. 粘贴上方 API Key 登录\n\n"
-            "生产环境请尽快在「访问控制」中更换密钥，并勿将此文件提交到版本库。\n"
-        )
-        path.write_text(body, encoding="utf-8")
-        logger.info("已写入首次登录说明: %s", path)
-    except OSError as e:
-        logger.warning("无法写入 FIRST_RUN.txt: %s", e)
 
 
 _LOGIN_BUILD_MISSING = (
@@ -105,18 +82,25 @@ async def _ensure_external_service(
     return await ensure()
 
 
-def _auth_exempt_path(path: str) -> bool:
-    from ly_next.bridge.onebot11.paths import is_onebot11_ws_path
-
+def _auth_exempt_path(path: str, *, ws_paths: tuple[str, ...] = ()) -> bool:
     if path.startswith("/ly/static/"):
         return True
-    if is_onebot11_ws_path(path):
+    if ws_paths and path in ws_paths:
         return True
+    try:
+        from qq_onebot.bridge.paths import is_onebot11_ws_path
+
+        if is_onebot11_ws_path(path):
+            return True
+    except ImportError:
+        if path in ("/OneBotv11", "/onebot/v11/ws") or path.startswith("/onebot/"):
+            return True
     return path in (
         "/",
         "/firefly",
         "/ly/login",
         "/ly/login/",
+        "/api/ws",
         "/.well-known/appspecific/com.chrome.devtools.json",
     )
 
@@ -167,6 +151,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.warning("配置文件不可用: %s", cfg_init.get("path"))
     elif not cfg_init.get("parent_writable"):
         logger.warning("配置目录可能不可写: %s", cfg_init.get("path"))
+
+    from ly_next.models.migrate import ensure_llm_models_migrated
+    from ly_next.models.registry import ModelRegistry
+
+    if ensure_llm_models_migrated(save=True):
+        logger.info("Legacy LLM blocks migrated into llm.models registry")
+    ModelRegistry.ensure_loaded()
 
     startup_mgr = get_startup_manager()
     await startup_mgr.run_first_time_setup()
@@ -339,7 +330,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             logger.warning(
                 "bridge.onebot11.enabled is true but no WS paths registered; "
-                "check attach_onebot_routes runs before include_router(ws_public_router)"
+                "install plugins/local/qq_onebot and restart (see plugins/README.md)"
+            )
+
+    plugin_names = {p.name for p in plugin_registry.list_plugins()}
+    if config.get("bridge.telegram.enabled", False):
+        tg_token = str(
+            config.get("bridge.telegram.bot_token") or os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+        ).strip()
+        if "telegram-bot" not in plugin_names:
+            logger.warning(
+                "bridge.telegram.enabled is true but telegram-bot plugin not loaded; "
+                "install plugins/local/telegram_bot (see plugins/README.md)"
+            )
+        elif not tg_token:
+            logger.warning(
+                "bridge.telegram.enabled is true but bot_token missing; "
+                "set TELEGRAM_BOT_TOKEN or bridge.telegram.bot_token"
+            )
+        else:
+            logger.info(
+                "Telegram bridge enabled (plugin telegram-bot, long polling, pairing)"
             )
 
     await print_startup_report(report)
@@ -389,15 +400,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from ly_next.core.plugin.bridge_plugin import BridgePlugin
-    from ly_next.core.plugin.bridge_registry import BridgeRegistry
+    from ly_next.core.plugin.early_bridges import bootstrap_message_bridges, collect_bridge_ws_exempt_paths
 
-    _bridge_reg = BridgeRegistry()
-    BridgePlugin().register_bridges(_bridge_reg, AppContext.create())
-    onebot_ws_paths: list[str] = []
-    for _bridge in _bridge_reg.enabled():
-        onebot_ws_paths.extend(_bridge.attach_routes(ws_public_router, app))
-    app.state.onebot11_ws_paths = onebot_ws_paths
+    _bridge_reg, bridge_ws_paths = bootstrap_message_bridges(ws_public_router, app)
+    app.state.bridge_ws_paths = bridge_ws_paths
+    app.state.onebot11_ws_paths = bridge_ws_paths
 
     app.include_router(api_router)
     if config.get("tools.mcp.enabled", True):
@@ -406,10 +413,12 @@ def create_app() -> FastAPI:
         logger.info("MCP router skipped (tools.mcp.enabled is false)")
     app.include_router(ws_public_router)
 
-    if config.get("auth.enabled", True) and not config.get("auth.api_key"):
+    if config.get("auth.enabled", True) and not str(config.get("auth.api_key") or "").strip():
         new_key = secrets.token_urlsafe(32)
         config.set("auth.api_key", new_key, save=True)
-        _write_first_run_notice(new_key)
+        sync_first_run_notice(new_key)
+    else:
+        sync_first_run_notice(str(config.get("auth.api_key") or ""))
 
     removed = config.sanitize_auth_whitelist()
     if removed:
@@ -434,7 +443,8 @@ def create_app() -> FastAPI:
             return await call_next(request)
 
         path = request.url.path
-        if _auth_exempt_path(path):
+        ws_paths = tuple(getattr(request.app.state, "bridge_ws_paths", None) or [])
+        if _auth_exempt_path(path, ws_paths=ws_paths):
             return await call_next(request)
         if _is_whitelisted(path):
             return await call_next(request)
@@ -522,6 +532,11 @@ def create_app() -> FastAPI:
         async def ly_app_legacy_redirect():
             return RedirectResponse(url="/ly/", status_code=307)
 
+        @app.get("/ly/chat", include_in_schema=False)
+        @app.get("/ly/chat/", include_in_schema=False)
+        async def ly_chat_legacy_redirect():
+            return RedirectResponse(url="/ly/?tab=chat", status_code=307)
+
         @app.get("/ly/login", include_in_schema=False)
         async def ly_login_page():
             login_html = workbench_dir / "login.html"
@@ -538,7 +553,7 @@ def create_app() -> FastAPI:
             remember = str(form.get("remember") or "").strip().lower() in ("1", "true", "yes", "on")
             if not api_key:
                 return RedirectResponse(url="/ly/login?e=2", status_code=302)
-            if key and api_key == key:
+            if key and api_key == str(key).strip():
                 next_path = _safe_ly_next_path(str(form.get("next") or ""))
                 resp = RedirectResponse(url=next_path, status_code=302)
                 cookie_secure = bool(config.get("auth.cookie_secure", False))

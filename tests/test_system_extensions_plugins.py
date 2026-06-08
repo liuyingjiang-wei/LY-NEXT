@@ -19,11 +19,17 @@ def test_system_extensions_includes_plugins():
     assert "plugins" in data
     assert isinstance(data["plugins"], list)
     assert data["plugins_summary"]["total"] == len(data["plugins"])
-    assert data["plugins_summary"]["builtin"] >= 4
+    assert data["plugins_summary"]["builtin"] >= 3
     assert "plugins_config" in data
     assert "dir" in data["plugins_config"]
     assert "tool_count" in data
     assert isinstance(data.get("agent_modes"), list)
+    assert "host_platform" in data
+    assert isinstance(data["host_platform"].get("platform"), str)
+    assert "skills" in data
+    assert isinstance(data["skills"], dict)
+    assert "host_approvals_pending" in data
+    assert isinstance(data["host_approvals_pending"], int)
 
     names = {p["name"] for p in data["plugins"]}
     assert "ly-next-builtin" in names

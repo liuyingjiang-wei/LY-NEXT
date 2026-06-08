@@ -1,4 +1,8 @@
-from ly_next.bridge.onebot11.paths import DEFAULT_ONEBOT11_WS_PATHS, is_onebot11_ws_path
+import pytest
+
+pytest.importorskip("qq_onebot")
+
+from qq_onebot.bridge.paths import DEFAULT_ONEBOT11_WS_PATHS, is_onebot11_ws_path
 
 
 def test_is_onebot11_ws_path():

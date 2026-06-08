@@ -20,7 +20,7 @@
    ```
 
 2. **准备 LLM**
-   - **Ollama：** 本机运行 `ollama serve`，拉取模型（如 `qwen2.5`）；工作台「模型网关」选 Ollama 并填模型名。
+   - **Ollama：** 本机运行 `ollama serve`，拉取模型（如 `qwen2.5`）；工作台「模型配置」注册 Ollama 条目并设为默认。
    - **兼容网关：** 填 `openai_compat_llm.base_url`（勿与 LY-NEXT 自己的 8000 端口混淆）。
 
 3. **登录工作台**  
@@ -59,7 +59,7 @@
    建库后执行 `CREATE EXTENSION IF NOT EXISTS vector;`
 
 3. **配置 LLM 与 Embedding**  
-   工作台「模型网关」填对话模型密钥；RAG 嵌入模型使用 `rag_embedding_llm`（可与对话模型相同 provider）。
+   工作台「模型配置」填对话模型；RAG 嵌入模型使用 `rag_embedding_llm`（可与对话模型相同 provider）。
 
 4. **启用 RAG 并试检索**  
    「RAG 配置」→ 开启 `agent.rag` → 文档放入 `data/ly_next/knowledge/` → 保存 → 使用「试检索」验证命中。

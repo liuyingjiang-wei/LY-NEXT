@@ -60,6 +60,30 @@ Get-FileHash -Algorithm SHA256 ly_next\apis\your_module.py
 
 使用 **AST** 白名单解析，不再使用通用 `eval`（见 `ly_next/tools/math_safe.py`）。
 
+### 本机文件与 shell（`tools.host`）
+
+启用后注册 `host_read_file`、`host_list_dir`、`host_write_file`、`host_delete_path`、`host_run_command`。默认根目录为**用户主目录**（`tools.host.roots: ["~"]`），模型在持有 API Key 的前提下可读写该范围内的文件并执行 shell。
+
+| 配置项 | 说明 |
+|--------|------|
+| `tools.host.enabled` | 为 `false` 时不注册任何 host 工具 |
+| `tools.host.roots` | 允许访问的路径根；默认 `~` |
+| `tools.host.deny_paths` | 即使在 roots 内也拒绝的前缀（如 `~/\.ssh`） |
+| `tools.host.exec.enabled` | 为 `false` 时仅保留文件工具，不注册 `host_run_command` |
+| `tools.host.approvals.enabled` | 为 `true` 时删除与危险 shell 需人工审批 |
+| `tools.host.approvals.mode` | `destructive`（默认，匹配 rm/del 等）· `always` · `off` |
+| `agent.tool_policy.max_tier` | 须设为 `host` 才会向模型暴露 host 类工具；默认 `network` 不包含 |
+
+**跨平台：** shell 在 Windows 上优先 `pwsh` / `powershell`，在 macOS / Linux 上使用 `bash -lc` 或 `sh -lc`（见 `host_platform.py`）。
+
+**人工审批：** `host_delete_path` 与匹配危险模式的 `host_run_command` 首次调用返回 `approval_required` 与 `approval_id`。用户通过工作台或 API 批准后，模型用同一 `approval_token` 重试：
+
+- `GET /api/system/host-approvals?status=pending`
+- `POST /api/system/host-approvals/{id}/approve`
+- `POST /api/system/host-approvals/{id}/deny`
+
+**上线建议：** 公网或多用户场景将 `tools.host.enabled` 设为 `false`，或保持 `max_tier: network` 并显式 `deny_tools` host 工具；NapCat 桥接请使用「QQ 轻量回复」等白名单预设，勿开启 `host` tier。
+
 ---
 
 ## 鉴权与 Cookie

@@ -5,7 +5,17 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from ly_next.agent.chat_model import ChatModelSelection
 from ly_next.agent.chat_pipeline import ChatTurnRequest, prepare_chat_turn
+
+
+def _fake_selection(**kwargs):
+    return ChatModelSelection(
+        name=kwargs.get("name", "openai"),
+        format=kwargs.get("format", "openai"),
+        model=kwargs.get("model", "gpt-4o-mini"),
+        via="test",
+    )
 
 
 @pytest.mark.asyncio
@@ -17,17 +27,9 @@ async def test_prepare_runs_vision_and_routing_in_parallel():
         await asyncio.sleep(0.05)
         return messages
 
-    async def fake_route(*args, **kwargs):
+    def fake_route(**kwargs):
         calls.append("route")
-        await asyncio.sleep(0.05)
-        from ly_next.agent.model_router import ModelRoutingResult, TaskKind
-
-        return ModelRoutingResult(
-            provider="openai",
-            model="gpt-4o-mini",
-            task_kind=TaskKind.CHAT,
-            via="test",
-        )
+        return _fake_selection()
 
     with (
         patch(
@@ -40,7 +42,7 @@ async def test_prepare_runs_vision_and_routing_in_parallel():
         patch(
             "ly_next.agent.chat_pipeline.apply_vision_precaption_if_needed", side_effect=fake_vision
         ),
-        patch("ly_next.agent.chat_pipeline.resolve_model_routing", side_effect=fake_route),
+        patch("ly_next.agent.chat_pipeline.resolve_chat_model", side_effect=fake_route),
         patch("ly_next.agent.chat_pipeline.augment_messages_async", new_callable=AsyncMock) as aug,
         patch("ly_next.agent.chat_pipeline.persist_chat_turn", new_callable=AsyncMock),
     ):
@@ -72,17 +74,9 @@ async def test_prepare_overlaps_augment_and_routing_without_vision():
         await asyncio.sleep(0.05)
         return messages
 
-    async def fake_route(*args, **kwargs):
+    def fake_route(**kwargs):
         calls.append("route")
-        await asyncio.sleep(0.05)
-        from ly_next.agent.model_router import ModelRoutingResult, TaskKind
-
-        return ModelRoutingResult(
-            provider="openai",
-            model="gpt-4o-mini",
-            task_kind=TaskKind.CHAT,
-            via="test",
-        )
+        return _fake_selection()
 
     with (
         patch(
@@ -95,7 +89,7 @@ async def test_prepare_overlaps_augment_and_routing_without_vision():
         patch(
             "ly_next.agent.chat_pipeline.apply_vision_precaption_if_needed", new_callable=AsyncMock
         ),
-        patch("ly_next.agent.chat_pipeline.resolve_model_routing", side_effect=fake_route),
+        patch("ly_next.agent.chat_pipeline.resolve_chat_model", side_effect=fake_route),
         patch("ly_next.agent.chat_pipeline.augment_messages_async", side_effect=fake_aug),
         patch("ly_next.agent.chat_pipeline.persist_chat_turn", new_callable=AsyncMock),
     ):

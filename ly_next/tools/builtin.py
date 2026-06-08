@@ -12,7 +12,14 @@ from ly_next.tools.http_fetch import http_fetch
 from ly_next.tools.image_gen import generate_image
 from ly_next.tools.image_search import search_images
 from ly_next.tools.memory_note import remember_fact
+from ly_next.tools.host_register import register_host_tools
 from ly_next.tools.registry import ToolRegistry
+from ly_next.tools.skills_tools import list_skills, read_skill
+from ly_next.tools.document_tools import (
+    generate_docx_tool,
+    generate_pptx_tool,
+    generate_xlsx_tool,
+)
 from ly_next.tools.web_fetch import web_fetch_tool
 from ly_next.tools.web_search import web_scrape_tool, web_search_tool
 
@@ -30,8 +37,13 @@ BUILTIN_TOOLS_BY_NAME: dict[str, object] = {
     "remember_fact": remember_fact,
     "web_search": web_search_tool,
     "web_scrape": web_scrape_tool,
+    "generate_docx": generate_docx_tool,
+    "generate_xlsx": generate_xlsx_tool,
+    "generate_pptx": generate_pptx_tool,
     "generate_image": generate_image,
     "search_images": search_images,
+    "list_skills": list_skills,
+    "read_skill": read_skill,
 }
 
 BUILTIN_TOOLS = [BUILTIN_TOOLS_BY_NAME[k] for k in sorted(BUILTIN_TOOLS_BY_NAME)]
@@ -64,4 +76,5 @@ def register_builtin_tools(registry: ToolRegistry) -> int:
             n += 1
         except Exception as e:
             logger.warning("Failed to register built-in tool %s: %s", name, e)
+    n += register_host_tools(registry)
     return n

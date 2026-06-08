@@ -109,6 +109,29 @@ def length_continuation_max() -> int:
         return 2
 
 
+def _compress_tool_content(text: str, *, head: int, tail: int) -> str:
+    raw = str(text or "")
+    if len(raw) <= head + tail + 64:
+        return raw
+    omitted = len(raw) - head - tail
+    return f"{raw[:head]}\n… [{omitted} chars omitted] …\n{raw[-tail:]}"
+
+
+def _protected_tail_indices(messages: list[dict[str, Any]], protect_turns: int) -> set[int]:
+    if protect_turns <= 0:
+        return set()
+    protected: set[int] = set()
+    turns = 0
+    for i in range(len(messages) - 1, -1, -1):
+        role = (messages[i].get("role") or "").strip().lower()
+        if role in ("user", "assistant"):
+            turns += 1
+        protected.add(i)
+        if turns >= protect_turns * 2:
+            break
+    return protected
+
+
 def prune_old_tool_message_contents(
     messages: list[dict[str, Any]],
     *,
@@ -130,6 +153,9 @@ def prune_old_tool_message_contents(
     char_budget = max(8000, token_budget * CHARS_PER_TOKEN_EST)
 
     out = [dict(m) for m in (messages or [])]
+    protected = _protected_tail_indices(out, int(cfg.get("prune_protect_recent_turns", 3) or 3))
+    head_keep = max(120, int(cfg.get("prune_tool_head_chars", 900) or 900))
+    tail_keep = max(80, int(cfg.get("prune_tool_tail_chars", 500) or 500))
     placeholder = (
         str(
             cfg.get("tool_placeholder", "[Earlier tool output removed to fit context window.]")
@@ -137,6 +163,7 @@ def prune_old_tool_message_contents(
         ).strip()
         or "[Earlier tool output removed to fit context window.]"
     )
+    summarize = bool(cfg.get("prune_tool_summarize", True))
 
     def over() -> bool:
         return estimate_dialog_chars(out) > char_budget
@@ -145,13 +172,24 @@ def prune_old_tool_message_contents(
         return out
 
     for i, m in enumerate(out):
+        if i in protected:
+            continue
         if (m.get("role") or "").strip().lower() != "tool":
             continue
         if not over():
             break
-        if _message_text_len(m) < int(cfg.get("prune_min_tool_chars", 400) or 400):
+        raw_len = _message_text_len(m)
+        if raw_len < int(cfg.get("prune_min_tool_chars", 400) or 400):
             continue
-        out[i] = {**m, "content": placeholder}
+        if summarize:
+            content = m.get("content")
+            if isinstance(content, str):
+                new_content = _compress_tool_content(content, head=head_keep, tail=tail_keep)
+            else:
+                new_content = placeholder
+        else:
+            new_content = placeholder
+        out[i] = {**m, "content": new_content}
         logger.info("[context] pruned tool message index=%s for context budget", i)
 
     if over():

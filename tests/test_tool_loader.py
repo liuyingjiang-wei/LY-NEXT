@@ -15,7 +15,7 @@ async def echo_test(message: str = "") -> str:
 
 def test_register_tools_from_directory(tmp_path: Path):
     tool_file = tmp_path / "sample_tool.py"
-    src = Path(__file__).resolve().parents[1] / "plugins" / "sample_tool_plugin.py"
+    src = Path(__file__).resolve().parent / "fixtures" / "sample_tool_plugin.py"
     tool_file.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
     registry = ToolRegistry()

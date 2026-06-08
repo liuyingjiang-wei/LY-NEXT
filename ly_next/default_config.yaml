@@ -16,28 +16,31 @@ api:
 
 llm:
   default_provider: "openai"
+  default_model: "openai"
   request_timeout: 60
-
-openai_llm:
-  model: "gpt-4o-mini"
-  api_key: "${OPENAI_API_KEY}"
-  base_url: ""
-
-anthropic_llm:
-  model: "claude-3-5-haiku-20241022"
-  api_key: "${ANTHROPIC_API_KEY}"
-  base_url: ""
-
-ollama_llm:
-  model: "qwen2.5"
-  base_url: "http://localhost:11434"
-
-openai_compat_llm:
-  model: "qwen2.5"
-  api_key: "not-needed"
-  base_url: "http://localhost:8000/v1"
-  auth_mode: "bearer"
-  model_aliases: {}
+  models:
+    - name: openai
+      format: openai
+      model: "gpt-4o-mini"
+      api_key: "${OPENAI_API_KEY}"
+      base_url: ""
+    - name: anthropic
+      format: anthropic
+      model: "claude-3-5-haiku-20241022"
+      api_key: "${ANTHROPIC_API_KEY}"
+      base_url: ""
+    - name: ollama
+      format: ollama
+      model: "qwen2.5"
+      api_key: "not-needed"
+      base_url: "http://localhost:11434"
+    - name: openai_compat
+      format: openai_compat
+      model: "qwen2.5"
+      api_key: "not-needed"
+      base_url: "http://localhost:8000/v1"
+      auth_mode: "bearer"
+      model_aliases: {}
 
 rag_embedding_llm:
   model: "text-embedding-3-small"
@@ -60,9 +63,17 @@ agent:
     parallel_prep: true
     overlap_augment: true
     persist_user_async: true
+    auto_skip_tool_intents: true
+    auto_direct_chat_mode: true
+    auto_skip_memory_on_fast_path: true
+    skip_augment_on_fast_path: true
   prompt_augment:
     min_query_chars: 12
     skip_greetings: true
+    skip_tool_intents: true
+    auto_direct_chat: true
+    auto_skip_skills_on_fast_path: true
+    fast_chat_max_chars: 120
   memory:
     enabled: true
     path: "MEMORY.md"
@@ -78,6 +89,13 @@ agent:
     allow_categories: null
     deny_tools: []
     allow_tools: null
+  channel_tools:
+    web:
+      allow_file_write: true
+    qq:
+      allow_file_write: false
+    telegram:
+      allow_file_write: false
   scratchpad:
     max_chars: 12000
     compress_enabled: true
@@ -105,7 +123,20 @@ agent:
     prune_dialog_fill_ratio: 0.82
     reserve_completion_tokens: 2048
     prune_min_tool_chars: 400
+    prune_protect_recent_turns: 3
+    prune_tool_summarize: true
+    prune_tool_head_chars: 900
+    prune_tool_tail_chars: 500
     tool_placeholder: "[Earlier tool output removed to fit context window.]"
+  skills:
+    enabled: true
+    dirs:
+      - ".agents/skills"
+      - "skills"
+    inject_summary: true
+    max_summary_skills: 24
+    max_read_chars: 32000
+    cache_ttl_seconds: 30
   error_recovery:
     enabled: true
     max_retries: 2
@@ -184,39 +215,9 @@ agent:
     handoff_compress_max_tokens: 384
     synthesize_max_tokens: 2048
     synthesize_body_max_chars: 24000
-  model_router:
-    enabled: false
-    mode: "hybrid"
-    hybrid_skip_llm_below_chars: 80
-    match_scope: "last_user"
-    match_recent_chars: 8000
-    match_rules: []
-    classifier:
-      provider: "openai_compat"
-      model: ""
-      temperature: 0.1
-      max_tokens: 128
-    routes:
-      reasoning:
-        provider: "openai"
-        model: "gpt-4o"
-      code:
-        provider: "openai"
-        model: "gpt-4o"
-      vision:
-        provider: "openai"
-        model: "gpt-4o"
-      tools:
-        provider: "openai"
-        model: "gpt-4o"
-      chat:
-        provider: "openai"
-        model: "gpt-4o-mini"
   vision_precaption:
     enabled: false
-    use_router_vision_model: false
-    provider: "openai"
-    model: ""
+    model_name: ""
     instruction: ""
     prefix: "【图像识别】\n"
     temperature: 0.3
@@ -251,6 +252,26 @@ agent:
       config_ref: "rag_embedding_llm"
 
 tools:
+  host:
+    enabled: true
+    roots:
+      - "~"
+    deny_paths: []
+    max_read_bytes: 2097152
+    max_write_bytes: 4194304
+    max_list_entries: 500
+    exec:
+      enabled: true
+      default_cwd: "~"
+      timeout_seconds: 300
+      max_output_chars: 120000
+    approvals:
+      enabled: true
+      ttl_seconds: 600
+      mode: destructive
+      require_for_delete: true
+      require_for_recursive_delete: true
+      exec_patterns: []
   built_in:
     - "calculator"
     - "format_json"
@@ -261,8 +282,13 @@ tools:
     - "http_fetch"
     - "web_fetch"
     - "remember_fact"
+    - "list_skills"
+    - "read_skill"
     - "web_search"
     - "web_scrape"
+    - "generate_docx"
+    - "generate_xlsx"
+    - "generate_pptx"
     - "generate_image"
     - "search_images"
   # 生图: 仅 openai_compat（/images/generations，配置块见 config_ref + 下方覆盖项）
@@ -291,8 +317,10 @@ tools:
   web_search:
     provider: "duckduckgo"
     api_key: ""
+    default_num_results: 5
+    cache_ttl_minutes: 15
   web_fetch:
-    provider: "jina"
+    provider: "local"
     api_key: ""
     jina_proxy: ""
     base_url: ""
@@ -376,6 +404,24 @@ bridge:
       group_at_only: true
       prefixes: []
       ignore_self: true
+  telegram:
+    enabled: false
+    bot_token: "${TELEGRAM_BOT_TOKEN:-}"
+    dm_policy: pairing
+    allow_from: []
+    allowed_user_ids: []
+    approved_user_ids: []
+    pairing:
+      code_ttl_sec: 3600
+      hint_cooldown_sec: 600
+    poll_timeout: 30
+    auto_reply:
+      enabled: true
+      mode: react
+      temperature: 0.7
+      max_tokens: 2048
+      skip_rag: true
+      skip_context: true
 
 auth:
   enabled: true

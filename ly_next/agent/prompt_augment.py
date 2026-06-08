@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any
 
+from ly_next.agent.skills_loader import format_skills_summary, skills_enabled
 from ly_next.agent.startup_memory import get_startup_memory_block
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
@@ -15,6 +16,26 @@ logger = get_logger(__name__)
 
 _CHAT_GREETING = re.compile(
     r"^(你好|您好|hi\b|hello\b|嗨|在吗|早上好|晚上好|thanks|thank you|ok\b|okay\b)[\s!！。.?？]*$",
+    re.IGNORECASE,
+)
+
+_TOOL_INTENT = re.compile(
+    r"(?:"
+    r"搜索|查一下|查询|联网|搜一下|网上|最新|新闻|天气|股价|汇率|"
+    r"search|look\s*up|web\s*search|browse|news|weather|"
+    r"生成|制作|导出|写一份|整理成|做成|"
+    r"word|docx?|excel|xlsx|pptx?|表格|文档|演示|报告|幻灯片"
+    r")",
+    re.IGNORECASE,
+)
+
+_DIRECT_CHAT = re.compile(
+    r"(?:"
+    r"解释|说明|介绍|什么是|是什么|啥是|什么意思|何谓|"
+    r"用.{0,8}句话|简述|概括|总结|梳理|讲讲|聊聊|谈谈|"
+    r"如何理解|怎么理解|有什么区别|区别是什么|优缺点|"
+    r"explain|what\s+is|what's|describe|summarize|overview|in\s+\d+\s+sentences?"
+    r")",
     re.IGNORECASE,
 )
 
@@ -40,20 +61,81 @@ def last_user_query(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _prompt_augment_cfg() -> dict[str, Any]:
+    cfg = config.get("agent.prompt_augment", {}) or {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def is_tool_intent_query(query: str) -> bool:
+    """Queries that should use tools (search / office export) instead of RAG/context."""
+    q = (query or "").strip()
+    if not q:
+        return False
+    if _prompt_augment_cfg().get("skip_tool_intents", True) is False:
+        return False
+    return bool(_TOOL_INTENT.search(q))
+
+
+def is_direct_chat_query(query: str) -> bool:
+    """Conceptual Q&A that should not pay ReAct tool-schema or retrieval costs."""
+    q = (query or "").strip()
+    if not q or is_tool_intent_query(q):
+        return False
+    if _prompt_augment_cfg().get("auto_direct_chat", True) is False:
+        return False
+    if not _DIRECT_CHAT.search(q):
+        return False
+    if re.search(r"[A-Za-z]", q):
+        return False
+    return True
+
+
+def is_fast_chat_query(query: str) -> bool:
+    """Single-pass chat mode: no tool schemas, no ReAct loop (OpenClaw/Cursor-style)."""
+    q = (query or "").strip()
+    if not q or is_tool_intent_query(q):
+        return False
+    if _prompt_augment_cfg().get("auto_direct_chat", True) is False:
+        return False
+    if is_direct_chat_query(q):
+        return True
+    cfg = _prompt_augment_cfg()
+    if cfg.get("skip_greetings", True) and _CHAT_GREETING.match(q):
+        return True
+    max_chars = max(0, int(cfg.get("fast_chat_max_chars", 120) or 120))
+    if max_chars and len(q) <= max_chars:
+        if re.search(r"[A-Za-z]", q):
+            return False
+        return True
+    return False
+
+
 def should_skip_retrieval_augment(query: str) -> bool:
     """Skip embedding/RAG/example retrieval for greetings and very short queries."""
     q = (query or "").strip()
     if not q:
         return True
-    cfg = config.get("agent.prompt_augment", {}) or {}
-    if not isinstance(cfg, dict):
-        cfg = {}
+    if is_tool_intent_query(q):
+        return True
+    if is_direct_chat_query(q):
+        return True
+    cfg = _prompt_augment_cfg()
     min_len = max(0, int(cfg.get("min_query_chars", 12) or 12))
     if min_len and len(q) < min_len:
         return True
     if cfg.get("skip_greetings", True) and _CHAT_GREETING.match(q):
         return True
     return False
+
+
+def should_skip_skills_augment(query: str) -> bool:
+    """Skip skills manifest on fast chat turns (large static prefix)."""
+    q = (query or "").strip()
+    if not q:
+        return True
+    if _prompt_augment_cfg().get("auto_skip_skills_on_fast_path", True) is False:
+        return False
+    return is_fast_chat_query(q) or is_tool_intent_query(q) or should_skip_retrieval_augment(q)
 
 
 def merge_system_context(
@@ -85,6 +167,7 @@ async def augment_messages_async(
     skip_rag: bool = False,
     skip_context: bool = False,
     skip_memory: bool = False,
+    skip_skills: bool = False,
 ) -> list[dict[str, Any]]:
     if not messages:
         return messages
@@ -95,6 +178,20 @@ async def augment_messages_async(
             messages = merge_system_context(messages, memory_block)
 
     query = last_user_query(messages)
+    if query and not skip_skills:
+        skip_skills = should_skip_skills_augment(query)
+
+    skills_cfg = config.get("agent.skills", {}) or {}
+    if (
+        not skip_skills
+        and skills_enabled()
+        and isinstance(skills_cfg, dict)
+        and skills_cfg.get("inject_summary", True)
+    ):
+        summary = format_skills_summary()
+        if summary:
+            messages = merge_system_context(messages, summary)
+
     if not query:
         return messages
 

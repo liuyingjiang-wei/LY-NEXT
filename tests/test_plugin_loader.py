@@ -33,7 +33,6 @@ def test_plugin_loader_includes_builtin():
     assert "ly-next-builtin" in names
     assert "ly-next-tool-directory" in names
     assert "ly-next-directory-api" in names
-    assert "ly-next-bridges" in names
 
 
 def test_extract_plugin_from_module_variants():
@@ -76,6 +75,34 @@ def test_load_directory_plugin(tmp_path: Path):
     assert any(p.name == "hello-from-dir" for p in reg.list_plugins())
 
 
+def test_load_directory_plugin_from_extra_dir(tmp_path: Path):
+    local_dir = tmp_path / "local"
+    local_dir.mkdir()
+    plugin_file = local_dir / "hello_plugin.py"
+    plugin_file.write_text(
+        "from ly_next.core.plugin.protocol import LyNextPlugin\n"
+        "class HelloPlugin(LyNextPlugin):\n"
+        "    name = 'hello-from-extra'\n"
+        "plugin = HelloPlugin()\n",
+        encoding="utf-8",
+    )
+
+    ctx = AppContext.create()
+    with (
+        patch(
+            "ly_next.core.plugin.loader.plugin_security_profile",
+            return_value="development",
+        ),
+        patch("ly_next.core.plugin.loader._plugin_dir", return_value=tmp_path),
+        patch(
+            "ly_next.core.plugin.loader._plugin_extra_dirs",
+            return_value=[local_dir],
+        ),
+    ):
+        reg = PluginLoader().load_all(ctx, include_builtin=False)
+    assert any(p.name == "hello-from-extra" for p in reg.list_plugins())
+
+
 def test_production_profile_skips_directory_plugins(tmp_path: Path):
     (tmp_path / "x.py").write_text("plugin = None\n", encoding="utf-8")
     ctx = AppContext.create()
@@ -87,5 +114,5 @@ def test_production_profile_skips_directory_plugins(tmp_path: Path):
         patch("ly_next.core.plugin.loader._plugin_dir", return_value=tmp_path),
     ):
         reg = PluginLoader().load_all(ctx, include_builtin=True)
-    assert len(reg.list_plugins()) == 4
+    assert len(reg.list_plugins()) == 3
     assert reg.list_plugins()[0].name == "ly-next-builtin"

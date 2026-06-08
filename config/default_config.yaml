@@ -17,6 +17,9 @@ api:
 plugins:
   enabled: true
   dir: "plugins"
+  # 额外扫描目录（相对项目根）；clone 的插件可放在 plugins/local/<name>/
+  extra_dirs:
+    - plugins/local
   modules: []
   entry_points: true
   security_profile: "development"
@@ -24,7 +27,31 @@ plugins:
 
 llm:
   default_provider: "openai"
+  default_model: "openai"
   request_timeout: 60
+  models:
+    - name: openai
+      format: openai
+      model: "gpt-4o-mini"
+      api_key: "${OPENAI_API_KEY}"
+      base_url: ""
+    - name: anthropic
+      format: anthropic
+      model: "claude-3-5-haiku-20241022"
+      api_key: "${ANTHROPIC_API_KEY}"
+      base_url: ""
+    - name: ollama
+      format: ollama
+      model: "qwen2.5"
+      api_key: "not-needed"
+      base_url: "http://localhost:11434"
+    - name: openai_compat
+      format: openai_compat
+      model: "qwen2.5"
+      api_key: "not-needed"
+      base_url: "http://localhost:8000/v1"
+      auth_mode: "bearer"
+      model_aliases: {}
 
 openai_llm:
   model: "gpt-4o-mini"
@@ -82,6 +109,13 @@ agent:
     allow_categories: null
     deny_tools: []
     allow_tools: null
+  channel_tools:
+    web:
+      allow_file_write: true
+    qq:
+      allow_file_write: false
+    telegram:
+      allow_file_write: false
   scratchpad:
     max_chars: 12000
     compress_enabled: true
@@ -109,7 +143,20 @@ agent:
     prune_dialog_fill_ratio: 0.82
     reserve_completion_tokens: 2048
     prune_min_tool_chars: 400
+    prune_protect_recent_turns: 3
+    prune_tool_summarize: true
+    prune_tool_head_chars: 900
+    prune_tool_tail_chars: 500
     tool_placeholder: "[Earlier tool output removed to fit context window.]"
+  skills:
+    enabled: true
+    dirs:
+      - ".agents/skills"
+      - "skills"
+    inject_summary: true
+    max_summary_skills: 24
+    max_read_chars: 32000
+    cache_ttl_seconds: 30
   error_recovery:
     enabled: true
     max_retries: 2
@@ -188,38 +235,9 @@ agent:
     handoff_compress_max_tokens: 384
     synthesize_max_tokens: 2048
     synthesize_body_max_chars: 24000
-  model_router:
-    enabled: false
-    mode: "hybrid"
-    match_scope: "last_user"
-    match_recent_chars: 8000
-    match_rules: []
-    classifier:
-      provider: "openai_compat"
-      model: ""
-      temperature: 0.1
-      max_tokens: 128
-    routes:
-      reasoning:
-        provider: "openai"
-        model: "gpt-4o"
-      code:
-        provider: "openai"
-        model: "gpt-4o"
-      vision:
-        provider: "openai"
-        model: "gpt-4o"
-      tools:
-        provider: "openai"
-        model: "gpt-4o"
-      chat:
-        provider: "openai"
-        model: "gpt-4o-mini"
   vision_precaption:
     enabled: false
-    use_router_vision_model: false
-    provider: "openai"
-    model: ""
+    model_name: ""
     instruction: ""
     prefix: "【图像识别】\n"
     temperature: 0.3
@@ -253,6 +271,26 @@ agent:
 tools:
   plugin_dir: ""
   security_profile: "development"
+  host:
+    enabled: true
+    roots:
+      - "~"
+    deny_paths: []
+    max_read_bytes: 2097152
+    max_write_bytes: 4194304
+    max_list_entries: 500
+    exec:
+      enabled: true
+      default_cwd: "~"
+      timeout_seconds: 300
+      max_output_chars: 120000
+    approvals:
+      enabled: true
+      ttl_seconds: 600
+      mode: destructive
+      require_for_delete: true
+      require_for_recursive_delete: true
+      exec_patterns: []
   built_in:
     - "calculator"
     - "format_json"
@@ -263,6 +301,8 @@ tools:
     - "http_fetch"
     - "web_fetch"
     - "remember_fact"
+    - "list_skills"
+    - "read_skill"
     - "web_search"
     - "web_scrape"
   web_search:

@@ -26,7 +26,11 @@ from ly_next.models.stream_assemble import (
     accumulate_tool_call_delta,
     build_chat_completion_from_stream,
 )
-from ly_next.agent.llm_text import text_from_stream_delta
+from ly_next.agent.llm_text import (
+    content_from_stream_delta,
+    reasoning_from_stream_delta,
+    text_from_stream_delta,
+)
 
 logger = get_logger(__name__)
 
@@ -444,6 +448,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         body["stream"] = True
 
         content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         tool_calls: dict[int, dict[str, Any]] = {}
         finish_reason: str | None = None
         usage: dict[str, Any] | None = None
@@ -470,11 +475,20 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                     continue
                 tc_deltas = delta.get("tool_calls")
                 if tc_deltas:
-                    tool_phase = True
                     for tc in tc_deltas:
                         if isinstance(tc, dict):
                             accumulate_tool_call_delta(tool_calls, tc)
-                text = text_from_stream_delta(delta)
+                    if any(
+                        str(row.get("function", {}).get("name") or "").strip()
+                        or str(row.get("function", {}).get("arguments") or "").strip()
+                        for row in tool_calls.values()
+                    ):
+                        tool_phase = True
+                reasoning = reasoning_from_stream_delta(delta)
+                if reasoning and not tool_phase:
+                    reasoning_parts.append(reasoning)
+                    yield {"kind": "reasoning", "text": reasoning}
+                text = content_from_stream_delta(delta)
                 if text and not tool_phase:
                     content_parts.append(text)
                     yield {"kind": "content", "text": text}

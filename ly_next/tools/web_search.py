@@ -1,5 +1,3 @@
-"""Web search/scrape; provider from config tools.web_search."""
-
 from __future__ import annotations
 
 import asyncio
@@ -10,9 +8,33 @@ import httpx
 
 from ly_next.core.config import config
 from ly_next.tools.base import ToolResult, tool
+from ly_next.tools.web_shared import (
+    DEFAULT_SEARCH_COUNT,
+    WebCache,
+    clamp_count,
+    normalize_cache_key,
+    normalize_search_hit,
+    truncate_text,
+)
+
+_SEARCH_CACHE: WebCache[list[dict[str, str]]] = WebCache()
+
+WEB_SEARCH_SCHEMA = {
+    "type": "object",
+    "required": ["query"],
+    "properties": {
+        "query": {"type": "string", "description": "Search query."},
+        "count": {
+            "type": "integer",
+            "description": "Result count.",
+            "minimum": 1,
+            "maximum": 10,
+        },
+    },
+}
 
 
-def _web_search_config() -> dict[str, Any]:
+def _cfg() -> dict[str, Any]:
     tools = config.get("tools") or {}
     if not isinstance(tools, dict):
         return {}
@@ -20,242 +42,226 @@ def _web_search_config() -> dict[str, Any]:
     return ws if isinstance(ws, dict) else {}
 
 
-def _provider_and_key() -> tuple[str, str]:
-    ws = _web_search_config()
+def _resolve_provider() -> tuple[str, str]:
+    ws = _cfg()
     provider = str(ws.get("provider") or "duckduckgo").strip().lower()
     api_key = str(ws.get("api_key") or "").strip()
+    if not api_key and provider == "tavily":
+        tools = config.get("tools") or {}
+        image = tools.get("image") if isinstance(tools, dict) else {}
+        if isinstance(image, dict):
+            api_key = str(image.get("tavily_api_key") or "").strip()
     return provider, api_key
 
 
-async def _search_duckduckgo(query: str, num_results: int) -> list[dict[str, str]]:
+def _default_count() -> int:
+    ws = _cfg()
+    raw = ws.get("default_num_results") or ws.get("count") or DEFAULT_SEARCH_COUNT
+    return clamp_count(raw, default=DEFAULT_SEARCH_COUNT)
+
+
+def _cache_ttl_seconds() -> int:
+    ws = _cfg()
+    minutes = ws.get("cache_ttl_minutes")
+    if minutes is not None:
+        return max(0, int(float(minutes) * 60))
+    return max(0, int(ws.get("cache_ttl_seconds") or 900))
+
+
+def _missing_key_error(provider: str) -> str:
+    return f"web_search: configure tools.web_search.api_key for provider '{provider}'"
+
+
+async def _search_duckduckgo(query: str, count: int) -> list[dict[str, str]]:
     try:
         from duckduckgo_search import AsyncDDGS  # type: ignore
 
-        results: list[dict[str, str]] = []
+        out: list[dict[str, str]] = []
         async with AsyncDDGS() as ddgs:
-            async for r in ddgs.atext(query, max_results=num_results):
-                results.append(
-                    {
-                        "title": r.get("title", "") or "",
-                        "href": r.get("href", "") or "",
-                        "body": r.get("body", "") or "",
-                    }
+            async for row in ddgs.atext(query, max_results=count):
+                out.append(
+                    normalize_search_hit(
+                        title=row.get("title", "") or "",
+                        url=row.get("href", "") or "",
+                        snippet=row.get("body", "") or "",
+                    )
                 )
-        return results
+        return out
     except ImportError:
         module = importlib.import_module("duckduckgo_search")
-        ddgs_cls = module.DDGS
 
-        def _run_sync() -> list[dict[str, str]]:
-            out: list[dict[str, str]] = []
-            with ddgs_cls() as ddgs:
-                for r in ddgs.text(query, max_results=num_results):
-                    out.append(
-                        {
-                            "title": r.get("title", "") or "",
-                            "href": r.get("href", "") or "",
-                            "body": r.get("body", "") or "",
-                        }
+        def _sync() -> list[dict[str, str]]:
+            rows: list[dict[str, str]] = []
+            with module.DDGS() as ddgs:
+                for row in ddgs.text(query, max_results=count):
+                    rows.append(
+                        normalize_search_hit(
+                            title=row.get("title", "") or "",
+                            url=row.get("href", "") or "",
+                            snippet=row.get("body", "") or "",
+                        )
                     )
-            return out
+            return rows
 
-        return await asyncio.to_thread(_run_sync)
+        return await asyncio.to_thread(_sync)
 
 
-async def _search_brave(query: str, num_results: int, api_key: str) -> list[dict[str, str]]:
+async def _search_brave(query: str, count: int, api_key: str) -> list[dict[str, str]]:
     if not api_key:
-        raise ValueError("Brave Search 需要在配置中填写 tools.web_search.api_key")
-    count = max(1, min(int(num_results), 20))
-    url = "https://api.search.brave.com/res/v1/web/search"
-    headers = {
-        "Accept": "application/json",
-        "X-Subscription-Token": api_key,
-    }
-    params = {"q": query, "count": str(count)}
+        raise ValueError(_missing_key_error("brave"))
     async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.get(url, headers=headers, params=params)
+        r = await client.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            headers={"Accept": "application/json", "X-Subscription-Token": api_key},
+            params={"q": query, "count": str(count)},
+        )
         r.raise_for_status()
         data = r.json()
     web = (data.get("web") or {}) if isinstance(data, dict) else {}
-    raw = web.get("results") or []
-    out: list[dict[str, str]] = []
-    for item in raw[:count]:
-        if not isinstance(item, dict):
-            continue
-        out.append(
-            {
-                "title": str(item.get("title") or ""),
-                "href": str(item.get("url") or ""),
-                "body": str(item.get("description") or ""),
-            }
+    return [
+        normalize_search_hit(
+            title=str(item.get("title") or ""),
+            url=str(item.get("url") or ""),
+            snippet=str(item.get("description") or ""),
         )
-    return out
+        for item in (web.get("results") or [])[:count]
+        if isinstance(item, dict)
+    ]
 
 
-async def _search_serpapi(query: str, num_results: int, api_key: str) -> list[dict[str, str]]:
+async def _search_serpapi(query: str, count: int, api_key: str) -> list[dict[str, str]]:
     if not api_key:
-        raise ValueError("SerpAPI 需要在配置中填写 tools.web_search.api_key")
-    num = max(1, min(int(num_results), 20))
-    url = "https://serpapi.com/search.json"
-    params = {"engine": "google", "q": query, "num": num, "api_key": api_key}
+        raise ValueError(_missing_key_error("serpapi"))
     async with httpx.AsyncClient(timeout=45.0) as client:
-        r = await client.get(url, params=params)
+        r = await client.get(
+            "https://serpapi.com/search.json",
+            params={"engine": "google", "q": query, "num": count, "api_key": api_key},
+        )
         r.raise_for_status()
         data = r.json()
     organic = data.get("organic_results") or [] if isinstance(data, dict) else []
-    out: list[dict[str, str]] = []
-    for item in organic[:num]:
-        if not isinstance(item, dict):
-            continue
-        out.append(
-            {
-                "title": str(item.get("title") or ""),
-                "href": str(item.get("link") or ""),
-                "body": str(item.get("snippet") or ""),
-            }
+    return [
+        normalize_search_hit(
+            title=str(item.get("title") or ""),
+            url=str(item.get("link") or ""),
+            snippet=str(item.get("snippet") or ""),
         )
-    return out
+        for item in organic[:count]
+        if isinstance(item, dict)
+    ]
 
 
-async def _search_tavily(query: str, num_results: int, api_key: str) -> list[dict[str, str]]:
+async def _search_tavily(query: str, count: int, api_key: str) -> list[dict[str, str]]:
     if not api_key:
-        raise ValueError("Tavily 需要在配置中填写 tools.web_search.api_key")
-    max_r = max(1, min(int(num_results), 20))
-    url = "https://api.tavily.com/search"
-    payload = {
-        "api_key": api_key,
-        "query": query,
-        "search_depth": "basic",
-        "max_results": max_r,
-    }
+        raise ValueError(_missing_key_error("tavily"))
     async with httpx.AsyncClient(timeout=45.0) as client:
-        r = await client.post(url, json=payload)
+        r = await client.post(
+            "https://api.tavily.com/search",
+            json={
+                "api_key": api_key,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": count,
+            },
+        )
         r.raise_for_status()
         data = r.json()
     raw = data.get("results") or [] if isinstance(data, dict) else []
-    out: list[dict[str, str]] = []
-    for item in raw[:max_r]:
-        if not isinstance(item, dict):
-            continue
-        out.append(
-            {
-                "title": str(item.get("title") or ""),
-                "href": str(item.get("url") or ""),
-                "body": str(item.get("content") or ""),
-            }
+    return [
+        normalize_search_hit(
+            title=str(item.get("title") or ""),
+            url=str(item.get("url") or ""),
+            snippet=str(item.get("content") or ""),
         )
-    return out
+        for item in raw[:count]
+        if isinstance(item, dict)
+    ]
 
 
-async def web_search(query: str, num_results: int = 5) -> ToolResult:
-    """Search the web; provider and API key from server config (tools.web_search)."""
+async def run_web_search(query: str, count: int | None = None) -> tuple[str, list[dict[str, str]]]:
+    q = (query or "").strip()
+    if not q:
+        raise ValueError("query is required")
+    provider, api_key = _resolve_provider()
+    n = clamp_count(count, default=_default_count())
+    cache_key = f"{provider}:{n}:{normalize_cache_key(q)}"
+    cached = _SEARCH_CACHE.get(cache_key, _cache_ttl_seconds())
+    if cached is not None:
+        return provider, cached
+
+    if provider in ("duckduckgo", "ddg", ""):
+        try:
+            results = await _search_duckduckgo(q, n)
+        except ImportError as e:
+            raise ImportError("install duckduckgo-search") from e
+    elif provider in ("brave", "brave_search"):
+        results = await _search_brave(q, n, api_key)
+    elif provider in ("serpapi", "serp_api"):
+        results = await _search_serpapi(q, n, api_key)
+    elif provider == "tavily":
+        results = await _search_tavily(q, n, api_key)
+    else:
+        raise ValueError(f"unknown web_search provider: {provider}")
+
+    _SEARCH_CACHE.set(cache_key, results, _cache_ttl_seconds())
+    return provider, results
+
+
+async def web_search(query: str, count: int | None = None, num_results: int | None = None) -> ToolResult:
     try:
-        provider, api_key = _provider_and_key()
-        n = max(1, min(int(num_results), 20))
-
-        if provider in ("duckduckgo", "ddg", ""):
-            try:
-                results = await _search_duckduckgo(query, n)
-            except ImportError:
-                return ToolResult(
-                    success=False,
-                    error="请安装 duckduckgo-search: pip install duckduckgo-search",
-                )
-        elif provider in ("brave", "brave_search"):
-            results = await _search_brave(query, n, api_key)
-        elif provider in ("serpapi", "serp_api"):
-            results = await _search_serpapi(query, n, api_key)
-        elif provider in ("tavily",):
-            results = await _search_tavily(query, n, api_key)
-        else:
-            return ToolResult(
-                success=False,
-                error=f"未知搜索厂商: {provider}。可选: duckduckgo, brave, serpapi, tavily",
-            )
-
+        n = count if count is not None else num_results
+        provider, results = await run_web_search(query, n)
         return ToolResult(
             success=True,
             result={
                 "query": query,
-                "provider": provider or "duckduckgo",
+                "provider": provider,
                 "results": results,
                 "count": len(results),
             },
         )
+    except ImportError as e:
+        return ToolResult(success=False, error=str(e))
     except httpx.HTTPStatusError as e:
         return ToolResult(
             success=False,
-            error=f"搜索 API HTTP {e.response.status_code}: {e.response.text[:500]}",
+            error=f"HTTP {e.response.status_code}: {(e.response.text or '')[:500]}",
         )
     except Exception as e:
         return ToolResult(success=False, error=str(e))
 
 
 async def web_scrape(url: str, query: str = "") -> ToolResult:
-    """Scrape content from a webpage."""
     try:
         from selectolax.parser import HTMLParser
 
-        async def _fetch(u: str) -> httpx.Response:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-                return await client.get(u)
-
-        def _fallback_urls(u: str) -> list[str]:
-            cands: list[str] = []
-            lu = u.lower()
-            if "jina.ai/api-dashboard/embedding" in lu:
-                cands.extend(
-                    [
-                        "https://jina.ai/embeddings/",
-                        "https://jina.ai/models/jina-embeddings-v3/",
-                    ]
-                )
-            return [x for x in cands if x != u]
-
-        response = await _fetch(url)
-        if response.status_code == 404:
-            for alt in _fallback_urls(url):
-                r2 = await _fetch(alt)
-                if r2.status_code < 400:
-                    response = r2
-                    url = alt
-                    break
-        response.raise_for_status()
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
 
         parser = HTMLParser(response.text)
         content = parser.text()
-
         if query:
-            matches = parser.css(query)
-            if matches:
-                content = "\n".join([m.text() for m in matches[:5] if m.text()])
+            nodes = parser.css(query)
+            if nodes:
+                content = "\n".join(m.text() for m in nodes[:5] if m.text())
 
-        if len(content) > 4000:
-            content = content[:4000] + "..."
-
+        text, truncated = truncate_text(content, 4000)
+        title_node = parser.css_first("title")
         return ToolResult(
             success=True,
             result={
                 "url": url,
-                "title": parser.css_first("title").text() if parser.css_first("title") else "",
-                "content": content,
-                "length": len(content),
+                "title": title_node.text() if title_node else "",
+                "content": text,
+                "truncated": truncated,
             },
         )
-
     except ImportError:
-        return ToolResult(success=False, error="请安装 selectolax: pip install selectolax")
+        return ToolResult(success=False, error="install selectolax")
     except httpx.HTTPStatusError as e:
         code = e.response.status_code if e.response is not None else "?"
-        body = ""
-        try:
-            body = (e.response.text or "")[:240]
-        except Exception:
-            body = ""
-        hint = ""
-        if code == 404 and "jina.ai/api-dashboard/embedding" in (url or "").lower():
-            hint = "（该地址通常会 404，建议改用 https://jina.ai/embeddings/ ）"
-        return ToolResult(success=False, error=f"HTTP {code}: {body}{hint}")
+        return ToolResult(success=False, error=f"HTTP {code}")
     except Exception as e:
         return ToolResult(success=False, error=str(e))
 
@@ -263,29 +269,22 @@ async def web_scrape(url: str, query: str = "") -> ToolResult:
 web_search_tool = tool(
     name="web_search",
     description=(
-        "Search the public web. Provider is configured on the server "
-        "(tools.web_search: duckduckgo needs no key; brave / serpapi / tavily need api_key)."
+        "Search the live web for current facts, news, prices, or docs. "
+        "Returns title, url, snippet per hit. Follow up with web_fetch on 1–3 best URLs."
     ),
     category="network",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string"},
-            "num_results": {"type": "integer", "default": 5},
-        },
-        "required": ["query"],
-    },
+    parameters=WEB_SEARCH_SCHEMA,
 )(web_search)
 
 web_scrape_tool = tool(
     name="web_scrape",
-    description="Fetch a URL and return main text content (HTML stripped).",
+    description="Legacy HTML fetch; prefer web_fetch for readable article text.",
     category="network",
     parameters={
         "type": "object",
         "properties": {
-            "url": {"type": "string"},
-            "query": {"type": "string"},
+            "url": {"type": "string", "description": "HTTP(S) URL."},
+            "query": {"type": "string", "description": "Optional CSS selector."},
         },
         "required": ["url"],
     },

@@ -43,13 +43,22 @@ def text_from_chat_response(response: dict[str, Any]) -> str:
     return text_from_message(msg if isinstance(msg, dict) else {})
 
 
-def text_from_stream_delta(delta: dict[str, Any] | None) -> str:
+def content_from_stream_delta(delta: dict[str, Any] | None) -> str:
     if not delta:
         return ""
-    parts = _blocks_from_content(delta.get("content"))
-    if not parts:
-        for key in ("reasoning_content", "reasoning"):
-            val = delta.get(key)
-            if isinstance(val, str) and val:
-                parts.append(val)
-    return "".join(parts)
+    return "".join(_blocks_from_content(delta.get("content")))
+
+
+def reasoning_from_stream_delta(delta: dict[str, Any] | None) -> str:
+    if not delta:
+        return ""
+    for key in ("reasoning_content", "reasoning", "reasoning_text"):
+        val = delta.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return ""
+
+
+def text_from_stream_delta(delta: dict[str, Any] | None) -> str:
+    """Legacy: content only (reasoning is streamed separately)."""
+    return content_from_stream_delta(delta)

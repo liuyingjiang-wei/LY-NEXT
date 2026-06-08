@@ -83,27 +83,40 @@ def _sanitize_merged_text(s: str, max_chars: int) -> str:
     return s
 
 
-def _resolve_precaption_model() -> tuple[str, str]:
+def _resolve_precaption_model() -> tuple[str, str, str]:
+    """Return (registry_name, format, model_id)."""
     cfg = config.get("agent.vision_precaption", {}) or {}
     if not isinstance(cfg, dict):
         cfg = {}
+
+    from ly_next.models.registry import ModelRegistry
+
+    ModelRegistry.ensure_loaded()
+
+    model_name = str(cfg.get("model_name") or "").strip()
+    if model_name:
+        entry = ModelRegistry.get_entry(model_name)
+        if entry:
+            fmt = str(entry.get("format") or "openai").strip().lower()
+            model_id = str(entry.get("model") or "").strip()
+            return model_name, fmt, model_id
+
     prov = str(cfg.get("provider") or "openai").strip().lower()
     model = str(cfg.get("model") or "").strip()
 
-    if not model and bool(cfg.get("use_router_vision_model")):
-        routes = config.get("agent.model_router.routes", {}) or {}
-        vis = routes.get("vision") if isinstance(routes, dict) else None
-        if isinstance(vis, dict) and str(vis.get("model") or "").strip():
-            model = str(vis.get("model")).strip()
-            if str(vis.get("provider") or "").strip():
-                prov = str(vis.get("provider")).strip().lower()
+    entry = ModelRegistry.get_entry(prov)
+    if entry:
+        fmt = str(entry.get("format") or prov).strip().lower()
+        if not model and entry.get("model"):
+            model = str(entry.get("model")).strip()
+        return prov, fmt, model
 
     if not model:
         block = config.get(f"{prov}_llm", {}) or {}
         if isinstance(block, dict) and block.get("model"):
             model = str(block.get("model")).strip()
 
-    return prov, model
+    return prov, prov, model
 
 
 def _failure_strategy(raw: dict[str, Any]) -> str:
@@ -191,17 +204,17 @@ async def apply_vision_precaption_if_needed(
     if idx < 0:
         return messages
 
-    provider, model = _resolve_precaption_model()
+    registry_name, fmt, model = _resolve_precaption_model()
     if not model:
         logger.warning(
-            "[vision_precaption] enabled but no resolved model; set agent.vision_precaption.model "
-            "or enable use_router_vision_model with routes.vision filled"
+            "[vision_precaption] enabled but no resolved model; set agent.vision_precaption.model_name "
+            "or model / provider"
         )
         return messages
-    if provider not in _SUPPORTED_PROVIDERS:
+    if fmt not in _SUPPORTED_PROVIDERS:
         logger.warning(
-            "[vision_precaption] provider %s not supported (use openai or openai_compat)",
-            provider,
+            "[vision_precaption] format %s not supported (use openai or openai_compat registry model)",
+            fmt,
         )
         return messages
 
@@ -223,7 +236,7 @@ async def apply_vision_precaption_if_needed(
     max_caption_chars = int(raw.get("max_caption_chars", 16000) or 16000)
     max_merged_chars = int(raw.get("max_merged_chars", 48000) or 48000)
 
-    client_kw: dict[str, Any] = {"provider": provider, "model": model}
+    client_kw: dict[str, Any] = {"registry_name": registry_name, "model": model}
     to_raw = raw.get("timeout")
     if to_raw is not None:
         with contextlib.suppress(TypeError, ValueError):
@@ -248,16 +261,16 @@ async def apply_vision_precaption_if_needed(
         caption_raw = _extract_assistant_text(resp)
         caption = _sanitize_merged_text(caption_raw, max_caption_chars)
         logger.info(
-            "[vision_precaption] ok provider=%s model=%s elapsed_ms=%.0f caption_chars=%s",
-            provider,
+            "[vision_precaption] ok registry=%s model=%s elapsed_ms=%.0f caption_chars=%s",
+            registry_name,
             model,
             elapsed_ms,
             len(caption),
         )
     except Exception as e:
         logger.warning(
-            "[vision_precaption] call failed provider=%s model=%s timeout_cfg=%s images=%s: %s",
-            provider,
+            "[vision_precaption] call failed registry=%s model=%s timeout_cfg=%s images=%s: %s",
+            registry_name,
             model,
             client_kw.get("timeout", "(default)"),
             len(image_parts),
@@ -276,8 +289,8 @@ async def apply_vision_precaption_if_needed(
 
     if not caption:
         logger.warning(
-            "[vision_precaption] empty caption provider=%s model=%s; applying on_failure policy",
-            provider,
+            "[vision_precaption] empty caption registry=%s model=%s; applying on_failure policy",
+            registry_name,
             model,
         )
         return _apply_precaption_failure(

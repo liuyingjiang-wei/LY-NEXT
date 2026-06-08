@@ -1,5 +1,3 @@
-"""GET a URL and return main readable content for agents (provider: tools.web_fetch)."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -217,17 +215,19 @@ async def web_fetch(url: str, max_length: int | None = None) -> ToolResult:
 web_fetch_tool = tool(
     name="web_fetch",
     description=(
-        "Fetch a URL and return main readable page content. "
-        "Provider in tools.web_fetch: trafilatura (local), jina, tavily, firecrawl. "
-        "No JavaScript. For raw HTTP use http_fetch."
+        "Fetch a URL and return clean page text (markdown when supported). "
+        "Use after web_search to read full articles. Respects SSRF allowlist."
     ),
     category="network",
     parameters={
         "type": "object",
-        "properties": {
-            "url": {"type": "string", "description": "Absolute http(s) URL"},
-            "max_length": {"type": "integer", "description": "Max characters to return"},
-        },
         "required": ["url"],
+        "properties": {
+            "url": {"type": "string", "description": "HTTP(S) URL."},
+            "max_length": {
+                "type": "integer",
+                "description": "Max characters returned; truncates.",
+            },
+        },
     },
 )(web_fetch)

@@ -34,6 +34,7 @@ from ly_next.agent.react.helpers import (
 )
 from ly_next.agent.react.tool_exec import execute_native_tool_call
 from ly_next.agent.tool_filter import get_filtered_tools_for_deps, get_openai_tools_for_deps, list_tools_payload
+from ly_next.agent.turn_engine import iter_direct_answer
 from ly_next.core.context_budget import (
     cumulative_budget_limit,
     effective_context_window_tokens,
@@ -46,21 +47,6 @@ from ly_next.core.logger import get_logger
 from ly_next.core.run_telemetry import record_tool_timing
 
 logger = get_logger(__name__)
-
-
-async def _stream_messages_answer(
-    deps: AgentDeps,
-    messages: list[dict[str, Any]],
-    *,
-    status_detail: str,
-) -> AsyncIterator[dict[str, Any]]:
-    yield {"type": "status", "phase": "answer", "detail": status_detail}
-    parts: list[str] = []
-    async for piece in deps.iter_messages_stream(messages):
-        parts.append(piece)
-        yield {"type": "chunk", "content": piece}
-    text = "".join(parts).strip() or "No response."
-    yield {"type": "final", "content": text, "chunked": bool(parts)}
 
 
 def build_compat_decision_prompt(
@@ -91,7 +77,7 @@ async def iter_compat_react(
     if not tools:
         yield {"type": "status", "phase": "direct", "detail": "当前过滤条件下无可用工具，直接回答"}
         q = last_user_query(messages) or extract_text(messages)
-        async for ev in _stream_messages_answer(
+        async for ev in iter_direct_answer(
             deps, [{"role": "user", "content": q}], status_detail="直接回答"
         ):
             yield ev
@@ -260,7 +246,7 @@ async def iter_native_react(
         prompt = (
             f"{get_native_system_prefix()}\n\nUser request:\n{q}\n\nAnswer without tools."
         )
-        async for ev in _stream_messages_answer(
+        async for ev in iter_direct_answer(
             deps, [{"role": "user", "content": prompt}], status_detail="直接回答"
         ):
             yield ev
@@ -320,7 +306,11 @@ async def iter_native_react(
                 tool_calls: list[dict[str, Any]] = []
 
                 async for stream_ev in deps.iter_chat_with_tools(dialog, openai_tools):
-                    if stream_ev.get("type") == "chunk":
+                    if stream_ev.get("type") == "think_chunk":
+                        piece = str(stream_ev.get("content") or "")
+                        if piece:
+                            yield {"type": "think_chunk", "content": piece}
+                    elif stream_ev.get("type") == "chunk":
                         piece = str(stream_ev.get("content") or "")
                         if piece:
                             streamed_parts.append(piece)

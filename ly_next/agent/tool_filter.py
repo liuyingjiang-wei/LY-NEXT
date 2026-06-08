@@ -7,7 +7,7 @@ from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-_TIER_RANK = {"safe": 0, "general": 1, "network": 2}
+_TIER_RANK = {"safe": 0, "general": 1, "network": 2, "host": 3}
 
 
 def tier_rank(category: str | None) -> int:

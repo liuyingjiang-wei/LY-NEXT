@@ -19,6 +19,8 @@ def test_tier_rank():
 def test_max_tier_rank():
     assert max_tier_rank("safe") == 0
     assert max_tier_rank("network") == 2
+    assert max_tier_rank("host") == 3
+    assert tier_rank("host") == 3
 
 
 def test_filter_deny_tools(fake_registry):
@@ -81,6 +83,31 @@ def test_filter_allow_tools_empty_returns_empty(fake_registry):
     )
     assert picked == []
     assert names == []
+
+
+def test_filter_max_tier_network_excludes_host(fake_registry):
+    picked, names = filter_tools_for_agent(
+        fake_registry,
+        allow_tools=None,
+        deny_tools=[],
+        allow_categories=None,
+        max_tier="network",
+        max_tools=40,
+    )
+    assert "host_read_file" not in names
+    assert "calculator" in names
+
+
+def test_filter_max_tier_host_includes_host(fake_registry):
+    picked, names = filter_tools_for_agent(
+        fake_registry,
+        allow_tools=None,
+        deny_tools=[],
+        allow_categories=None,
+        max_tier="host",
+        max_tools=40,
+    )
+    assert "host_read_file" in names
 
 
 def test_list_tools_payload(fake_registry):

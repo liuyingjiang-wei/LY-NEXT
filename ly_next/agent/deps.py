@@ -3,12 +3,18 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ly_next.agent.llm_text import text_from_chat_response, text_from_stream_delta
+from ly_next.agent.llm_text import (
+    content_from_stream_delta,
+    reasoning_from_stream_delta,
+    text_from_chat_response,
+    text_from_stream_delta,
+)
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.messaging.models import MixedMessage
 from ly_next.models.base_llm import BaseLLMClient
 from ly_next.models.factory import LLMFactory
+from ly_next.models.registry import ModelRegistry
 
 logger = get_logger(__name__)
 
@@ -57,12 +63,21 @@ class AgentDeps:
     def __post_init__(self):
         if self.llm_client is None:
             try:
-                kw: dict[str, Any] = {"provider": self.provider}
+                kw: dict[str, Any] = {}
                 if self.model:
                     kw["model"] = self.model
+                ModelRegistry.ensure_loaded()
+                name = str(self.provider or "").strip()
+                entry = ModelRegistry.get_entry(name) if name else None
+                if entry:
+                    kw = ModelRegistry.build_client_kwargs(
+                        entry["name"], model_override=self.model
+                    )
+                elif name:
+                    kw["provider"] = name
                 self.llm_client = LLMFactory.get_client(**kw)
             except Exception as e:
-                logger.warning(f"Failed to create default LLM client: {e}")
+                logger.warning("Failed to create default LLM client: %s", e)
 
     @property
     def use_tools(self) -> bool:
@@ -125,16 +140,23 @@ class AgentDeps:
             if self.stop_event and self.stop_event.is_set():
                 break
             content = ""
+            reasoning = ""
             if isinstance(chunk, dict):
                 choices = chunk.get("choices") or [{}]
                 delta = choices[0].get("delta", {}) if choices else {}
-                content = text_from_stream_delta(delta if isinstance(delta, dict) else {})
+                if isinstance(delta, dict):
+                    content = content_from_stream_delta(delta)
+                    reasoning = reasoning_from_stream_delta(delta)
             else:
                 content = str(chunk)
+            if reasoning:
+                if self.stream_callback:
+                    await self.stream_callback({"content": reasoning, "kind": "think", "done": False})
+                yield {"type": "think", "content": reasoning}
             if content:
                 if self.stream_callback:
-                    await self.stream_callback({"content": content, "done": False})
-                yield content
+                    await self.stream_callback({"content": content, "kind": "chunk", "done": False})
+                yield {"type": "chunk", "content": content}
         if self.stream_callback:
             await self.stream_callback({"content": "", "done": True})
 
@@ -144,7 +166,7 @@ class AgentDeps:
                 "\n".join(f"{m.get('role')}: {m.get('content')}" for m in messages)
             )
             if text:
-                yield text
+                yield {"type": "chunk", "content": text}
             return
 
         if self.llm_client is None:
@@ -183,7 +205,13 @@ class AgentDeps:
                 if self.stop_event and self.stop_event.is_set():
                     break
                 kind = item.get("kind")
-                if kind == "content":
+                if kind == "reasoning":
+                    text = str(item.get("text") or "")
+                    if text:
+                        if self.stream_callback:
+                            await self.stream_callback({"content": text, "kind": "think", "done": False})
+                        yield {"type": "think_chunk", "content": text}
+                elif kind == "content":
                     text = str(item.get("text") or "")
                     if text:
                         if self.stream_callback:
@@ -233,7 +261,11 @@ class AgentDeps:
 
         messages = [{"role": "user", "content": prompt}]
         async for piece in self.iter_messages_stream(messages):
-            yield piece
+            if isinstance(piece, dict):
+                if piece.get("type") == "chunk":
+                    yield str(piece.get("content") or "")
+            elif isinstance(piece, str):
+                yield piece
 
     async def call_llm_stream(self, prompt: str) -> str:
         parts: list[str] = []
@@ -302,11 +334,10 @@ def create_agent_deps(
     if not isinstance(lg, dict):
         lg = {}
 
-    resolved_provider = str(provider).strip().lower() if provider else ""
+    resolved_provider = str(provider).strip() if provider else ""
     if not resolved_provider:
-        resolved_provider = (
-            str(config.get("llm.default_provider", "openai") or "openai").strip().lower()
-        )
+        ModelRegistry.ensure_loaded()
+        resolved_provider = ModelRegistry.default_name()
 
     return AgentDeps(
         provider=resolved_provider,

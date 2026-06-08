@@ -64,14 +64,20 @@
 | 工作台 Web UI | `www/`（`home.html` · `app.html` · `login.html` · `orbit/` 等） |
 | 会话持久化 | `ly_next/core/thread_persistence.py`（`sessions` / `messages`）；checkpoint：`checkpointer.py` |
 | 插件 API 目录 | `ly_next/apis/` · `DirectoryAPIPlugin` · 模块名 `ly_next_plugin_<stem>` → [apis/README.md](./ly_next/apis/README.md) |
-| 扩展插件 | `plugins/` · `LyNextPlugin` · `PluginLoader` · entry point `ly_next.plugins` |
+| 扩展插件 | `plugins/`（示例）· `plugins/local/`（本地安装）· `LyNextPlugin` · [plugins/README.md](./plugins/README.md) |
 | 扩展工具 | `tools.plugin_dir` · `@tool` 装饰器 · `ToolDirectoryPlugin` |
+| 本机文件 / shell | `tools.host` · `host_sandbox.py` · `host_platform.py` · `host_approvals.py` · tier `host` |
+| Agent Skills | `agent/skills_loader.py` · `tools/skills_tools.py` · 目录 `.agents/skills/**/SKILL.md` |
+| 上下文预算 | `core/context_budget.py` · `prune_protect_recent_turns` · 工具输出头尾摘要 |
 | 对话中间件 | `agent.chat_pipeline.middleware` · `ChatMiddlewareChain` |
 | 对话入口 | `ly_api.py`、`ws_api.py`；提示词：`prompt_templates.py`（`data/ly_next/prompts/` 优先于 `prompt_builtin/`） |
 | Agent 图 | `react.py`、`plan.py`；`json_extract.py`、`tool_streak.py`（勿再引入已删的 prebuilt 包装层） |
 | 选择与依赖 | `factory.py`、`deps.py` |
 | OpenAI 兼容 | `models/openai_compat.py` |
 | RAG / 记忆 | `rag/document_retriever.py`、`example_selector.py`；`tools/memory_note.py`（`remember_fact`） |
+| QQ / OneBot 桥接 | 独立插件 `qq_onebot` · `/api/onebot11/*` · 安装见 [plugins/README.md](./plugins/README.md) |
+| Telegram 桥接 | 独立插件 `telegram_bot` · `/api/telegram/*` · 安装见 [plugins/README.md](./plugins/README.md) |
+| 桥接早期挂载 | `ly_next/core/plugin/early_bridges.py` · `bootstrap_message_bridges()` |
 
 **标识符**：`thread_id`（跨轮会话）≠ `task_id` / `run_id`（单次请求）
 

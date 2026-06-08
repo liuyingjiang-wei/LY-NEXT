@@ -13,7 +13,6 @@ from ly_next.api.base import APIRegistry
 from ly_next.core.app_context import AppContext
 from ly_next.core.config import config, get_project_root
 from ly_next.core.logger import get_logger
-from ly_next.core.plugin.bridge_plugin import BridgePlugin
 from ly_next.core.plugin.builtin_plugin import BuiltinPlugin
 from ly_next.core.plugin.directory_api_plugin import DirectoryAPIPlugin
 from ly_next.core.plugin.loader_security import (
@@ -43,6 +42,58 @@ def _plugin_dir() -> Path:
     if not path.is_absolute():
         path = get_project_root() / path
     return path
+
+
+def _plugin_extra_dirs() -> list[Path]:
+    raw = config.get("plugins.extra_dirs")
+    if raw is None:
+        raw = ["plugins/local"]
+    if not isinstance(raw, list):
+        return []
+    root = get_project_root()
+    out: list[Path] = []
+    seen: set[str] = set()
+    for item in raw:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        path = Path(text)
+        if not path.is_absolute():
+            path = root / path
+        try:
+            key = str(path.resolve())
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
+def _plugin_search_dirs() -> list[Path]:
+    primary = _plugin_dir()
+    dirs = [primary]
+    seen = {str(primary.resolve())}
+    for path in _plugin_extra_dirs():
+        try:
+            key = str(path.resolve())
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        dirs.append(path)
+    return dirs
+
+
+def _ensure_plugins_import_path() -> list[Path]:
+    dirs = _plugin_search_dirs()
+    for plugin_dir in dirs:
+        parent = str(plugin_dir.resolve())
+        if parent not in sys.path:
+            sys.path.insert(0, parent)
+    return dirs
 
 
 def _explicit_modules() -> list[str]:
@@ -146,9 +197,9 @@ def _load_directory_plugins(registry: PluginRegistry) -> int:
         )
         return 0
 
-    plugin_dir = _plugin_dir()
-    if not plugin_dir.is_dir():
-        logger.debug("[PluginLoader] plugin directory not found: %s", plugin_dir)
+    plugin_dirs = _ensure_plugins_import_path()
+    if not any(d.is_dir() for d in plugin_dirs):
+        logger.debug("[PluginLoader] no plugin directories found under %s", plugin_dirs)
         return 0
 
     trusted: dict[str, str] | None = None
@@ -161,19 +212,46 @@ def _load_directory_plugins(registry: PluginRegistry) -> int:
             return 0
 
     loaded = 0
-    plugin_root = plugin_dir.resolve()
-    for module_path in _discover_module_paths(plugin_dir):
-        if trusted is not None and not _verify_module_path(module_path, plugin_root, trusted):
+    seen_names: set[str] = set()
+    for plugin_dir in plugin_dirs:
+        if not plugin_dir.is_dir():
             continue
-        module = _load_module_from_file(module_path)
-        if module is None:
-            continue
-        plugin = _extract_plugin_from_module(module)
-        if plugin is None:
-            logger.warning("[PluginLoader] no plugin found in %s", module_path)
-            continue
-        registry.register(plugin)
-        loaded += 1
+        plugin_root = plugin_dir.resolve()
+        for module_path in _discover_module_paths(plugin_dir):
+            if trusted is not None and not _verify_module_path(
+                module_path, plugin_root, trusted
+            ):
+                continue
+            pkg_dir = module_path.parent if module_path.name == "__init__.py" else None
+            if pkg_dir and pkg_dir.is_dir() and (pkg_dir / "__init__.py").is_file():
+                try:
+                    module = importlib.import_module(pkg_dir.name)
+                except Exception as e:
+                    logger.error(
+                        "[PluginLoader] failed to import package %s: %s", pkg_dir.name, e
+                    )
+                    continue
+            else:
+                module = _load_module_from_file(module_path)
+                if module is None:
+                    continue
+            plugin = _extract_plugin_from_module(module)
+            if plugin is None:
+                if getattr(module, "tools", None) is not None and not hasattr(
+                    module, "plugin"
+                ):
+                    logger.debug(
+                        "[PluginLoader] skip tool-only module %s (belongs in tools.plugin_dir)",
+                        module_path.name,
+                    )
+                    continue
+                logger.warning("[PluginLoader] no plugin found in %s", module_path)
+                continue
+            if plugin.name in seen_names:
+                continue
+            seen_names.add(plugin.name)
+            registry.register(plugin)
+            loaded += 1
     return loaded
 
 
@@ -271,7 +349,6 @@ class PluginLoader:
             self.registry.register(BuiltinPlugin())
             self.registry.register(ToolDirectoryPlugin())
             self.registry.register(DirectoryAPIPlugin())
-            self.registry.register(BridgePlugin())
 
         if _plugins_enabled():
             n_dir = _load_directory_plugins(self.registry)

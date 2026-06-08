@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from ly_next.agent.deps import AgentDeps, create_agent_deps
+from ly_next.agent.turn_engine import collect_turn_text, iter_direct_answer, normalize_dialog_messages
 from ly_next.core.logger import get_logger
 from ly_next.core.run_telemetry import set_run_loop_kind
 
@@ -19,15 +20,7 @@ class ChatAgent:
             return "No messages provided."
 
         set_run_loop_kind("chat")
-        processed_messages = self._process_messages(messages)
-        prompt = self._build_prompt(processed_messages)
-
-        try:
-            response = await self.deps.call_llm(prompt)
-            return response
-        except Exception as e:
-            logger.error(f"[chat] LLM call failed: {e}")
-            return f"Error: {str(e)}"
+        return await collect_turn_text(self.run_stream(messages))
 
     async def run_stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
         if not messages:
@@ -35,43 +28,13 @@ class ChatAgent:
             return
 
         set_run_loop_kind("chat")
-        processed_messages = self._process_messages(messages)
-        prompt = self._build_prompt(processed_messages)
-
-        try:
-            full_response = ""
-            async for chunk in self.deps.iter_llm_stream(prompt):
-                full_response += chunk
-                yield {"type": "chunk", "content": chunk}
-
-            yield {"type": "final", "content": full_response, "chunked": bool(full_response)}
-        except Exception as e:
-            logger.error(f"[chat] Stream failed: {e}")
-            yield {"type": "error", "content": str(e)}
+        async for ev in iter_direct_answer(
+            self.deps,
+            messages,
+            status_detail="直接对话",
+            phase="answer",
+        ):
+            yield ev
 
     def _process_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        processed = []
-
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if not content:
-                continue
-
-            if role == "system":
-                processed.append({"role": "system", "content": content})
-            elif role in ("user", "assistant"):
-                processed.append({"role": role, "content": content})
-            else:
-                processed.append({"role": "user", "content": content})
-
-        return processed
-
-    def _build_prompt(self, messages: list[dict[str, Any]]) -> str:
-        parts = []
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            parts.append(f"{role.upper()}: {content}")
-        return "\n\n".join(parts)
+        return normalize_dialog_messages(messages)

@@ -259,9 +259,9 @@ function Invoke-PgCommonPsql {
         [switch]$Quiet
     )
     $prev = $env:PGPASSWORD
-    if ($Password) { $env:PGPASSWORD = $Password }
+    $env:PGPASSWORD = $Password
     try {
-        $out = & $Psql -h $DbHost -p $Port -U $Username -d $Database -v ON_ERROR_STOP=1 -c $Sql 2>&1
+        $out = & $Psql -w -h $DbHost -p $Port -U $Username -d $Database -v ON_ERROR_STOP=1 -c $Sql 2>&1
         if ($LASTEXITCODE -ne 0) {
             if (-not $Quiet) { Write-Host $out }
             return $false
@@ -287,9 +287,9 @@ function Test-PgCommonPgvectorInDatabase {
     )
     $sql = "SELECT 1 FROM pg_extension WHERE extname='vector';"
     $prev = $env:PGPASSWORD
-    if ($Password) { $env:PGPASSWORD = $Password }
+    $env:PGPASSWORD = $Password
     try {
-        $r = & $Psql -h $DbHost -p $Port -U $Username -d $Database -tAc $sql 2>$null
+        $r = & $Psql -w -h $DbHost -p $Port -U $Username -d $Database -tAc $sql 2>$null
         return ($r -match "1")
     } catch {
         return $false
@@ -331,7 +331,7 @@ print(json.dumps({
     'host': db.get('host') or '127.0.0.1',
     'port': int(db.get('port') or 5432),
     'username': db.get('username') or 'postgres',
-    'password': db.get('password') or '',
+    'password': '' if db.get('password') is None else str(db.get('password')),
     'database': db.get('database') or 'ly_next',
 }))
 "@
@@ -386,16 +386,190 @@ function Ensure-PgCommonLyNextDatabase {
     )
     $check = "SELECT 1 FROM pg_database WHERE datname = '$($Database.Replace("'", "''"))';"
     $prev = $env:PGPASSWORD
-    if ($Password) { $env:PGPASSWORD = $Password }
+    $env:PGPASSWORD = $Password
     try {
-        $exists = & $Psql -h $DbHost -p $Port -U $Username -d postgres -tAc $check 2>$null
+        $exists = & $Psql -w -h $DbHost -p $Port -U $Username -d postgres -tAc $check 2>$null
         if ($exists -match "1") { return $true }
         $create = "CREATE DATABASE $($Database.Replace('"', '""'));"
-        & $Psql -h $DbHost -p $Port -U $Username -d postgres -v ON_ERROR_STOP=1 -c $create 2>&1 | Out-Host
+        & $Psql -w -h $DbHost -p $Port -U $Username -d postgres -v ON_ERROR_STOP=1 -c $create 2>&1 | Out-Host
         return ($LASTEXITCODE -eq 0)
     } finally {
         if ($null -ne $prev) { $env:PGPASSWORD = $prev } else { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
     }
+}
+
+function Get-PgCommonDefaultGithubProxies {
+    $list = [System.Collections.Generic.List[string]]::new()
+    $preferred = [string]$env:LY_NEXT_GITHUB_PROXY
+    if (-not [string]::IsNullOrWhiteSpace($preferred)) {
+        $norm = $preferred.Trim().TrimEnd("/") + "/"
+        [void]$list.Add($norm)
+    }
+    foreach ($p in @(
+            "https://gh-proxy.com/"
+            "https://ghfast.top/"
+            "https://ghproxy.net/"
+            "https://gh.ddlc.top/"
+            "https://mirror.ghproxy.com/"
+            "https://hub.gitmirror.com/"
+            "https://cf.ghproxy.cc/"
+            "https://ghp.ci/"
+        )) {
+        if (-not $list.Contains($p)) { [void]$list.Add($p) }
+    }
+    return @($list)
+}
+
+function New-PgCommonProxiedGithubUrl {
+    param(
+        [Parameter(Mandatory)][string]$Proxy,
+        [Parameter(Mandatory)][string]$UpstreamUrl
+    )
+    return "{0}/{1}" -f $Proxy.TrimEnd("/"), $UpstreamUrl.Trim()
+}
+
+function Select-PgCommonGithubProxies {
+    param(
+        [string]$ProbeUrl = "https://github.com/pgvector/pgvector/archive/refs/tags/v0.8.0.zip",
+        [int]$TimeoutSec = 15
+    )
+    if ($env:LY_NEXT_GITHUB_PROXY_SKIP_PROBE -eq "1") {
+        return Get-PgCommonDefaultGithubProxies
+    }
+
+    Write-Host "正在测速 GitHub 代理 (${TimeoutSec}s 超时)..." -ForegroundColor DarkGray
+    $ranked = foreach ($p in (Get-PgCommonDefaultGithubProxies)) {
+        $url = New-PgCommonProxiedGithubUrl -Proxy $p -UpstreamUrl $ProbeUrl
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $ok = $false
+        $len = 0
+        try {
+            $resp = Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -TimeoutSec $TimeoutSec
+            $ok = ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400)
+            $cl = $resp.Headers["Content-Length"]
+            if ($cl) { [void][int]::TryParse([string]$cl, [ref]$len) }
+        } catch {
+            $ok = $false
+        }
+        [PSCustomObject]@{ Proxy = $p; OK = $ok; Ms = $sw.ElapsedMilliseconds; Len = $len }
+    }
+
+    $good = @($ranked | Where-Object { $_.OK -and $_.Len -gt 50000 } | Sort-Object Ms)
+    if ($good.Count -eq 0) {
+        $good = @($ranked | Where-Object { $_.OK } | Sort-Object Ms)
+    }
+    if ($good.Count -gt 0) {
+        $summary = ($good | ForEach-Object { "{0}({1}ms)" -f $_.Proxy.TrimEnd("/"), $_.Ms }) -join ", "
+        Write-Host "GitHub 代理测速结果: $summary" -ForegroundColor DarkGray
+        return @($good | ForEach-Object { $_.Proxy })
+    }
+
+    Write-Warning "GitHub 代理测速均失败，将尝试直连 GitHub。"
+    return @()
+}
+
+function Remove-PgCommonPgvectorWorktree {
+    param([Parameter(Mandatory)][string]$Dest)
+    if (Test-Path -LiteralPath $Dest) {
+        Remove-Item -LiteralPath $Dest -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Expand-PgCommonPgvectorZip {
+    param(
+        [Parameter(Mandatory)][string]$WorkDir,
+        [Parameter(Mandatory)][string]$ZipPath,
+        [Parameter(Mandatory)][string]$PgVectorTag
+    )
+    $dest = Join-Path $WorkDir "pgvector"
+    $ver = $PgVectorTag.TrimStart("v")
+    Expand-Archive -Path $ZipPath -DestinationPath $WorkDir -Force
+    Remove-Item -Force -ErrorAction SilentlyContinue $ZipPath
+
+    $extracted = Join-Path $WorkDir "pgvector-$ver"
+    if (-not (Test-Path -LiteralPath (Join-Path $extracted "Makefile.win"))) {
+        $alt = Get-ChildItem -Path $WorkDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "pgvector-*" } |
+            Select-Object -First 1
+        if ($alt) { $extracted = $alt.FullName }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $extracted "Makefile.win"))) {
+        throw "解压后的 pgvector 目录无效: $extracted"
+    }
+    Remove-PgCommonPgvectorWorktree -Dest $dest
+    Rename-Item -LiteralPath $extracted -NewName "pgvector"
+    return (Resolve-Path -LiteralPath $dest).Path
+}
+
+function Get-PgCommonPgvectorSource {
+    param(
+        [Parameter(Mandatory)][string]$WorkDir,
+        [string]$PgVectorTag = "v0.8.0"
+    )
+    $dest = Join-Path $WorkDir "pgvector"
+    if (Test-Path -LiteralPath (Join-Path $dest "Makefile.win")) {
+        return (Resolve-Path -LiteralPath $dest).Path
+    }
+
+    New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
+    $repoUrl = "https://github.com/pgvector/pgvector.git"
+    $zipUrl = "https://github.com/pgvector/pgvector/archive/refs/tags/$PgVectorTag.zip"
+    $proxies = Select-PgCommonGithubProxies -ProbeUrl $zipUrl
+
+    $cloneUrls = [System.Collections.Generic.List[string]]::new()
+    foreach ($p in $proxies) {
+        [void]$cloneUrls.Add((New-PgCommonProxiedGithubUrl -Proxy $p -UpstreamUrl $repoUrl))
+    }
+    if (-not $cloneUrls.Contains($repoUrl)) { [void]$cloneUrls.Add($repoUrl) }
+
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        foreach ($cloneUrl in $cloneUrls) {
+            Remove-PgCommonPgvectorWorktree -Dest $dest
+            Write-Host "git clone: $cloneUrl" -ForegroundColor DarkGray
+            Push-Location $WorkDir
+            try {
+                & git clone --depth 1 --branch $PgVectorTag $cloneUrl pgvector 2>&1 | Out-Host
+            } catch {
+                Write-Warning "git clone 失败: $cloneUrl"
+            } finally {
+                Pop-Location
+            }
+            if (Test-Path -LiteralPath (Join-Path $dest "Makefile.win")) {
+                return (Resolve-Path -LiteralPath $dest).Path
+            }
+        }
+    }
+
+    Write-Warning "git clone pgvector 失败，尝试通过代理下载源码 zip..."
+    $zipUrls = [System.Collections.Generic.List[string]]::new()
+    foreach ($p in $proxies) {
+        [void]$zipUrls.Add((New-PgCommonProxiedGithubUrl -Proxy $p -UpstreamUrl $zipUrl))
+    }
+    if (-not $zipUrls.Contains($zipUrl)) { [void]$zipUrls.Add($zipUrl) }
+
+    $minZipBytes = 100000
+    foreach ($url in $zipUrls) {
+        $zipPath = Join-Path $WorkDir "pgvector-$PgVectorTag.zip"
+        Remove-Item -Force -ErrorAction SilentlyContinue $zipPath
+        Write-Host "下载 zip: $url" -ForegroundColor DarkGray
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 180
+            if ((Get-Item -LiteralPath $zipPath).Length -lt $minZipBytes) {
+                Write-Warning "zip 体积异常，跳过: $url"
+                continue
+            }
+            return Expand-PgCommonPgvectorZip -WorkDir $WorkDir -ZipPath $zipPath -PgVectorTag $PgVectorTag
+        } catch {
+            Write-Warning "zip 下载失败: $url"
+        }
+    }
+
+    throw (
+        "无法获取 pgvector 源码（git 与 zip 均失败）。可设置环境变量后重试:`n" +
+        "  `$env:LY_NEXT_GITHUB_PROXY = 'https://gh-proxy.com/'`n" +
+        "或手动下载: $zipUrl`n" +
+        "解压到 data/ly_next/cache/pgvector_src/pgvector，再运行 .\install.ps1 -Pgvector"
+    )
 }
 
 function Invoke-PgCommonPgvectorSetup {
@@ -427,41 +601,49 @@ function Invoke-PgCommonPgvectorSetup {
         Write-Host "pgvector 扩展文件已存在，跳过编译。" -ForegroundColor DarkGray
     }
     if (-not $vectorCtl -and $BuildIfMissing) {
-        if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "编译 pgvector 需要 git。" }
         $vcvars = Find-PgCommonVcVars64 -VcVarsPath $VcVarsPath
         if (-not $vcvars) { throw "未找到 Visual Studio vcvars64.bat，无法编译 pgvector。" }
 
-        $work = Join-Path $env:TEMP ("pgvector_build_" + [Guid]::NewGuid().ToString("N"))
-        New-Item -ItemType Directory -Path $work -Force | Out-Null
-        Push-Location $work
-        try { & git clone --depth 1 --branch $PgVectorTag "https://github.com/pgvector/pgvector.git" } finally { Pop-Location }
-
-        $pgvectorSrc = Join-Path $work "pgvector"
+        $cacheRoot = Join-Path $RepoRoot "data\ly_next\cache"
+        $work = Join-Path $cacheRoot "pgvector_src"
+        $pgvectorSrc = Get-PgCommonPgvectorSource -WorkDir $work -PgVectorTag $PgVectorTag
+        $pgRootQ = $pgRoot.TrimEnd('\')
+        $buildLog = Join-Path $env:TEMP ("pgvector_nmake_" + [Guid]::NewGuid().ToString("N") + ".log")
         $batch = @(
             "@echo off"
             "setlocal"
+            "call :pgvector_build > `"$buildLog`" 2>&1"
+            "exit /b %ERRORLEVEL%"
+            ":pgvector_build"
             ('call "{0}" >nul' -f $vcvars)
-            ('set PGROOT={0}' -f $pgRoot.TrimEnd('\'))
+            ('set "PGROOT={0}"' -f $pgRootQ)
             ('cd /d "{0}"' -f $pgvectorSrc)
+            "if errorlevel 1 exit /b 1"
             "nmake /F Makefile.win clean"
+            "if errorlevel 1 exit /b 1"
             "nmake /F Makefile.win"
+            "if errorlevel 1 exit /b 1"
             "nmake /F Makefile.win install"
             "exit /b %ERRORLEVEL%"
         ) -join "`r`n"
         $tmpBat = Join-Path $env:TEMP ("pgvector_nmake_" + [Guid]::NewGuid().ToString("N") + ".cmd")
-        $buildLog = Join-Path $env:TEMP ("pgvector_nmake_" + [Guid]::NewGuid().ToString("N") + ".log")
         Set-Content -Path $tmpBat -Encoding ASCII -Value $batch
         Write-Host "正在编译安装 pgvector (约 1-3 分钟，请稍候)..." -ForegroundColor Cyan
-        # 必须重定向输出：Start-Process -Wait -NoNewWindow 在子进程大量输出时会因管道缓冲区满而永久卡住
+        Write-Host "源码目录: $pgvectorSrc" -ForegroundColor DarkGray
         $p = Start-Process -FilePath "cmd.exe" `
-            -ArgumentList @("/c", "`"$tmpBat`" > `"$buildLog`" 2>&1") `
-            -Wait -PassThru -NoNewWindow `
-            -WindowStyle Hidden
+            -ArgumentList @("/c", $tmpBat) `
+            -Wait -PassThru -NoNewWindow
         if (Test-Path -LiteralPath $buildLog) {
             Get-Content -LiteralPath $buildLog -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
         }
-        Remove-Item -Force -ErrorAction SilentlyContinue $tmpBat, $buildLog
-        if ($p.ExitCode -ne 0) { throw "pgvector 编译安装失败 (exit $($p.ExitCode))。" }
+        Remove-Item -Force -ErrorAction SilentlyContinue $tmpBat
+        if ($p.ExitCode -ne 0) {
+            if (Test-Path -LiteralPath $buildLog) {
+                Write-Warning "完整编译日志: $buildLog"
+            }
+            throw "pgvector 编译安装失败 (exit $($p.ExitCode))。"
+        }
+        Remove-Item -Force -ErrorAction SilentlyContinue $buildLog
         Write-Host "pgvector 编译安装完成。" -ForegroundColor Green
         $vectorCtl = Get-PgCommonVectorControlPath -PgRoot $pgRoot
     }
@@ -564,7 +746,7 @@ function Find-PgCommonPostgresPassword {
         $s = [string]$c
         if ($candidates -notcontains $s) { [void]$candidates.Add($s) }
     }
-    foreach ($c in @("postgres", "")) {
+    foreach ($c in @("postgres")) {
         if ($candidates -notcontains $c) { [void]$candidates.Add($c) }
     }
 
@@ -652,6 +834,7 @@ function Invoke-PgCommonConfigureLyNextLocal {
     }
 
     $pgAuthOk = $false
+    $existingPw = (Read-PgCommonLyNextDatabaseConfig -RepoRoot $repo).password
     $hit = Resolve-PgCommonPsqlExe
     if ($hit) {
         $port = Read-PgCommonPostgresPort -PgRoot $hit.Root -DefaultPort 5432
@@ -659,13 +842,27 @@ function Invoke-PgCommonConfigureLyNextLocal {
         [void](Start-PgCommonWindowsPostgresServices -RestartIfPortClosed -Port $port)
         if (-not (Wait-PgCommonTcpPort -HostName "127.0.0.1" -Port $port -TimeoutSeconds 30)) {
             Write-Warning "PostgreSQL 端口 $port 未监听；已在 config 中写入连接信息，请启动 postgresql-x64-* 后重新运行 -ConfigureOnly"
-            $patch.database.password = ""
+            if (-not [string]::IsNullOrEmpty($existingPw)) {
+                $patch.database.password = $existingPw
+            } else {
+                $patch.database.password = ""
+            }
         } else {
             $pgPw = Find-PgCommonPostgresPassword -Psql $hit.Path -PgRoot $hit.Root -RepoRoot $repo `
                 -Port $port -ExtraCandidates $PgPasswordCandidates -AllowPrompt:$AllowPasswordPrompt
             if ($null -ne $pgPw) {
                 $patch.database.password = $pgPw
                 $pgAuthOk = $true
+            } elseif (-not [string]::IsNullOrEmpty($existingPw)) {
+                $patch.database.password = $existingPw
+                $pgAuthOk = Test-PgCommonPostgresAuth -Psql $hit.Path -DbHost "127.0.0.1" -Port $port `
+                    -Username $patch.database.username -Password $existingPw
+                if (-not $pgAuthOk) {
+                    Write-Warning (
+                        "config.yaml 中的 database.password 无法连接 PostgreSQL；" +
+                        "请修正 data/ly_next/config.yaml 后重新运行 .\install.ps1 -ConfigureOnly"
+                    )
+                }
             } else {
                 $patch.database.password = ""
                 Write-Warning "未能识别 PostgreSQL 密码；请运行 .\install.ps1 -ConfigureOnly 并按提示输入"
