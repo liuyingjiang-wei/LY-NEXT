@@ -1,4 +1,4 @@
-# Quick Start — 三条上手路径
+# Quick Start — 五条上手路径
 
 每条路径控制在 **5 步以内**。完整说明见 [README](../README.md)。
 
@@ -92,6 +92,40 @@
 
 5. **验证**  
    重启 LY-NEXT 后查看启动日志 `[onebot11] NapCat connected`；工作台「连接诊断」全部通过。群聊需 **@ 本号** 才会回复（默认 `group_at_only`）。
+
+---
+
+## 路径 ④ Telegram 桥接（Bot + 配对码）
+
+适合：Telegram 私聊自动回复。
+
+1. **启动 LY-NEXT** 并配置 LLM（同路径 ①）。
+2. **安装插件** — 将 `telegram-bot` 放入 `plugins/local/telegram_bot`。
+3. **配置 Token** — 环境变量 `TELEGRAM_BOT_TOKEN` 或工作台「Telegram」页；`bridge.telegram.enabled: true`。
+4. **用户配对** — 用户向 Bot 发送 `/start` 获取配对码；管理员在工作台批准。
+5. **验证** — `GET /api/system/extensions` 中 `telegram-bot` 为 loaded；私聊收到 Agent 回复。
+
+---
+
+## 路径 ⑤ JMComic（搜索 / PDF + QQ `#车牌`）
+
+适合：群内 `#车牌123456` 下载漫画 PDF；或 Agent / HTTP 搜索下载。
+
+1. **安装依赖**
+
+   ```bash
+   uv pip install -r plugins/local/jmcomic_plugin/requirements.txt
+   ```
+
+2. **确认插件目录** — `plugins/local/jmcomic_plugin/` 存在；`plugins.enabled: true`。
+3. **（QQ `#车牌`）先完成路径 ③** — 需 `qq-onebot` 与 NapCat 已连接。
+4. **配置（可选）** — `data/ly_next/config.yaml` 中 `plugins.jmcomic.client.impl: api`；无代理时保持 `use_system_proxy: false`。
+5. **验证**
+   - HTTP：`curl -H "X-API-Key: …" "http://127.0.0.1:8000/api/jmcomic/search?q=test&page=1"`
+   - QQ：发送 `#车牌{数字相册ID}`（无需 @）
+   - 基础设施页应显示 `jmcomic`
+
+详见 [jmcomic_plugin/README.md](../plugins/local/jmcomic_plugin/README.md)。
 
 ---
 
