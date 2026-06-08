@@ -27,7 +27,7 @@
 
 | 路径 | 用途 |
 |------|------|
-| [`rules/`](./rules/README.md) | 仓库级规则块（`ly-next-project.mdc`、`response-safety.mdc`、`api-trust-and-tools.mdc`） |
+| [`rules/`](./rules/README.md) | 仓库级规则块（`ly-next-project.mdc`、**`workbench-frontend-constitution.mdc`**、`response-safety.mdc`、`api-trust-and-tools.mdc`） |
 | [`SECURITY.md`](./SECURITY.md) | 威胁模型、动态 API 加载策略、生产检查项与漏洞报告 |
 | [`MEMORY.md`](./MEMORY.md) | 长期记忆（提炼后的要点与经验） |
 | [`TOOLS.md`](./TOOLS.md) | 本机工具与常用操作（**勿**记录明文密钥） |
@@ -49,6 +49,7 @@
 
 ## 关键规则
 
+- **前端宪法（永久）**：改工作台 Web UI（`www/`）时，**必须**遵循 [`rules/workbench-frontend-constitution.mdc`](./rules/workbench-frontend-constitution.mdc)——遵守 React/Vite/所选 UI 组件库官方规范；**优先复用组件库**与仓库内 `components/ui`、`components/patterns`；**禁止**在 feature 内重复手写等价组件、禁止绕开框架最佳实践。组件库以 [`docs/workbench-refactor-spec.md`](./docs/workbench-refactor-spec.md) §3 为准。前端工程路径与构建命令**不得**写入 [`README.md`](./README.md)。
 - **配置优先**：运行参数来自 `data/ly_next/config.yaml`（或 `LY_NEXT_CONFIG_DIR`）；避免硬编码环境差异
 - **鉴权一致**：API Key 逻辑在 `ly_next/main.py` 中间件与 `/ly/login`；新接口勿绕开既有约定
 - **工具与 MCP**：对外形态以 `ly_next/tools/` 注册与 MCP 适配为准；新增工具需兼顾 LLM 与 MCP
@@ -61,7 +62,7 @@
 | 关注点 | 路径 |
 |--------|------|
 | 内置 HTTP 路由 | `ly_next/api/`（`ly_api.py`、`ws_api.py`、`runs_api.py`、`threads_api.py` 等） |
-| 工作台 Web UI | `www/`（`home.html` · `app.html` · `login.html` · `orbit/` 等） |
+| 工作台 Web UI | `www/`（`home.html` · `app.html` · `login.html` 等）；规则见 **`rules/workbench-frontend-constitution.mdc`** |
 | 会话持久化 | `ly_next/core/thread_persistence.py`（`sessions` / `messages`）；checkpoint：`checkpointer.py` |
 | 插件 API 目录 | `ly_next/apis/` · `DirectoryAPIPlugin` · 模块名 `ly_next_plugin_<stem>` → [apis/README.md](./ly_next/apis/README.md) |
 | 扩展插件 | `plugins/`（示例）· `plugins/local/`（本地安装）· `LyNextPlugin` · [plugins/README.md](./plugins/README.md) |
@@ -71,7 +72,7 @@
 | 上下文预算 | `core/context_budget.py` · `prune_protect_recent_turns` · 工具输出头尾摘要 |
 | 对话中间件 / Pipeline | `agent/chat_pipeline.py` · `chat_middleware.py` · `turn_plan.py` |
 | 对话运行时（WS） | `agent/chat_runtime.py` · `agent/turn_engine.py` |
-| 对话入口 | `ly_api.py`、`ws_api.py`；前端 `www/` + `.workbench-src/` |
+| 对话入口 | `ly_api.py`、`ws_api.py`；前端 `www/` |
 | 提示词 | `prompt_templates.py`（`data/ly_next/prompts/` 优先于 `prompt_builtin/`） |
 | Agent 图 | `agent/react/` · `plan.py` · `chat.py` |
 | 选择与依赖 | `factory.py`、`deps.py`、`llm_text.py`（流式 delta 解析） |

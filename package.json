@@ -10,6 +10,9 @@
     "preview:workbench": "vite preview --config .workbench-src/vite.config.js"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.2.5",
+    "antd": "^6.4.3",
+    "antd-mobile": "^5.42.3",
     "gsap": "^3.13.0",
     "motion": "^12.23.12",
     "ogl": "^1.0.11",
@@ -17,7 +20,10 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "^6.0.3",
     "vite": "^7.1.0"
   }
 }

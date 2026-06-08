@@ -35,12 +35,12 @@ def test_fast_chat_query_todo_and_greeting():
     assert not is_fast_chat_query("帮我搜索一下 OpenAI 最新模型")
 
 
-def test_resolve_effective_mode_downgrades_short_chat():
+def test_resolve_effective_mode_honors_explicit_react():
     req = ChatTurnRequest(
         client_messages=[{"role": "user", "content": "帮我整理本周待办"}],
         mode="react",
     )
-    assert resolve_effective_mode(req) == "chat"
+    assert resolve_effective_mode(req) == "react"
 
 
 def test_resolve_effective_mode_keeps_react_for_tool_intent():
@@ -58,5 +58,5 @@ def test_turn_plan_fast_path_flags():
     )
     plan = build_turn_plan(req)
     assert plan.fast_path is True
-    assert plan.effective_mode == "chat"
+    assert plan.effective_mode == "react"
     assert plan.skip_rag is True

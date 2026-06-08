@@ -21,6 +21,7 @@
 | 文件 | 何时打开 |
 |------|----------|
 | `ly-next-project.mdc` | 任何改动：目录入口、加路由/工具、质量命令、配置来源 |
+| **`workbench-frontend-constitution.mdc`** | **动工作台 Web UI（`www/`）：框架规范、组件库优先、禁止重复组件** |
 | `response-safety.mdc` | 删除数据、改鉴权、出站请求、执行命令、处理用户输入 |
 | `api-trust-and-tools.mdc` | 动 `ly_next/apis/`、工具、`http_fetch`、MCP、`api.security_profile` |
 

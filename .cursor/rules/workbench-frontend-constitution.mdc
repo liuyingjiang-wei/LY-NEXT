@@ -1,0 +1,56 @@
+---
+title: workbench-frontend-constitution
+description: Web 工作台前端 Agent 宪法 — 框架官方规范、组件库优先、禁止重复造轮子
+globs: .workbench-src/**/*
+alwaysApply: false
+---
+
+# Web 工作台前端宪法（永久遵循）
+
+> 适用范围：`.workbench-src/`（源码）、`www/`（构建产物，除紧急热修外应改源码后重建）。  
+> 组件库已锁定为 **Ant Design 6**（见 [`docs/workbench-refactor-spec.md`](../docs/workbench-refactor-spec.md) §3）；不得混用第二套 UI 库。
+
+## 宪法原则（不可违反）
+
+1. **遵守框架官方规范**  
+   React 18、Vite、所选 UI 组件库须按**官方文档推荐**组织代码：组件写法、Hooks 规则、懒加载、副作用清理、构建配置等。不得用「能跑就行」的旁路替代官方路径。
+
+2. **组件库优先**  
+   按钮、输入、选择、开关、表格、对话框、提示、布局等**必须先查组件库**是否已有；有则直接用或按官方方式封装（theme / ConfigProvider / slot），**禁止**在 feature 内再写一套视觉等价的手写组件。
+
+3. **禁止重复造轮子**  
+   同一交互模式（设置保存栏、表单字段、空状态、加载占位、数据表格）**只实现一次**，放入 `components/ui` 或 `components/patterns`，各 feature 复用。  
+   新增 UI 前必须：搜索仓库已有实现 → 查组件库 → 仍缺失才新增共享组件，并说明为何库内组件不适用。
+
+4. **禁止绕开最佳实践**  
+   不得：在 feature 内联 500 行样式替代 design token；复制粘贴 Panel 表单逻辑；`dangerouslySetInnerHTML` 替代正规组件；为省事绕过 React 数据流或 Vite 多入口约定；在 `www/` 手改打包 JS/CSS（应改 `.workbench-src` 后 `pnpm build:workbench`）。
+
+## 分层职责（与 refactor spec 一致）
+
+| 层级 | 允许 | 禁止 |
+|------|------|------|
+| `components/ui` | 对组件库薄封装、统一 props | 业务 API、settings 键名 |
+| `components/patterns` | 跨 feature 复用的组合块 | 单 Tab 专属逻辑 |
+| `features/*` | 业务 Panel、数据拉取、领域状态 | 重新定义 Button/Input/Table |
+| `app/` shell | 布局、Tab 路由、主题 | 内联业务表单 |
+
+## 实施检查（改前端必做）
+
+- [ ] 用的是组件库文档中的标准用法，而非自研替代品？
+- [ ] 是否存在可删除的重复组件/样式？能否合并到 `ui` / `patterns`？
+- [ ] 是否符合 React Hooks 与 Vite 官方建议（懒加载、chunk、别名）？
+- [ ] `pnpm build:workbench` 能否通过？
+
+违宪变更：**先说明理由并更新** `workbench-refactor-spec.md` §3，经确认后再破例；不得静默违反。
+
+## 受保护页面（禁止删除）
+
+- **`/firefly` 流萤展示页**及其源码目录 `pages/firefly/**` **永久保留**，不得删除、清空或合并进工作台 Tab。
+- `Fireflies`、`FireflyScrollReveal`、`firefly.css` 等装饰与叙事组件**仅允许**在流萤展示页使用；工作台主壳（`App.jsx`、各 Settings Panel）**不得**重新引入。
+- 根目录对 `pages/firefly/` 的 re-export 桩文件（如 `FireflyPage.jsx`）用于兼容旧引用，同样不得删除。
+
+## 文档边界
+
+- **[`README.md`](../README.md)** 面向仓库概览与用户上手：只写 `www/`、`/ly/` 等对外路径与能力说明。
+- **禁止**在 README 中出现前端工程内部目录、构建脚本名或其它 `.workbench-src` 相关内容。
+- 前端重构与工程细节写在 **`docs/workbench-refactor-spec.md`** 与本规则文件。

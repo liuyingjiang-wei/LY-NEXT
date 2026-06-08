@@ -496,6 +496,7 @@ def create_app() -> FastAPI:
         return response
 
     workbench_dir = get_project_root() / "www"
+    _html_no_cache = {"Cache-Control": "no-cache, must-revalidate"}
     if workbench_dir.is_dir():
         app.mount(
             "/ly/static",
@@ -508,14 +509,14 @@ def create_app() -> FastAPI:
             home = workbench_dir / "home.html"
             if not home.is_file():
                 return HTMLResponse(_LOGIN_BUILD_MISSING, status_code=503)
-            return HTMLResponse(home.read_text(encoding="utf-8"))
+            return HTMLResponse(home.read_text(encoding="utf-8"), headers=_html_no_cache)
 
         @app.get("/firefly", include_in_schema=False)
         async def site_firefly():
             firefly_html = workbench_dir / "firefly.html"
             if not firefly_html.is_file():
                 return HTMLResponse(_LOGIN_BUILD_MISSING, status_code=503)
-            return HTMLResponse(firefly_html.read_text(encoding="utf-8"))
+            return HTMLResponse(firefly_html.read_text(encoding="utf-8"), headers=_html_no_cache)
 
         @app.get("/ly", include_in_schema=False)
         @app.get("/ly/", include_in_schema=False)
@@ -525,7 +526,7 @@ def create_app() -> FastAPI:
                 app_html = workbench_dir / "index.html"
             if not app_html.is_file():
                 return HTMLResponse(_LOGIN_BUILD_MISSING, status_code=503)
-            return HTMLResponse(app_html.read_text(encoding="utf-8"))
+            return HTMLResponse(app_html.read_text(encoding="utf-8"), headers=_html_no_cache)
 
         @app.get("/ly/app", include_in_schema=False)
         @app.get("/ly/app/", include_in_schema=False)
@@ -542,7 +543,7 @@ def create_app() -> FastAPI:
             login_html = workbench_dir / "login.html"
             if not login_html.is_file():
                 return HTMLResponse(_LOGIN_BUILD_MISSING, status_code=503)
-            return HTMLResponse(login_html.read_text(encoding="utf-8"))
+            return HTMLResponse(login_html.read_text(encoding="utf-8"), headers=_html_no_cache)
 
         @app.post("/ly/login", include_in_schema=False)
         async def ly_login_submit(request: Request):

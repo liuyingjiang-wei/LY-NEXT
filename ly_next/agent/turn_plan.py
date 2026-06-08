@@ -22,7 +22,9 @@ def pipeline_cfg(key: str, default: Any) -> Any:
 def resolve_effective_mode(req: Any) -> str:
     """Downgrade react → chat for non-tool turns (single LLM pass, immediate streaming)."""
     requested = (getattr(req, "mode", None) or "").strip().lower()
-    if requested and requested not in ("react", ""):
+    if requested == "react":
+        return "react"
+    if requested and requested not in ("",):
         return requested
     mode = (requested or config.get("agent.reasoning_mode") or "react").strip().lower()
     if mode not in ("react", ""):

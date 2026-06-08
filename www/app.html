@@ -1,6 +1,8 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
+    <link rel="stylesheet" href="/ly/static/assets/app-BSTinWPK.css">
+  
     <meta charset="UTF-8" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,14 +20,308 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>LY-NEXT 工作台</title>
-    <script type="module" crossorigin src="/ly/static/assets/app-Fxk3rX8e.js"></script>
-    <link rel="modulepreload" crossorigin href="/ly/static/assets/modulepreload-polyfill-B5Qt9EMX.js">
-    <link rel="modulepreload" crossorigin href="/ly/static/assets/vendor-react-DcvSQIho.js">
-    <link rel="modulepreload" crossorigin href="/ly/static/assets/vendor-gsap-a3sj5zmn.js">
-    <link rel="modulepreload" crossorigin href="/ly/static/assets/motionPrefs-B-xs_S1I.js">
-    <link rel="modulepreload" crossorigin href="/ly/static/assets/themePreference-BboH2Eu_.js">
-    <link rel="stylesheet" crossorigin href="/ly/static/assets/app-GTFYFcMg.css">
-  </head>
+    <link rel="icon" href="/ly/static/favicon.png" type="image/png" />
+    <!-- 关键壳层样式：外链 CSS 缓存失效时仍保持桌面/移动基本布局 -->
+    <style id="wb-critical-shell">
+      :root {
+        --wb-bg-base: #f0f2f4;
+        --wb-main-panel: #ffffff;
+        --wb-main-surface: #f5f7f8;
+        --wb-sidebar-shell: #eceff2;
+        --wb-text-body: #0c1118;
+        --wb-text-muted: #6b7280;
+        --wb-text-secondary: #4b5563;
+        --wb-border: #e2e6eb;
+        --wb-accent: #2a9d8f;
+        --wb-sidebar-item-active: rgba(42, 157, 143, 0.12);
+      }
+      :root[data-theme="dark"] {
+        --wb-bg-base: #0c1118;
+        --wb-main-panel: #151b24;
+        --wb-main-surface: #121921;
+        --wb-sidebar-shell: #0f141c;
+        --wb-text-body: #e8eaed;
+        --wb-text-muted: #8b939e;
+        --wb-text-secondary: #a8b0bb;
+        --wb-border: #252b35;
+        --wb-accent: #4ecdc4;
+        --wb-sidebar-item-active: rgba(78, 205, 196, 0.16);
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--wb-bg-base);
+        color: var(--wb-text-body);
+        font-family: "IBM Plex Sans", "Noto Sans SC", system-ui, sans-serif;
+      }
+      .app {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 24px;
+        padding: 20px;
+        box-sizing: border-box;
+        min-height: 100vh;
+      }
+      @media (min-width: 981px) {
+        html:not(.wb-mobile-lite),
+        html:not(.wb-mobile-lite) body {
+          height: 100%;
+          overflow: hidden;
+        }
+        .app.app--desktop {
+          height: 100dvh;
+          max-height: 100dvh;
+          overflow: hidden;
+        }
+        .app.app--desktop .sidebar {
+          height: 100%;
+          max-height: 100%;
+        }
+        .app.app--desktop .main {
+          min-height: 0;
+          height: 100%;
+          overflow: hidden;
+        }
+        .app.app--desktop .main-tab-body {
+          overflow-y: auto;
+        }
+      }
+      .sidebar {
+        width: 220px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        background: var(--wb-sidebar-shell);
+        padding: 12px 10px 16px 12px;
+      }
+      .sidebar-shell {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        height: 100%;
+      }
+      .sidebar-nav-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      .sidebar-home-link {
+        flex-shrink: 0;
+        margin-top: 10px;
+        margin-bottom: 6px;
+      }
+      .wb-sidebar-nav,
+      .nav {
+        display: grid;
+        gap: 4px;
+        margin: 0;
+        padding: 0;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 10px 14px;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        cursor: pointer;
+        text-align: left;
+        font: inherit;
+        color: var(--wb-text-secondary);
+        position: relative;
+      }
+      .nav-item.active {
+        background: var(--wb-sidebar-item-active);
+        color: var(--wb-accent);
+      }
+      .nav-item.active::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 6px;
+        bottom: 6px;
+        width: 2px;
+        border-radius: 2px;
+        background: var(--wb-accent);
+      }
+      .nav-item__icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+      }
+      .wb-icon,
+      svg.wb-icon {
+        width: 18px;
+        height: 18px;
+        display: block;
+        flex-shrink: 0;
+      }
+      .main {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .main-shell {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        background: var(--wb-main-panel);
+        border: 1px solid var(--wb-border);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+      .main-toolbar-strip {
+        padding: 14px 22px;
+        border-bottom: 1px solid var(--wb-border);
+      }
+      .main-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .main-toolbar-start {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+      .main-tab-body {
+        flex: 1;
+        min-height: 0;
+        padding: 20px 24px 24px;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .wb-kpi-card {
+        background: var(--wb-main-surface);
+        border-radius: 10px;
+        padding: 14px 16px;
+      }
+      .kpi-card__label {
+        color: var(--wb-text-muted);
+        font-size: 12px;
+        font-weight: 500;
+      }
+      .kpi-card__value {
+        display: block;
+        margin-top: 8px;
+        font-size: 26px;
+        font-weight: 600;
+        color: var(--wb-text-body);
+      }
+      .wb-panel.panel {
+        background: var(--wb-main-panel);
+        border: 1px solid var(--wb-border);
+        border-radius: 10px;
+        padding: 1.25rem 1.35rem;
+        margin-bottom: 14px;
+      }
+      .panel h3 {
+        margin: 0 0 12px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--wb-text-body);
+      }
+      .resource-grid {
+        display: grid;
+        grid-template-columns: 220px 220px 1fr;
+        gap: 16px;
+        align-items: center;
+      }
+      .ring-wrap {
+        display: grid;
+        justify-items: center;
+        gap: 8px;
+      }
+      .ring {
+        width: 130px;
+        height: 130px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+      }
+      .ring-inner {
+        width: 96px;
+        height: 96px;
+        border-radius: 50%;
+        background: var(--wb-main-panel);
+        border: 1px solid var(--wb-border);
+        display: grid;
+        place-items: center;
+      }
+      .panel.two {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: var(--wb-main-surface);
+        border: 1px solid var(--wb-border);
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-size: 12px;
+        font-family: ui-monospace, monospace;
+        color: var(--wb-text-body);
+      }
+      @media (max-width: 980px) {
+        .kpi-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .resource-grid {
+          grid-template-columns: 1fr;
+        }
+        .panel.two {
+          grid-template-columns: 1fr;
+        }
+        html.wb-mobile-lite .app.app--mobile {
+          display: flex;
+          flex-direction: column;
+          gap: 0;
+          padding: 0;
+        }
+        html.wb-mobile-lite .sidebar {
+          display: none !important;
+        }
+        html.wb-mobile-lite .main-toolbar-strip {
+          display: none !important;
+        }
+      }
+      @media (min-width: 981px) {
+        .wb-mobile-navbar-wrap {
+          display: none !important;
+        }
+      }
+    </style>
+    <script type="module" crossorigin src="/ly/static/assets/app-Bpt-PlKb.js"></script>
+    <link rel="modulepreload" crossorigin href="/ly/static/assets/index-W3Dx3cKf.js">
+    <link rel="modulepreload" crossorigin href="/ly/static/assets/index-Bul3_nEP.js">
+    <link rel="modulepreload" crossorigin href="/ly/static/assets/zh_CN-C4OBNAGp.js">
+    <link rel="modulepreload" crossorigin href="/ly/static/assets/vendor-gsap-DzIQf867.js">
+    <link rel="modulepreload" crossorigin href="/ly/static/assets/motionPrefs-BIKmCRr6.js">
+    </head>
   <body>
     <div id="root"></div>
   </body>
