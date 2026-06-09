@@ -28,7 +28,8 @@ plugins:
 llm:
   default_provider: "openai"
   default_model: "openai"
-  request_timeout: 60
+  request_timeout: 120
+  agent_request_timeout: 300
   models:
     - name: openai
       format: openai

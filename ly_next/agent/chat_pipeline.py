@@ -219,7 +219,13 @@ def build_agent_deps(
         stop_event=stop_event,
     )
     try:
-        kw = ModelRegistry.build_client_kwargs(routed.name, model_override=routed.model)
+        from ly_next.models.timeout import llm_timeout_seconds
+
+        kw = ModelRegistry.build_client_kwargs(
+            routed.name,
+            model_override=routed.model,
+            timeout=llm_timeout_seconds(agent=True),
+        )
         deps.llm_client = LLMFactory.get_client(**kw)
         deps.provider = routed.name
         deps.model = routed.model

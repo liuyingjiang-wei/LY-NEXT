@@ -17,7 +17,8 @@ api:
 llm:
   default_provider: "openai"
   default_model: "openai"
-  request_timeout: 60
+  request_timeout: 120
+  agent_request_timeout: 300
   models:
     - name: openai
       format: openai
@@ -142,6 +143,7 @@ agent:
     max_retries: 2
     backoff_base_seconds: 0.8
     retry_status_codes: [429, 502, 503, 504]
+    retry_on_timeout: false
   persistence:
     enabled: true
     max_messages_per_thread: 200

@@ -117,7 +117,11 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                 },
             },
         },
-        "llm": {"default_provider": "openai", "request_timeout": 60},
+        "llm": {
+            "default_provider": "openai",
+            "request_timeout": 120,
+            "agent_request_timeout": 300,
+        },
         "openai_llm": {"model": "gpt-4o-mini", "api_key": "", "base_url": ""},
         "anthropic_llm": {"model": "claude-3-5-haiku-20241022", "api_key": "", "base_url": ""},
         "ollama_llm": {"model": "qwen2.5", "base_url": "http://localhost:11434"},

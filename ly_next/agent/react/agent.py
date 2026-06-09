@@ -10,8 +10,11 @@ from ly_next.agent.image_reply import finalize_agent_reply
 from ly_next.agent.react.graph import build_react_graph
 from ly_next.agent.react.helpers import (
     aborted,
+    format_agent_error,
     looks_tool_blind_response,
+    native_react_failure_message,
     react_loop_kind,
+    should_skip_native_legacy_fallback,
     tool_blind_fallback,
 )
 from ly_next.agent.react.loops import iter_compat_react, iter_native_react
@@ -121,7 +124,18 @@ class ReactAgent:
                     yield pending_final
                 return
             except Exception as e:
-                logger.warning("[agent] native ReAct failed, legacy graph: %s", e)
+                summary = format_agent_error(e)
+                if should_skip_native_legacy_fallback(e):
+                    logger.warning(
+                        "[agent] native ReAct failed (%s); skip legacy fallback",
+                        summary,
+                    )
+                    yield {
+                        "type": "final",
+                        "content": native_react_failure_message(e),
+                    }
+                    return
+                logger.warning("[agent] native ReAct failed, legacy graph: %s", summary)
                 kind = "legacy"
                 set_run_loop_kind(kind)
 

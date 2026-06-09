@@ -46,6 +46,10 @@ def _error_recovery_cfg() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _retry_on_timeout(rec: dict[str, Any]) -> bool:
+    return bool(rec.get("retry_on_timeout", False))
+
+
 def _retry_status_codes(rec: dict[str, Any]) -> set[int]:
     raw = rec.get("retry_status_codes") or rec.get("retry_on_status") or [429, 502, 503, 504]
     if not isinstance(raw, list):
@@ -311,7 +315,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                 record_llm_usage_from_chat_response(data)
                 return data
             except httpx.TimeoutException as e:
-                if enabled and attempt < retries:
+                if enabled and _retry_on_timeout(rec) and attempt < retries:
                     log_ctx.retry_timeout(attempt, retries, e)
                     await _recovery_sleep(attempt, base_delay)
                     continue
@@ -520,7 +524,7 @@ def openai_compat_from_provider_block(cfg: dict[str, Any]) -> OpenAICompatibleLL
     base_url = str(c.get("base_url") or c.get("baseUrl") or "https://api.openai.com/v1")
     timeout = c.get("timeout")
     if timeout is None:
-        timeout = config.get("llm.request_timeout", 60)
+        timeout = config.get("llm.request_timeout", 120)
     auth_mode = c.get("auth_mode") or c.get("authMode")
     auth_header_name = c.get("auth_header_name") or c.get("authHeaderName")
     headers = c.get("headers") if isinstance(c.get("headers"), dict) else None

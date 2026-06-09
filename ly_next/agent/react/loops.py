@@ -387,7 +387,12 @@ async def iter_native_react(
             dialog.append(assistant_turn_from_response(raw_msg))
 
         except Exception as e:
-            logger.warning("[agent.native] chat_with_tools failed: %s", e)
+            from ly_next.agent.react.helpers import format_agent_error
+
+            logger.warning(
+                "[agent.native] chat_with_tools failed: %s",
+                format_agent_error(e),
+            )
             raise
 
         names = [tc["name"] for tc in tool_calls]
