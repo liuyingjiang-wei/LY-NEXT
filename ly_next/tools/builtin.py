@@ -76,5 +76,5 @@ def register_builtin_tools(registry: ToolRegistry) -> int:
             n += 1
         except Exception as e:
             logger.warning("Failed to register built-in tool %s: %s", name, e)
-    n += register_host_tools(registry)
+    register_host_tools(registry)
     return n

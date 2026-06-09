@@ -60,7 +60,8 @@ async def list_models():
         "formats": sorted(MODEL_FORMATS),
         "default_model": default,
         "active_provider": default,
-        "request_timeout": int(config.get("llm.request_timeout", 60) or 60),
+        "request_timeout": int(config.get("llm.request_timeout", 120) or 120),
+        "agent_request_timeout": int(config.get("llm.agent_request_timeout", 300) or 300),
     }
 
 

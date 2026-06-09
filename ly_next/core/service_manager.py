@@ -533,7 +533,7 @@ PostgreSQL Installation Guide (Linux/macOS):
             try:
                 await cl.ping()
             finally:
-                await cl.close()
+                await cl.aclose()
 
         try:
             await _ping(password)
@@ -716,7 +716,7 @@ PostgreSQL Installation Guide (Linux/macOS):
 
                     client = redis.Redis(host=host, port=port, decode_responses=True)
                     await client.ping()
-                    await client.close()
+                    await client.aclose()
                     self._redis_server_proc = process
                     logger.success(f"Redis started successfully on {host}:{port}")
                     return True
