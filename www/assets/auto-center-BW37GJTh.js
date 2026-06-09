@@ -1,1 +1,0 @@
-import{R as t}from"./index-w86uI7oV.js";import{w as c}from"./app-BfiSP6Tj.js";const a="adm-auto-center",o=e=>c(e,t.createElement("div",{className:a},t.createElement("div",{className:`${a}-content`},e.children)));export{o as A};
