@@ -28,6 +28,7 @@ env/
 # --- 工具与 IDE ---
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 .ruff_cache/
