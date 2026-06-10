@@ -103,6 +103,24 @@ def test_load_directory_plugin_from_extra_dir(tmp_path: Path):
     assert any(p.name == "hello-from-extra" for p in reg.list_plugins())
 
 
+def test_plugin_extra_dirs_accepts_string(tmp_path: Path):
+    from ly_next.core.plugin.loader import _plugin_extra_dirs
+
+    local_dir = tmp_path / "plugins" / "local"
+    local_dir.mkdir(parents=True)
+    with patch("ly_next.core.plugin.loader.config.get") as mock_get:
+        mock_get.side_effect = lambda key, default=None: (
+            str(local_dir) if key == "plugins.extra_dirs" else default
+        )
+        with (
+            patch("ly_next.core.plugin.loader.get_project_root", return_value=tmp_path),
+            patch("ly_next.core.plugin.loader._plugin_dir", return_value=tmp_path / "plugins"),
+        ):
+            dirs = _plugin_extra_dirs()
+    assert len(dirs) == 1
+    assert dirs[0].resolve() == local_dir.resolve()
+
+
 def test_production_profile_skips_directory_plugins(tmp_path: Path):
     (tmp_path / "x.py").write_text("plugin = None\n", encoding="utf-8")
     ctx = AppContext.create()

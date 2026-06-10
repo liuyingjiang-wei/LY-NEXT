@@ -372,9 +372,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with suppress(Exception):
         await shutdown_checkpointer()
 
-    for svc in [db.disconnect(), cache.disconnect()]:
-        with suppress(Exception):
-            await svc
+    with suppress(Exception):
+        await db.disconnect()
+    with suppress(Exception):
+        await cache.disconnect()
 
     await get_service_manager().shutdown_managed_services()
 

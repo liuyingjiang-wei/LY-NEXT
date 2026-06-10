@@ -48,6 +48,9 @@ def _plugin_extra_dirs() -> list[Path]:
     raw = config.get("plugins.extra_dirs")
     if raw is None:
         raw = ["plugins/local"]
+    elif isinstance(raw, str):
+        text = raw.strip()
+        raw = [text] if text else []
     if not isinstance(raw, list):
         return []
     root = get_project_root()
@@ -169,6 +172,8 @@ def _discover_module_paths(plugin_dir: Path) -> list[Path]:
 
     modules: list[Path] = []
     for item in plugin_dir.iterdir():
+        if item.name.startswith("."):
+            continue
         if item.is_file() and item.suffix == ".py" and not item.name.startswith("_"):
             modules.append(item)
         elif item.is_dir() and (item / "__init__.py").is_file():

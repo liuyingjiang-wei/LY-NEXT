@@ -476,6 +476,8 @@ class Config:
         plugins = self._config.get("plugins")
         if not isinstance(plugins, dict):
             return
+        if plugins.get("directory_scan_auto_migrated"):
+            return
         profile = str(plugins.get("security_profile") or "").strip().lower()
         modules = plugins.get("modules") or []
         if profile != "production" or (isinstance(modules, list) and modules):
@@ -483,6 +485,7 @@ class Config:
         if not self._plugins_local_has_candidates():
             return
         plugins["security_profile"] = "development"
+        plugins["directory_scan_auto_migrated"] = True
         self._config["plugins"] = plugins
         try:
             from ly_next.core.logger import get_logger

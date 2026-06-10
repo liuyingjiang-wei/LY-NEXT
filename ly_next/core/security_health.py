@@ -43,15 +43,7 @@ def gather_security_health() -> dict[str, Any]:
     api_profile = (
         str(config.get("api.security_profile", "development") or "development").strip().lower()
     )
-    plugin_profile = (
-        str(
-            config.get("plugins.security_profile")
-            or config.get("api.security_profile", "development")
-            or "development"
-        )
-        .strip()
-        .lower()
-    )
+    plugin_profile = str(config.get("plugins.security_profile") or "development").strip().lower()
     tools_profile = (
         str(config.get("tools.security_profile") or plugin_profile or "development").strip().lower()
     )

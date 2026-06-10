@@ -89,6 +89,9 @@ python_files = ["test_*.py"]
 python_functions = ["test_*"]
 # Disable cache when .pytest_cache is not writable. Temp dirs use system %TEMP% (Windows-safe).
 addopts = "-p no:cacheprovider"
+filterwarnings = [
+    "ignore:coroutine 'Connection._cancel' was never awaited:RuntimeWarning",
+]
 
 [tool.mypy]
 python_version = "3.10"
