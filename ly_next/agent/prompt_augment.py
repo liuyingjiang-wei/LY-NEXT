@@ -161,6 +161,13 @@ def merge_system_context(
     return out
 
 
+def _rag_injection_enabled(*, skip_rag: bool) -> bool:
+    if skip_rag or not bool(config.get("agent.rag.enabled", False)):
+        return False
+    mode = str(config.get("agent.rag.mode", "both") or "both").strip().lower()
+    return mode != "tool"
+
+
 async def augment_messages_async(
     messages: list[dict[str, Any]],
     *,
@@ -195,7 +202,7 @@ async def augment_messages_async(
     if not query:
         return messages
 
-    rag_on = bool(config.get("agent.rag.enabled", False)) and not skip_rag
+    rag_on = _rag_injection_enabled(skip_rag=skip_rag)
     ctx_on = bool(config.get("agent.context.enabled", True)) and not skip_context
     if should_skip_retrieval_augment(query):
         rag_on = False

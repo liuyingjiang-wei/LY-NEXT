@@ -241,10 +241,18 @@ def build_agent_deps(
     if mode_key != "chat":
         deps.tool_registry = get_tool_registry()
         ch = channel or prepared.turn_meta.get("channel")
+        from ly_next.agent.channel_tools import normalize_channel
+
+        ch = normalize_channel(ch)
         apply_channel_tool_policy(deps, ch)
+        deps.channel = ch
     else:
         deps.tool_registry = None
     deps.thread_id = prepared.thread_id
+    if prepared.plan and prepared.plan.query:
+        deps.tool_router_query = prepared.plan.query
+    else:
+        deps.tool_router_query = last_user_query(prepared.messages) or None
     if tool_call_mode is not None:
         deps.tool_call_mode = str(tool_call_mode).strip().lower() or deps.tool_call_mode
     if begin_run:

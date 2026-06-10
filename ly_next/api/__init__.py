@@ -1,5 +1,7 @@
 from fastapi import APIRouter
 
+from ly_next.api.auth_api import router as auth_router
+from ly_next.api.chat_stream_api import router as chat_stream_router
 from ly_next.api.image_api import router as image_router
 from ly_next.api.ly_api import router as ly_router
 from ly_next.api.models_api import router as models_router
@@ -10,7 +12,9 @@ from ly_next.api.ws_api import public_router as ws_public_router
 from ly_next.api.ws_api import router as ws_router
 
 api_router = APIRouter(prefix="/api")
+api_router.include_router(auth_router)
 api_router.include_router(ly_router)
+api_router.include_router(chat_stream_router)
 api_router.include_router(models_router)
 api_router.include_router(image_router)
 api_router.include_router(runs_router)

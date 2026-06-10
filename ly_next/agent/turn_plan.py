@@ -79,6 +79,8 @@ def build_turn_plan(req: Any, messages: list[dict[str, Any]] | None = None) -> T
     fast_path = bool(query and is_fast_chat_query(query) and not tool_intent)
 
     skip_rag, skip_context = resolve_augment_skips(req)
+    if effective == "react" and bool(pipeline_cfg("skip_rag_on_react", True)):
+        skip_rag = True
     if fast_path:
         skip_rag, skip_context = True, True
 
@@ -94,6 +96,16 @@ def build_turn_plan(req: Any, messages: list[dict[str, Any]] | None = None) -> T
         pipeline_cfg("skip_augment_on_fast_path", True)
     ):
         skip_augment = True
+
+    if (
+        tool_intent
+        and requested == "react"
+        and bool(pipeline_cfg("skip_augment_on_tool_intent", True))
+    ):
+        skip_augment = True
+        skip_rag, skip_context = True, True
+        if bool(pipeline_cfg("skip_memory_on_tool_intent", True)):
+            skip_memory = True
 
     return TurnPlan(
         effective_mode=effective,

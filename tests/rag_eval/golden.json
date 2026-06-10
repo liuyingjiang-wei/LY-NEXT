@@ -1,0 +1,32 @@
+[
+  {
+    "id": "architecture",
+    "query": "LY-NEXT 的 Agent 模式有哪些？",
+    "expected_sources": ["README.md"],
+    "must_contain": ["ReAct", "Coordinator"]
+  },
+  {
+    "id": "rag-config",
+    "query": "如何配置 RAG 知识库路径？",
+    "expected_sources": [],
+    "must_contain": ["documents_path"]
+  },
+  {
+    "id": "mcp-tools",
+    "query": "如何挂载远程 MCP 工具？",
+    "expected_sources": ["README.md", "TECHNICAL.md"],
+    "must_contain": ["MCP"]
+  },
+  {
+    "id": "postgres",
+    "query": "PostgreSQL pgvector 在项目中做什么用？",
+    "expected_sources": ["README.md"],
+    "must_contain": ["pgvector"]
+  },
+  {
+    "id": "tool-policy",
+    "query": "agent tool_policy max_tier 有什么作用？",
+    "expected_sources": ["SECURITY.md"],
+    "must_contain": ["tier"]
+  }
+]

@@ -8,18 +8,21 @@ from ly_next.tools.builtins_core import (
     text_process,
     url_parse,
 )
-from ly_next.tools.http_fetch import http_fetch
-from ly_next.tools.image_gen import generate_image
-from ly_next.tools.image_search import search_images
-from ly_next.tools.memory_note import remember_fact
-from ly_next.tools.host_register import register_host_tools
-from ly_next.tools.registry import ToolRegistry
-from ly_next.tools.skills_tools import list_skills, read_skill
 from ly_next.tools.document_tools import (
     generate_docx_tool,
     generate_pptx_tool,
     generate_xlsx_tool,
 )
+from ly_next.tools.host_register import register_host_tools
+from ly_next.tools.http_fetch import http_fetch
+from ly_next.tools.image_gen import generate_image
+from ly_next.tools.image_search import search_images
+from ly_next.tools.json_tools import json_query
+from ly_next.tools.knowledge_tools import knowledge_search
+from ly_next.tools.memory_note import remember_fact
+from ly_next.tools.meta_tools import describe_tool, list_tools
+from ly_next.tools.registry import ToolRegistry
+from ly_next.tools.skills_tools import list_skills, read_skill
 from ly_next.tools.web_fetch import web_fetch_tool
 from ly_next.tools.web_search import web_scrape_tool, web_search_tool
 
@@ -27,7 +30,10 @@ logger = get_logger(__name__)
 
 BUILTIN_TOOLS_BY_NAME: dict[str, object] = {
     "calculator": calculator,
+    "describe_tool": describe_tool,
     "format_json": format_json,
+    "json_query": json_query,
+    "list_tools": list_tools,
     "text_process": text_process,
     "regex_extract": regex_extract,
     "get_current_time": get_current_time,
@@ -35,6 +41,7 @@ BUILTIN_TOOLS_BY_NAME: dict[str, object] = {
     "http_fetch": http_fetch,
     "web_fetch": web_fetch_tool,
     "remember_fact": remember_fact,
+    "knowledge_search": knowledge_search,
     "web_search": web_search_tool,
     "web_scrape": web_scrape_tool,
     "generate_docx": generate_docx_tool,

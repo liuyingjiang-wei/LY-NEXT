@@ -19,7 +19,11 @@ def checkpoint_enabled() -> bool:
 
 
 def checkpoint_active() -> bool:
-    return checkpoint_enabled() and _checkpointer is not None
+    return (
+        checkpoint_enabled()
+        and _checkpointer is not None
+        and checkpoint_writes_during_run()
+    )
 
 
 async def init_checkpointer() -> None:
@@ -67,14 +71,22 @@ async def shutdown_checkpointer() -> None:
     _checkpointer = None
 
 
-def compile_graph(graph: Any) -> Any:
-    if _checkpointer is not None:
+def checkpoint_writes_during_run() -> bool:
+    mode = str(config.get("agent.persistence.checkpoint.write_every", "final_only")).strip().lower()
+    if mode in ("disabled", "false", "off", "none"):
+        return False
+    return mode in ("iteration", "step", "every")
+
+
+def compile_graph(graph: Any, *, checkpoint: bool | None = None) -> Any:
+    use_cp = checkpoint_writes_during_run() if checkpoint is None else checkpoint
+    if use_cp and _checkpointer is not None:
         return graph.compile(checkpointer=_checkpointer)
     return graph.compile()
 
 
 def graph_astream(app: Any, init: Any, thread_id: str | None) -> AsyncIterator[Any]:
-    if thread_id and checkpoint_active():
+    if thread_id and checkpoint_active() and checkpoint_writes_during_run():
         return app.astream(
             init,
             config={"configurable": {"thread_id": str(thread_id)}},

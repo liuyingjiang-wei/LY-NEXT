@@ -12,6 +12,7 @@ from ly_next.tools.web_shared import (
     DEFAULT_SEARCH_COUNT,
     WebCache,
     clamp_count,
+    format_web_search_text,
     normalize_cache_key,
     normalize_search_hit,
     truncate_text,
@@ -211,15 +212,18 @@ async def web_search(query: str, count: int | None = None, num_results: int | No
     try:
         n = count if count is not None else num_results
         provider, results = await run_web_search(query, n)
-        return ToolResult(
-            success=True,
-            result={
-                "query": query,
-                "provider": provider,
-                "results": results,
-                "count": len(results),
-            },
+        payload = {
+            "query": query,
+            "provider": provider,
+            "results": results,
+            "count": len(results),
+        }
+        payload["text"] = format_web_search_text(
+            query=str(query or ""),
+            provider=provider,
+            results=results,
         )
+        return ToolResult(success=True, result=payload)
     except ImportError as e:
         return ToolResult(success=False, error=str(e))
     except httpx.HTTPStatusError as e:
@@ -232,12 +236,28 @@ async def web_search(query: str, count: int | None = None, num_results: int | No
 
 
 async def web_scrape(url: str, query: str = "") -> ToolResult:
+    from ly_next.tools.http_fetch import _url_allowed
+
+    ok, err = _url_allowed(url)
+    if not ok:
+        return ToolResult(success=False, error=err)
+
     try:
         from selectolax.parser import HTMLParser
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=30,
+            follow_redirects=True,
+            max_redirects=8,
+            trust_env=False,
+        ) as client:
             response = await client.get(url)
             response.raise_for_status()
+
+        final = str(response.url)
+        ok2, err2 = _url_allowed(final)
+        if not ok2:
+            return ToolResult(success=False, error=f"redirect blocked: {err2}")
 
         parser = HTMLParser(response.text)
         content = parser.text()
@@ -269,8 +289,9 @@ async def web_scrape(url: str, query: str = "") -> ToolResult:
 web_search_tool = tool(
     name="web_search",
     description=(
-        "Search the live web for current facts, news, prices, or docs. "
-        "Returns title, url, snippet per hit. Follow up with web_fetch on 1–3 best URLs."
+        "Search the live web for current facts, news, or prices. "
+        "Not for local project docs (use knowledge_search). "
+        "Follow with web_fetch on 1–3 result URLs."
     ),
     category="network",
     parameters=WEB_SEARCH_SCHEMA,
@@ -278,7 +299,10 @@ web_search_tool = tool(
 
 web_scrape_tool = tool(
     name="web_scrape",
-    description="Legacy HTML fetch; prefer web_fetch for readable article text.",
+    description=(
+        "Legacy HTML fetch; prefer web_fetch for readable article text. "
+        "Private IPs, loopback, and cloud metadata hosts are blocked."
+    ),
     category="network",
     parameters={
         "type": "object",

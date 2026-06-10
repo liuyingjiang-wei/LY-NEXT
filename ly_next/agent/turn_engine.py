@@ -98,12 +98,30 @@ async def iter_agent_turn(
     *,
     mode: str,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Dispatch to ChatAgent / ReactAgent / PlanAgent stream."""
     from ly_next.agent.factory import AgentFactory
+    from ly_next.agent.content_trust import reset_content_trust, seed_untrusted_from_channel
+    from ly_next.agent.tool_context import reset_tool_run_deps, set_tool_run_deps
 
-    agent = AgentFactory.create_agent(mode=mode, deps=deps)
-    async for event in agent.run_stream(messages):
-        yield event
+    token = set_tool_run_deps(deps)
+    reset_content_trust()
+    seed_untrusted_from_channel(getattr(deps, "channel", None))
+    try:
+        if deps.tool_registry and getattr(deps, "tool_router_query", None):
+            from ly_next.agent.tool_router import semantic_select_enabled
+            from ly_next.agent.tool_router_index import prepare_tool_router_context
+
+            if semantic_select_enabled():
+                pool = list(deps.tool_registry.list_tools())
+                await prepare_tool_router_context(deps, pool)
+                deps._filtered_tools_cache = None
+                deps._openai_tools_cache = None
+
+        agent = AgentFactory.create_agent(mode=mode, deps=deps)
+        async for event in agent.run_stream(messages):
+            yield event
+    finally:
+        reset_content_trust()
+        reset_tool_run_deps(token)
 
 
 async def collect_turn_text(events: AsyncIterator[dict[str, Any]]) -> str:

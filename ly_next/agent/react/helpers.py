@@ -315,12 +315,19 @@ def native_react_failure_message(exc: BaseException) -> str:
     return f"Agent 调用失败：{summary}"
 
 
+def react_engine() -> str:
+    return str(config.get("agent.react_engine", "native")).strip().lower()
+
+
 def react_loop_kind(deps: AgentDeps) -> str:
     if deps._custom_llm_call or not deps.use_tools:
         return "legacy"
+    engine = react_engine()
     mode = (deps.tool_call_mode or "auto").strip().lower()
     if mode == "compat" or auto_use_compat_first_for_mcp(deps):
         return "compat"
+    if engine == "langgraph_native" and mode in ("auto", "native") and deps.native_tool_calls:
+        return "langgraph_native"
     if mode in ("auto", "native") and deps.native_tool_calls:
         return "native"
     return "legacy"

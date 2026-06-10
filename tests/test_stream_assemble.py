@@ -1,36 +1,38 @@
+"""Tests for eager tool dispatch helpers."""
+
 from __future__ import annotations
 
 from ly_next.models.stream_assemble import (
-    accumulate_tool_call_delta,
-    build_chat_completion_from_stream,
+    is_tool_call_sealed,
+    parse_sealed_tool_call,
+    try_parse_tool_arguments,
 )
 
 
-def test_accumulate_tool_call_delta_merges_chunks():
-    acc: dict[int, dict] = {}
-    accumulate_tool_call_delta(
-        acc,
-        {"index": 0, "id": "call_1", "function": {"name": "web", "arguments": ""}},
-    )
-    accumulate_tool_call_delta(acc, {"index": 0, "function": {"arguments": '{"q":'}})
-    accumulate_tool_call_delta(acc, {"index": 0, "function": {"arguments": '"x"}'}})
-    assert acc[0]["id"] == "call_1"
-    assert acc[0]["function"]["name"] == "web"
-    assert acc[0]["function"]["arguments"] == '{"q":"x"}'
+def test_try_parse_tool_arguments_incomplete():
+    assert try_parse_tool_arguments('{"q": "hel') is None
 
 
-def test_build_chat_completion_from_stream_with_tools():
-    acc: dict[int, dict] = {}
-    accumulate_tool_call_delta(
-        acc,
-        {"index": 0, "id": "c1", "function": {"name": "calc", "arguments": "{}"}},
-    )
-    out = build_chat_completion_from_stream(
-        content="",
-        tool_calls=acc,
-        finish_reason="tool_calls",
-        usage={"total_tokens": 10},
-    )
-    msg = out["choices"][0]["message"]
-    assert msg["tool_calls"][0]["function"]["name"] == "calc"
-    assert out["usage"]["total_tokens"] == 10
+def test_try_parse_tool_arguments_complete():
+    assert try_parse_tool_arguments('{"q": "hello"}') == {"q": "hello"}
+
+
+def test_is_tool_call_sealed():
+    sealed = {
+        "id": "call_1",
+        "function": {"name": "web_search", "arguments": '{"query":"test"}'},
+    }
+    partial = {
+        "id": "call_1",
+        "function": {"name": "web_search", "arguments": '{"query":'},
+    }
+    assert is_tool_call_sealed(sealed) is True
+    assert is_tool_call_sealed(partial) is False
+
+
+def test_parse_sealed_tool_call():
+    tc = {
+        "id": "call_abc",
+        "function": {"name": "read_file", "arguments": '{"path":"a.txt"}'},
+    }
+    assert parse_sealed_tool_call(tc) == ("read_file", {"path": "a.txt"}, "call_abc")

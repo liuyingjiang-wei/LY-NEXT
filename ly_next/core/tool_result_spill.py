@@ -18,6 +18,14 @@ def _tool_spill_cfg() -> dict[str, Any]:
 def coerce_tool_payload_text(result: Any) -> str:
     if isinstance(result, str):
         return result
+    if isinstance(result, dict):
+        inner = result.get("result")
+        if isinstance(inner, dict):
+            text = inner.get("text")
+            if isinstance(text, str) and text.strip():
+                return text
+        if isinstance(inner, str) and inner.strip():
+            return inner
     try:
         return json.dumps(result, ensure_ascii=False)
     except TypeError:

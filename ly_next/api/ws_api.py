@@ -16,7 +16,6 @@ from ly_next.agent.chat_runtime import (
 )
 from ly_next.agent.image_reply import ensure_mixed_reply
 from ly_next.api.websocket import get_task_broadcaster, get_ws_manager
-from ly_next.core.auth_http import extract_api_key_from_websocket
 from ly_next.core.chat_trace_log import chat_error as chat_trace_error
 from ly_next.core.chat_trace_log import chat_info as chat_trace_info
 from ly_next.core.chat_trace_log import chat_warn as chat_trace_warn
@@ -91,19 +90,9 @@ async def _send_chat_json(websocket: WebSocket, payload: dict[str, Any]) -> bool
 async def _ws_auth_ok(websocket: WebSocket) -> bool:
     if not config.get("auth.enabled", True):
         return True
-    key = config.get("auth.api_key", "")
-    if not key:
-        return True
-    header_name = config.get("auth.header_name", "X-API-Key")
-    cookie_name = config.get("auth.cookie_name", "ly_api_key")
-    allow_query = bool(config.get("auth.allow_api_key_in_query", False))
-    provided = extract_api_key_from_websocket(
-        websocket,
-        header_name=header_name,
-        cookie_name=cookie_name,
-        allow_query=allow_query,
-    )
-    if provided == key:
+    from ly_next.core.auth_gate import authenticate_websocket
+
+    if authenticate_websocket(websocket):
         return True
     if websocket.client_state != WebSocketState.CONNECTED:
         await websocket.accept()

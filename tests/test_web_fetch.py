@@ -4,6 +4,8 @@ import pytest
 
 from ly_next.tools.web_fetch import WEB_FETCH_PROVIDERS, _dispatch, _settings, _truncate, web_fetch
 from ly_next.tools.web_fetch_local import extract_html, looks_like_html
+from ly_next.tools.web_shared import format_web_fetch_text
+from ly_next.core.tool_result_spill import coerce_tool_payload_text
 
 
 def test_truncate():
@@ -55,3 +57,30 @@ def test_provider_list():
     assert "trafilatura" in WEB_FETCH_PROVIDERS
     assert "local" in WEB_FETCH_PROVIDERS
     assert "jina" in WEB_FETCH_PROVIDERS
+
+
+def test_format_web_fetch_text():
+    text = format_web_fetch_text(
+        url="https://example.com/a",
+        final_url="https://example.com/b",
+        provider="jina",
+        content="Hello world",
+        truncated=False,
+        fmt="markdown",
+        length=11,
+    )
+    assert "网页正文" in text
+    assert "实际 URL：https://example.com/b" in text
+    assert "引擎 jina" in text
+    assert "Hello world" in text
+
+
+def test_coerce_tool_payload_prefers_fetch_text():
+    payload = {
+        "success": True,
+        "result": {
+            "url": "https://example.com",
+            "text": "网页正文\n请求 URL: https://example.com",
+        },
+    }
+    assert coerce_tool_payload_text(payload).startswith("网页正文")

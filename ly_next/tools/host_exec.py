@@ -67,6 +67,12 @@ async def host_run_command(
     if not workdir.is_dir():
         return ToolResult(success=False, error=f"cwd is not a directory: {workdir}")
 
+    from ly_next.tools.host_exec_guard import command_hard_blocked, minimal_exec_env
+
+    blocked = command_hard_blocked(cmd_text)
+    if blocked:
+        return ToolResult(success=False, error=blocked)
+
     gate = check_approval_gate(
         tool="host_run_command",
         action="exec",
@@ -92,12 +98,13 @@ async def host_run_command(
         return ToolResult(success=False, error=str(exc))
 
     def _run_sync() -> subprocess.CompletedProcess[bytes]:
+        env = minimal_exec_env()
         return subprocess.run(
             argv,
             cwd=str(workdir),
             capture_output=True,
             timeout=timeout,
-            env=os.environ.copy(),
+            env=env if env is not None else os.environ.copy(),
             check=False,
         )
 

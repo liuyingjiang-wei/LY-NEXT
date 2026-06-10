@@ -77,6 +77,19 @@ class ToolRegistry:
         return list(self._by_category.keys())
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        from ly_next.agent.content_trust import (
+            maybe_mark_tool_output_untrusted,
+            tool_blocked_by_policy,
+        )
+
+        blocked = tool_blocked_by_policy(name, arguments)
+        if blocked:
+            out = {"success": False, "error": blocked, "policy_blocked": True}
+            from ly_next.core.audit_log import audit_tool_call
+
+            audit_tool_call(name, arguments, out)
+            return out
+
         tool = self.get(name)
         if not tool:
             return {"success": False, "error": f"Tool not found: {name}"}
@@ -86,13 +99,25 @@ class ToolRegistry:
             result = await tool.execute(**arguments)
 
             if isinstance(result, ToolResult):
-                return result.to_dict()
+                out = result.to_dict()
+            else:
+                out = {"success": True, "result": result}
 
-            return {"success": True, "result": result}
+            if out.get("success") is not False:
+                maybe_mark_tool_output_untrusted(name)
+
+            from ly_next.core.audit_log import audit_tool_call
+
+            audit_tool_call(name, arguments, out)
+            return out
 
         except Exception as e:
             logger.error(f"[registry] Tool {name} failed: {e}")
-            return {"success": False, "error": str(e)}
+            out = {"success": False, "error": str(e)}
+            from ly_next.core.audit_log import audit_tool_call
+
+            audit_tool_call(name, arguments, out)
+            return out
 
     def get_tools_for_llm(self, category: str | None = None) -> list[dict[str, Any]]:
         tools = self._tools.values() if not category else self.get_by_category(category)

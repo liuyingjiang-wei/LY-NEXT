@@ -18,12 +18,16 @@ def test_register_tools_from_directory(tmp_path: Path):
     src = Path(__file__).resolve().parent / "fixtures" / "sample_tool_plugin.py"
     tool_file.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
+    from ly_next.core.config import config as app_config
+
+    def _get(key, default=None):
+        if key == "tools.security_profile":
+            return "development"
+        return app_config.get(key, default)
+
     registry = ToolRegistry()
     with (
-        patch(
-            "ly_next.tools.loader.plugin_security_profile",
-            return_value="development",
-        ),
+        patch("ly_next.tools.loader.config.get", side_effect=_get),
         patch("ly_next.tools.loader._tool_plugin_dir", return_value=tmp_path),
     ):
         n = register_tools_from_directory(registry)

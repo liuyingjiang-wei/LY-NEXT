@@ -14,6 +14,9 @@ _STREAM_KIND = {
     "final": "final",
     "node": "node",
     "error": "error",
+    "graph_node_enter": "graph_node_enter",
+    "graph_node_exit": "graph_node_exit",
+    "graph_edge": "graph_edge",
 }
 
 LLM_ERROR_MAX_LEN = 500

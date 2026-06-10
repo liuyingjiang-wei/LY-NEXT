@@ -7,9 +7,10 @@ from typing import Any
 from ly_next.core.config import config, get_data_root, get_project_root
 from ly_next.core.database import RAG_EMBEDDING_DIM, db
 from ly_next.core.logger import get_logger
-from ly_next.rag.chunking import chunk_text
+from ly_next.rag.chunk_document import chunk_document
 from ly_next.rag.embedding_config import resolve_embedding_http_config
 from ly_next.rag.embeddings import fetch_embeddings
+from ly_next.rag.reranker import rerank_chunks
 from ly_next.rag.retrieval_fusion import bm25_rank, mmr_select_vectors, rrf_fuse
 from ly_next.rag.similarity import cosine_similarity, jaccard_similarity
 
@@ -88,15 +89,18 @@ class DocumentRetriever:
         else:
             logger.warning("[rag.docs] Path not found: %s", target)
 
-        chunk_size = int(config.get("agent.rag.chunk_size", 900) or 900)
-        overlap = int(config.get("agent.rag.chunk_overlap", 120) or 120)
+        chunk_size = int(config.get("agent.rag.chunk_size", 512) or 512)
+        overlap = int(config.get("agent.rag.chunk_overlap", 64) or 64)
+        chunk_strategy = str(config.get("agent.rag.chunk_strategy", "markdown") or "markdown")
         for src_label, t in file_units:
-            for c in chunk_text(t, chunk_size, overlap):
+            for c in chunk_document(
+                t, strategy=chunk_strategy, chunk_size=chunk_size, overlap=overlap
+            ):
                 if c:
                     self._chunks.append(c)
                     self._sources.append(src_label)
 
-    async def retrieve_formatted(self, user_query: str) -> str:
+    async def retrieve_formatted(self, user_query: str, *, top_k: int | None = None) -> str:
         if not config.get("agent.rag.enabled", False):
             return ""
         path_cfg = str(config.get("agent.rag.documents_path", "") or "").strip()
@@ -106,7 +110,7 @@ class DocumentRetriever:
             return ""
 
         show_src = bool(config.get("agent.rag.show_source", True))
-        picked = await self._pick_for_query(user_query)
+        picked = await self._pick_for_query(user_query, top_k=top_k)
         if not picked:
             return ""
 
@@ -118,7 +122,9 @@ class DocumentRetriever:
             parts.append(f"{head}\n{ch}")
         return "\n\n---\n\n".join(parts)
 
-    async def retrieve_results(self, user_query: str) -> dict[str, Any]:
+    async def retrieve_results(
+        self, user_query: str, *, top_k: int | None = None
+    ) -> dict[str, Any]:
         """Structured hits for workbench RAG trial retrieval."""
         enabled = bool(config.get("agent.rag.enabled", False))
         path_cfg = str(config.get("agent.rag.documents_path", "") or "").strip()
@@ -149,7 +155,7 @@ class DocumentRetriever:
                 "hits": [],
                 "hint": "知识库为空或路径无效，请检查 documents_path",
             }
-        picked = await self._pick_for_query(q)
+        picked = await self._pick_for_query(q, top_k=top_k)
         hits = [
             {
                 "rank": i,
@@ -179,15 +185,24 @@ class DocumentRetriever:
             pass
         return ""
 
-    async def _pick_for_query(self, user_query: str) -> list[tuple[float, str, str]]:
-        top_k = int(config.get("agent.rag.top_k", 5) or 5)
-        min_sim = float(config.get("agent.rag.min_similarity", 0.12) or 0.0)
+    async def _pick_for_query(
+        self, user_query: str, *, top_k: int | None = None
+    ) -> list[tuple[float, str, str]]:
+        effective_top_k = int(top_k if top_k is not None else config.get("agent.rag.top_k", 5) or 5)
+        top_k = max(1, effective_top_k)
+        min_sim = float(config.get("agent.rag.min_similarity", 0.20) or 0.0)
         use_emb = bool(config.get("agent.rag.use_embeddings", True))
         hybrid = bool(config.get("agent.rag.hybrid_enabled", True))
         rrf_k = int(config.get("agent.rag.rrf_k", 60) or 60)
-        mmr_on = bool(config.get("agent.rag.mmr_enabled", False))
-        mmr_lambda = float(config.get("agent.rag.mmr_lambda", 0.55) or 0.55)
-        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 3) or 3))
+        mmr_on = bool(config.get("agent.rag.mmr_enabled", True))
+        mmr_lambda = float(config.get("agent.rag.mmr_lambda", 0.6) or 0.6)
+        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 10) or 10))
+        rerank_cfg = config.get("agent.rag.rerank", {}) or {}
+        if not isinstance(rerank_cfg, dict):
+            rerank_cfg = {}
+        rerank_on = bool(rerank_cfg.get("enabled", False))
+        rerank_top_n = max(top_k, int(rerank_cfg.get("top_n", top_k * mult) or top_k * mult))
+        pool_n = max(top_k * mult, rerank_top_n if rerank_on else top_k * mult)
 
         q_vec: list[float] | None = None
         ranked: list[tuple[float, str]] = []
@@ -213,37 +228,34 @@ class DocumentRetriever:
                 ranked = rrf_fuse([ranked, lex_bm25], k=rrf_k)
             else:
                 ranked = rrf_fuse([lex_jac, lex_bm25], k=rrf_k)
-            picked = ranked[:top_k]
-        elif use_emb and ranked:
-            picked = [(s, ch) for s, ch in ranked if s >= min_sim][:top_k]
-            if not picked and ranked and ranked[0][0] > 0:
-                picked = ranked[:1]
-        else:
-            picked = [(s, ch) for s, ch in ranked if s >= min_sim][:top_k]
-            if not picked and ranked and ranked[0][0] > 0:
-                picked = ranked[:1]
 
-        if (
-            mmr_on
-            and q_vec
-            and self._vectors
-            and len(self._vectors) == len(self._chunks)
-            and picked
-        ):
-            pool_n = min(len(ranked), top_k * mult)
-            ranked_pool = ranked[:pool_n] if ranked else picked
-            picked = mmr_select_vectors(
-                ranked_pool,
+        pool = ranked[:pool_n] if ranked else []
+
+        if mmr_on and q_vec and self._vectors and len(self._vectors) == len(self._chunks) and pool:
+            pool = mmr_select_vectors(
+                pool,
                 chunks=self._chunks,
                 vectors=self._vectors,
                 query_vec=q_vec,
-                top_k=top_k,
-                pool_size=top_k * mult,
+                top_k=min(len(pool), pool_n),
+                pool_size=pool_n,
                 lambda_param=mmr_lambda,
                 cosine_fn=cosine_similarity,
             )
 
-        return [(float(s), ch, self._source_for_chunk(ch)) for s, ch in picked]
+        if rerank_on and pool:
+            picked = await rerank_chunks(user_query, pool, top_k=top_k)
+        else:
+            picked = pool[:top_k]
+
+        if not rerank_on:
+            filtered = [(s, ch) for s, ch in picked if s >= min_sim][:top_k]
+            if filtered:
+                picked = filtered
+            elif picked and picked[0][0] > 0:
+                picked = picked[:1]
+
+        return [(float(s), ch, self._source_for_chunk(ch)) for s, ch in picked[:top_k]]
 
     def _rank_lexical(self, user_query: str) -> list[tuple[float, str]]:
         ranked: list[tuple[float, str]] = []

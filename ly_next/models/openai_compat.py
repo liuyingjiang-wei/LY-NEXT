@@ -25,6 +25,7 @@ from ly_next.models.openai_compat_auth import (
 from ly_next.models.stream_assemble import (
     accumulate_tool_call_delta,
     build_chat_completion_from_stream,
+    is_tool_call_sealed,
 )
 from ly_next.agent.llm_text import (
     content_from_stream_delta,
@@ -65,6 +66,21 @@ def _retry_status_codes(rec: dict[str, Any]) -> set[int]:
 
 async def _recovery_sleep(attempt: int, base_delay: float) -> None:
     await asyncio.sleep(min(12.0, base_delay * (2**attempt)))
+
+
+def _resolve_parallel_tool_calls(
+    overrides: dict[str, Any], cfg: dict[str, Any]
+) -> bool | None:
+    pt = overrides.get("parallel_tool_calls")
+    if pt is None:
+        pt = cfg.get("parallel_tool_calls") or cfg.get("parallelToolCalls")
+    if isinstance(pt, bool):
+        return pt
+    agent_pt = config.get("agent.parallel_tool_calls")
+    if agent_pt is not None:
+        return bool(agent_pt)
+    # OpenAI recommends parallel tool calls for independent work; default on.
+    return True
 
 
 def _normalize_chat_path(raw: str | None) -> str:
@@ -413,12 +429,12 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         )
         self._apply_model_aliases(body)
         body.pop("stream", None)
-        pt = overrides.get("parallel_tool_calls")
-        if pt is None:
-            pt = cfg.get("parallel_tool_calls")
-        if pt is None:
-            pt = cfg.get("parallelToolCalls")
-        attach_tools(body, tools, tool_choice, pt if isinstance(pt, bool) else None)
+        attach_tools(
+            body,
+            tools,
+            tool_choice,
+            _resolve_parallel_tool_calls(overrides, cfg),
+        )
         return await self._post_chat_completions_json(client, body)
 
     async def stream_chat_complete(
@@ -443,12 +459,12 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             default_model=self.model,
         )
         self._apply_model_aliases(body)
-        pt = overrides.get("parallel_tool_calls")
-        if pt is None:
-            pt = cfg.get("parallel_tool_calls")
-        if pt is None:
-            pt = cfg.get("parallelToolCalls")
-        attach_tools(body, tools, tool_choice, pt if isinstance(pt, bool) else None)
+        attach_tools(
+            body,
+            tools,
+            tool_choice,
+            _resolve_parallel_tool_calls(overrides, cfg),
+        )
         body["stream"] = True
 
         content_parts: list[str] = []
@@ -457,6 +473,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         finish_reason: str | None = None
         usage: dict[str, Any] | None = None
         tool_phase = False
+        sealed_emitted: set[int] = set()
         model_name = str(body.get("model") or self.model)
         record_llm_call_start(model=model_name, messages_count=len(messages), provider=self.provider_name)
 
@@ -488,6 +505,12 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                         for row in tool_calls.values()
                     ):
                         tool_phase = True
+                    for idx, row in tool_calls.items():
+                        if idx in sealed_emitted:
+                            continue
+                        if is_tool_call_sealed(row):
+                            sealed_emitted.add(idx)
+                            yield {"kind": "tool_call_ready", "index": idx, "tool_call": dict(row)}
                 reasoning = reasoning_from_stream_delta(delta)
                 if reasoning and not tool_phase:
                     reasoning_parts.append(reasoning)
