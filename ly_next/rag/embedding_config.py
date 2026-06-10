@@ -43,6 +43,10 @@ def resolve_embedding_http_config(emb_cfg: dict[str, Any], config_get: Any) -> d
     if extra_h is None and isinstance(block.get("headers"), dict):
         extra_h = block["headers"]
 
+    extra_body = emb_cfg.get("extra_body")
+    if extra_body is None and isinstance(block.get("extra_body"), dict):
+        extra_body = block["extra_body"]
+
     return {
         "model": model,
         "api_key": api_key,
@@ -51,4 +55,10 @@ def resolve_embedding_http_config(emb_cfg: dict[str, Any], config_get: Any) -> d
         "auth_mode": auth_mode,
         "auth_header_name": auth_header_name,
         "extra_headers": extra_h,
+        "task_query": emb_cfg.get("task_query") or block.get("task_query"),
+        "task_passage": emb_cfg.get("task_passage") or block.get("task_passage"),
+        "dimensions": emb_cfg.get("dimensions")
+        if emb_cfg.get("dimensions") is not None
+        else block.get("dimensions"),
+        "extra_body": extra_body if isinstance(extra_body, dict) else None,
     }

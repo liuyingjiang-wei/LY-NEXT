@@ -74,31 +74,60 @@ def _load_yaml_defaults() -> dict[str, Any]:
 
 
 UNSAFE_WORKBENCH_WHITELIST = frozenset({"/ly", "/ly/"})
+UNSAFE_DOCS_WHITELIST = frozenset({"/docs", "/openapi.json", "/redoc"})
+REQUIRED_AUTH_WHITELIST = frozenset(
+    {
+        "/api/health",
+        "/api/info",
+        "/api/auth/login",
+        "/api/auth/config",
+    }
+)
 
 
 def _minimal_fallback_defaults() -> dict[str, Any]:
     return {
         "server": {"host": "0.0.0.0", "port": 8000, "reload": False, "log_level": "info"},
-        "cors": {"origins": ["*"]},
+        "cors": {
+            "origins": ["http://localhost:8000", "http://127.0.0.1:8000"],
+        },
         "api": {
-            "auto_load": True,
+            "auto_load": False,
             "api_dir": "ly_next/apis",
-            "security_profile": "development",
+            "security_profile": "production",
+            "trusted_module_hashes": {},
+        },
+        "plugins": {
+            "enabled": True,
+            "dir": "plugins",
+            "extra_dirs": ["plugins/local"],
+            "modules": [],
+            "entry_points": True,
+            "security_profile": "production",
             "trusted_module_hashes": {},
         },
         "auth": {
             "enabled": True,
+            "mode": "api_key",
             "api_key": "",
             "header_name": "X-API-Key",
             "cookie_name": "ly_api_key",
             "allow_api_key_in_query": False,
             "cookie_secure": False,
+            "jwt": {
+                "enabled": False,
+                "secret": "",
+                "algorithm": "HS256",
+                "access_ttl_minutes": 60,
+                "issuer": "ly-next",
+                "cookie_name": "ly_session",
+            },
+            "users": [],
             "whitelist": [
-                "/docs",
-                "/openapi.json",
-                "/redoc",
                 "/api/health",
                 "/api/info",
+                "/api/auth/login",
+                "/api/auth/config",
                 "/",
                 "/ly/login",
                 "/ly/static/*",
@@ -117,7 +146,11 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                 },
             },
         },
-        "llm": {"default_provider": "openai", "request_timeout": 60},
+        "llm": {
+            "default_provider": "openai",
+            "request_timeout": 120,
+            "agent_request_timeout": 300,
+        },
         "openai_llm": {"model": "gpt-4o-mini", "api_key": "", "base_url": ""},
         "anthropic_llm": {"model": "claude-3-5-haiku-20241022", "api_key": "", "base_url": ""},
         "ollama_llm": {"model": "qwen2.5", "base_url": "http://localhost:11434"},
@@ -133,6 +166,13 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "base_url": "",
             "auth_mode": "bearer",
         },
+        "rag_rerank_llm": {
+            "provider": "cohere",
+            "model": "rerank-v3.5",
+            "api_key": "",
+            "base_url": "",
+            "auth_mode": "bearer",
+        },
         "agent": {
             "enabled": True,
             "max_steps": 6,
@@ -142,8 +182,16 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "stream_output": True,
             "tool_policy": {
                 "max_tier": "network",
+                "deny_tools": ["web_scrape"],
+                "semantic_select": False,
+                "semantic_method": "embedding",
+                "semantic_top_k": 15,
+                "semantic_min_score": 0.32,
+                "semantic_relative_factor": 0.92,
+                "semantic_min_pool": 8,
+                "semantic_fallback": "pins_only",
+                "pin_tools": ["list_tools", "describe_tool"],
                 "allow_categories": [],
-                "deny_tools": [],
                 "allow_tools": None,
             },
             "scratchpad": {
@@ -165,18 +213,33 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             },
             "rag": {
                 "enabled": False,
+                "mode": "both",
                 "documents_path": "",
+                "chunk_strategy": "markdown",
                 "top_k": 5,
-                "chunk_size": 900,
-                "chunk_overlap": 120,
-                "min_similarity": 0.12,
+                "chunk_size": 512,
+                "chunk_overlap": 64,
+                "min_similarity": 0.20,
                 "use_embeddings": True,
+                "hybrid_enabled": True,
+                "rrf_k": 60,
+                "mmr_enabled": True,
+                "mmr_lambda": 0.6,
+                "retrieve_multiplier": 10,
                 "embedding": {"model": "text-embedding-3-small", "config_ref": "rag_embedding_llm"},
+                "rerank": {
+                    "enabled": False,
+                    "provider": "cohere",
+                    "model": "rerank-v3.5",
+                    "config_ref": "rag_rerank_llm",
+                    "top_n": 50,
+                },
             },
         },
         "tools": {
+            "security_profile": "production",
             "host": {
-                "enabled": True,
+                "enabled": False,
                 "roots": ["~"],
                 "deny_paths": [],
                 "max_read_bytes": 2_097_152,
@@ -187,6 +250,8 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                     "default_cwd": "~",
                     "timeout_seconds": 300,
                     "max_output_chars": 120_000,
+                    "minimal_env": True,
+                    "hard_block_patterns": [],
                 },
             },
             "built_in": [
@@ -199,7 +264,6 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                 "http_fetch",
                 "web_fetch",
                 "web_search",
-                "web_scrape",
                 "remember_fact",
             ],
             "web_search": {"provider": "duckduckgo", "api_key": ""},
@@ -248,6 +312,47 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "file": "logs/app.log",
             "max_bytes": 10485760,
             "backup_count": 5,
+        },
+        "security": {
+            "audit": {
+                "enabled": True,
+                "file": "logs/security_audit.log",
+                "log_tool_calls": True,
+                "log_auth_events": True,
+            },
+            "headers": {
+                "enabled": True,
+                "hsts": True,
+                "hsts_max_age": 31_536_000,
+                "hsts_include_subdomains": False,
+                "frame_options": "DENY",
+                "content_type_options": True,
+                "referrer_policy": "strict-origin-when-cross-origin",
+                "content_security_policy": "default",
+            },
+            "rate_limit": {
+                "enabled": False,
+            },
+            "agent_policy": {
+                "enabled": True,
+                "block_sensitive_tools_when_untrusted": True,
+                "block_mutating_http_when_untrusted": True,
+                "untrusted_channels": ["qq", "telegram"],
+                "untrusted_tools": [
+                    "web_fetch",
+                    "web_search",
+                    "web_scrape",
+                    "http_fetch",
+                ],
+                "sensitive_tools": [
+                    "host_read_file",
+                    "host_write_file",
+                    "host_delete_path",
+                    "host_list_dir",
+                    "host_run_command",
+                    "host_search",
+                ],
+            },
         },
     }
 
@@ -393,15 +498,37 @@ class Config:
         wl = auth.get("whitelist")
         if not isinstance(wl, list):
             return []
-        removed = [str(r) for r in wl if r in UNSAFE_WORKBENCH_WHITELIST]
+        unsafe = UNSAFE_WORKBENCH_WHITELIST | UNSAFE_DOCS_WHITELIST
+        removed = [str(r) for r in wl if r in unsafe]
         if not removed:
             return []
-        auth["whitelist"] = [r for r in wl if r not in UNSAFE_WORKBENCH_WHITELIST]
+        auth["whitelist"] = [r for r in wl if r not in unsafe]
         self.save()
         return removed
 
+    def ensure_required_auth_whitelist(self) -> list[str]:
+        """Ensure auth bootstrap endpoints remain reachable without API key."""
+        auth = self._config.get("auth")
+        if not isinstance(auth, dict):
+            return []
+        wl = auth.get("whitelist")
+        if not isinstance(wl, list):
+            wl = []
+        added: list[str] = []
+        seen = {str(r) for r in wl}
+        for path in REQUIRED_AUTH_WHITELIST:
+            if path not in seen:
+                wl.append(path)
+                added.append(path)
+                seen.add(path)
+        if added:
+            auth["whitelist"] = wl
+            self.save()
+        return added
+
     def _migrate_auth_whitelist(self) -> None:
         self.sanitize_auth_whitelist()
+        self.ensure_required_auth_whitelist()
 
     def _migrate_onebot11_config(self) -> None:
         try:

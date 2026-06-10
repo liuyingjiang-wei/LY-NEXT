@@ -40,6 +40,49 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         shutil.rmtree(_SESSION_BASE, ignore_errors=True)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_rate_limiter():
+    from ly_next.core.rate_limit import reset_rate_limiter
+
+    reset_rate_limiter()
+    yield
+    reset_rate_limiter()
+
+
+def _apply_dev_security_profiles() -> None:
+    from ly_next.core.config import config
+
+    config.set("plugins.security_profile", "development")
+    config.set("tools.security_profile", "development")
+    config.set("api.security_profile", "development")
+
+
+@pytest.fixture(autouse=True)
+def _dev_security_profiles_for_tests(monkeypatch):
+    """Allow plugin/tool directory loading in tests (production profile skips them)."""
+    from ly_next.core.config import config
+
+    _apply_dev_security_profiles()
+
+    original_load = config.load
+
+    def load_preserve_dev_profile() -> None:
+        original_load()
+        _apply_dev_security_profiles()
+
+    monkeypatch.setattr(config, "load", load_preserve_dev_profile)
+
+    original_ensure = config.ensure_initialized
+
+    def ensure_preserve_dev_profile() -> dict:
+        result = original_ensure()
+        _apply_dev_security_profiles()
+        return result
+
+    monkeypatch.setattr(config, "ensure_initialized", ensure_preserve_dev_profile)
+    yield
+
+
 class FakeTool(BaseTool):
     def __init__(self, name: str, category: str = "general") -> None:
         self._definition = ToolDefinition(

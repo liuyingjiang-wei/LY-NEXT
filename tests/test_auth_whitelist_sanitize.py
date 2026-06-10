@@ -18,7 +18,11 @@ auth:
     monkeypatch.setattr(c, "config_file", cfg_file)
     monkeypatch.setattr(c, "default_config_file", cfg_file)
     c.load()
-    assert "/ly" not in c.get("auth.whitelist")
-    assert "/ly/" not in c.get("auth.whitelist")
-    assert "/ly/login" in c.get("auth.whitelist")
+    wl = c.get("auth.whitelist") or []
+    assert "/ly" not in wl
+    assert "/ly/" not in wl
+    assert "/docs" not in wl
+    assert "/openapi.json" not in wl
+    assert "/redoc" not in wl
+    assert "/ly/login" in wl
     assert c.sanitize_auth_whitelist() == []

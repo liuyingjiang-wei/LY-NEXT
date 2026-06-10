@@ -9,14 +9,18 @@ from ly_next.tools.host_files import (
     host_list_dir,
     host_read_file,
     host_write_file,
+    read_file_range,
 )
 from ly_next.tools.host_sandbox import host_exec_enabled, host_tools_enabled
+from ly_next.tools.host_search import grep_code
 from ly_next.tools.registry import ToolRegistry
 
 logger = get_logger(__name__)
 
 _HOST_FILE_TOOLS = (
     host_read_file,
+    read_file_range,
+    grep_code,
     host_list_dir,
     host_write_file,
     host_delete_path,

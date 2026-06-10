@@ -24,7 +24,10 @@ from ly_next.api import api_router, mcp_router, ws_public_router
 from ly_next.api.base import APIRegistry
 from ly_next.api.mcp_api import get_mcp_mount_prefix
 from ly_next.core.app_context import AppContext, set_app_context
-from ly_next.core.auth_http import extract_api_key_from_request
+from ly_next.core.auth_context import bind_principal, release_principal
+from ly_next.core.auth_gate import authenticate_http, authorize_http
+from ly_next.core.auth_jwt import issue_access_token, jwt_enabled
+from ly_next.core.auth_gate import login_with_password
 from ly_next.core.cache import cache
 from ly_next.core.checkpointer import init_checkpointer, shutdown_checkpointer
 from ly_next.core.config import config, get_project_root
@@ -43,6 +46,7 @@ from ly_next.core.service_manager import (
     ServiceStatus,
     get_service_manager,
 )
+from ly_next.core.security_headers import SecurityHeadersMiddleware
 from ly_next.core.startup_manager import get_startup_manager
 from ly_next.core.task_manager import get_task_manager
 from ly_next.mcp.remote_bridge import load_remote_mcp_tools
@@ -394,11 +398,14 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=config.get("cors.origins", ["*"]),
+        allow_origins=config.get("cors.origins")
+        or ["http://localhost:8000", "http://127.0.0.1:8000"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    if config.get("security.headers.enabled", True):
+        app.add_middleware(SecurityHeadersMiddleware)
 
     from ly_next.core.plugin.early_bridges import bootstrap_message_bridges, collect_bridge_ws_exempt_paths
 
@@ -422,9 +429,10 @@ def create_app() -> FastAPI:
 
     removed = config.sanitize_auth_whitelist()
     if removed:
-        logger.info(
-            "已从 auth.whitelist 移除工作台路径（未登录不可访问 /ly/）：" + ", ".join(removed)
-        )
+        logger.info("已从 auth.whitelist 移除不安全路径：" + ", ".join(removed))
+    added = config.ensure_required_auth_whitelist()
+    if added:
+        logger.info("已补全 auth.whitelist 必需项：" + ", ".join(added))
 
     def _is_whitelisted(path: str) -> bool:
         rules = config.get("auth.whitelist", []) or []
@@ -436,6 +444,12 @@ def create_app() -> FastAPI:
             if path == r:
                 return True
         return False
+
+    def _jwt_cookie_name() -> str:
+        jc = config.get("auth.jwt") or {}
+        if isinstance(jc, dict) and jc.get("cookie_name"):
+            return str(jc["cookie_name"])
+        return "ly_session"
 
     @app.middleware("http")
     async def api_key_auth(request: Request, call_next):
@@ -449,23 +463,22 @@ def create_app() -> FastAPI:
         if _is_whitelisted(path):
             return await call_next(request)
 
-        key = config.get("auth.api_key", "")
-        header_name = config.get("auth.header_name", "X-API-Key")
-        cookie_name = config.get("auth.cookie_name", "ly_api_key")
-        allow_query = bool(config.get("auth.allow_api_key_in_query", False))
+        principal = authenticate_http(request)
+        if not principal:
+            if _ly_console_path(path):
+                return RedirectResponse(url=_login_redirect_url(request), status_code=302)
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
-        provided = extract_api_key_from_request(
-            request,
-            header_name=header_name,
-            cookie_name=cookie_name,
-            allow_query=allow_query,
-        )
-        if key and provided == key:
+        allowed, reason = authorize_http(principal, request)
+        if not allowed:
+            return JSONResponse({"detail": reason or "Forbidden"}, status_code=403)
+
+        request.state.principal = principal
+        token = bind_principal(principal)
+        try:
             return await call_next(request)
-
-        if _ly_console_path(path):
-            return RedirectResponse(url=_login_redirect_url(request), status_code=302)
-        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        finally:
+            release_principal(token)
 
     _quiet_http_debug_paths = frozenset(
         {
@@ -547,26 +560,54 @@ def create_app() -> FastAPI:
 
         @app.post("/ly/login", include_in_schema=False)
         async def ly_login_submit(request: Request):
+            from ly_next.core.audit_log import audit_auth_event
+
             form = await request.form()
             api_key = (form.get("api_key") or "").strip()
+            username = (form.get("username") or "").strip()
+            password = (form.get("password") or "").strip()
             key = config.get("auth.api_key", "")
             cookie_name = config.get("auth.cookie_name", "ly_api_key")
+            session_cookie = _jwt_cookie_name()
             remember = str(form.get("remember") or "").strip().lower() in ("1", "true", "yes", "on")
+            cookie_secure = bool(config.get("auth.cookie_secure", False))
+            cookie_kwargs: dict[str, Any] = {
+                "httponly": True,
+                "samesite": "lax",
+                "secure": cookie_secure,
+            }
+            if remember:
+                cookie_kwargs["max_age"] = 30 * 24 * 3600
+
+            if username and password and jwt_enabled():
+                principal = login_with_password(username, password)
+                if principal:
+                    token, _ttl = issue_access_token(
+                        username=principal.subject,
+                        role=principal.role,
+                    )
+                    next_path = _safe_ly_next_path(str(form.get("next") or ""))
+                    resp = RedirectResponse(url=next_path, status_code=302)
+                    resp.set_cookie(session_cookie, token, **cookie_kwargs)
+                    audit_auth_event(
+                        "login_success",
+                        username=principal.subject,
+                        role=principal.role,
+                        via="workbench",
+                    )
+                    return resp
+                audit_auth_event("login_failed", username=username, via="workbench")
+                return RedirectResponse(url="/ly/login?e=1", status_code=302)
+
             if not api_key:
                 return RedirectResponse(url="/ly/login?e=2", status_code=302)
             if key and api_key == str(key).strip():
                 next_path = _safe_ly_next_path(str(form.get("next") or ""))
                 resp = RedirectResponse(url=next_path, status_code=302)
-                cookie_secure = bool(config.get("auth.cookie_secure", False))
-                cookie_kwargs: dict[str, Any] = {
-                    "httponly": True,
-                    "samesite": "lax",
-                    "secure": cookie_secure,
-                }
-                if remember:
-                    cookie_kwargs["max_age"] = 30 * 24 * 3600
                 resp.set_cookie(cookie_name, api_key, **cookie_kwargs)
+                audit_auth_event("login_success", via="api_key_cookie")
                 return resp
+            audit_auth_event("login_failed", via="api_key_cookie")
             return RedirectResponse(url="/ly/login?e=1", status_code=302)
 
     @app.get("/.well-known/appspecific/com.chrome.devtools.json", include_in_schema=False)

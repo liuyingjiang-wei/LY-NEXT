@@ -1,0 +1,66 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: pip-audit
+        run: uv run pip-audit --desc on .
+
+  pytest-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: Security-related tests
+        run: |
+          uv run pytest \
+            tests/test_content_trust.py \
+            tests/test_host_exec_guard.py \
+            tests/test_security_health.py \
+            tests/test_security_health_api.py \
+            tests/test_security_headers.py \
+            tests/test_http_security.py \
+            tests/test_http_fetch_ssrf.py \
+            tests/test_http_fetch_headers.py \
+            tests/test_rate_limit.py \
+            tests/test_cors_origins.py \
+            tests/test_web_scrape_ssrf.py \
+            tests/test_auth_whitelist_sanitize.py \
+            tests/test_auth_jwt_rbac.py \
+            tests/test_auth_api.py \
+            tests/test_auth_http.py \
+            tests/test_password_hash.py \
+            tests/test_audit_log.py \
+            tests/test_api_loader_security.py \
+            -q

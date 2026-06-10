@@ -6,12 +6,13 @@ server:
 
 cors:
   origins:
-    - "*"
+    - "http://localhost:8000"
+    - "http://127.0.0.1:8000"
 
 api:
-  auto_load: true
+  auto_load: false
   api_dir: "ly_next/apis"
-  security_profile: "development"
+  security_profile: "production"
   trusted_module_hashes: {}
 
 plugins:
@@ -22,13 +23,14 @@ plugins:
     - plugins/local
   modules: []
   entry_points: true
-  security_profile: "development"
+  security_profile: "production"
   trusted_module_hashes: {}
 
 llm:
   default_provider: "openai"
   default_model: "openai"
-  request_timeout: 60
+  request_timeout: 120
+  agent_request_timeout: 300
   models:
     - name: openai
       format: openai
@@ -80,6 +82,13 @@ rag_embedding_llm:
   base_url: ""
   auth_mode: "bearer"
 
+rag_rerank_llm:
+  provider: cohere
+  model: "rerank-v3.5"
+  api_key: "${COHERE_API_KEY:-}"
+  base_url: ""
+  auth_mode: "bearer"
+
 agent:
   enabled: true
   max_steps: 6
@@ -88,11 +97,19 @@ agent:
   reasoning_mode: "react"
   native_tool_calls: true
   tool_call_mode: "auto"
-  prefer_compat_when_mcp_tools: true
+  prefer_compat_when_mcp_tools: false
+  eager_tool_dispatch: true
+  parallel_tool_calls: true
   stream_output: true
+  tool_schema:
+    compact_native: true
+    max_description_chars: 280
   chat_pipeline:
     parallel_prep: true
     persist_user_async: true
+    skip_augment_on_tool_intent: true
+    skip_memory_on_tool_intent: true
+    skip_rag_on_react: true
     middleware: []
   memory:
     enabled: true
@@ -106,8 +123,19 @@ agent:
       dedupe: true
   tool_policy:
     max_tier: network
+    deny_tools:
+      - web_scrape
+    semantic_select: false
+    semantic_method: embedding
+    semantic_top_k: 15
+    semantic_min_score: 0.32
+    semantic_relative_factor: 0.92
+    semantic_min_pool: 8
+    semantic_fallback: pins_only
+    pin_tools:
+      - list_tools
+      - describe_tool
     allow_categories: null
-    deny_tools: []
     allow_tools: null
   channel_tools:
     web:
@@ -168,6 +196,8 @@ agent:
     checkpoint:
       enabled: true
       backend: postgres   # postgres | memory
+      write_every: final_only   # final_only | iteration | disabled
+  react_engine: native   # native | langgraph_native
   observability:
     enabled: true
     persist: true
@@ -252,27 +282,36 @@ agent:
     use_embeddings: true
   rag:
     enabled: true
+    mode: both
     documents_path: "data/ly_next/knowledge"
+    chunk_strategy: markdown
     top_k: 5
-    chunk_size: 900
-    chunk_overlap: 120
-    min_similarity: 0.12
+    chunk_size: 512
+    chunk_overlap: 64
+    min_similarity: 0.20
     use_embeddings: true
     hybrid_enabled: true
     rrf_k: 60
-    mmr_enabled: false
-    mmr_lambda: 0.55
-    retrieve_multiplier: 3
+    mmr_enabled: true
+    mmr_lambda: 0.6
+    retrieve_multiplier: 10
     show_source: true
     embedding:
       model: "text-embedding-3-small"
       config_ref: "rag_embedding_llm"
+      base_url: ""
+    rerank:
+      enabled: false
+      provider: cohere
+      model: "rerank-v3.5"
+      config_ref: "rag_rerank_llm"
+      top_n: 50
 
 tools:
   plugin_dir: ""
-  security_profile: "development"
+  security_profile: "production"
   host:
-    enabled: true
+    enabled: false
     roots:
       - "~"
     deny_paths: []
@@ -284,6 +323,8 @@ tools:
       default_cwd: "~"
       timeout_seconds: 300
       max_output_chars: 120000
+      minimal_env: true
+      hard_block_patterns: []
     approvals:
       enabled: true
       ttl_seconds: 600
@@ -292,8 +333,11 @@ tools:
       require_for_recursive_delete: true
       exec_patterns: []
   built_in:
+    - "list_tools"
+    - "describe_tool"
     - "calculator"
     - "format_json"
+    - "json_query"
     - "text_process"
     - "regex_extract"
     - "get_current_time"
@@ -301,10 +345,10 @@ tools:
     - "http_fetch"
     - "web_fetch"
     - "remember_fact"
+    - "knowledge_search"
     - "list_skills"
     - "read_skill"
     - "web_search"
-    - "web_scrape"
   web_search:
     provider: "duckduckgo"
     api_key: ""
@@ -358,18 +402,63 @@ logging:
   max_bytes: 10485760
   backup_count: 5
 
+security:
+  audit:
+    enabled: true
+    file: "logs/security_audit.log"
+    log_tool_calls: true
+    log_auth_events: true
+  headers:
+    enabled: true
+    hsts: true
+    hsts_max_age: 31536000
+    hsts_include_subdomains: false
+    frame_options: "DENY"
+    content_type_options: true
+    referrer_policy: "strict-origin-when-cross-origin"
+    content_security_policy: "default"
+  rate_limit:
+    enabled: false
+  agent_policy:
+    enabled: true
+    block_sensitive_tools_when_untrusted: true
+    block_mutating_http_when_untrusted: true
+    untrusted_channels:
+      - "qq"
+      - "telegram"
+    untrusted_tools:
+      - "web_fetch"
+      - "web_search"
+      - "web_scrape"
+      - "http_fetch"
+    sensitive_tools:
+      - "host_read_file"
+      - "host_write_file"
+      - "host_delete_path"
+      - "host_list_dir"
+      - "host_run_command"
+      - "host_search"
+
 auth:
   enabled: true
+  mode: "api_key"
   api_key: "${LY_NEXT_API_KEY}"
   header_name: "X-API-Key"
   cookie_name: "ly_api_key"
   allow_api_key_in_query: false
   cookie_secure: false
+  jwt:
+    enabled: false
+    secret: "${LY_NEXT_JWT_SECRET}"
+    algorithm: "HS256"
+    access_ttl_minutes: 60
+    issuer: "ly-next"
+    cookie_name: "ly_session"
+  users: []
   whitelist:
-    - "/docs"
-    - "/openapi.json"
-    - "/redoc"
     - "/api/health"
     - "/api/info"
+    - "/api/auth/login"
+    - "/api/auth/config"
     - "/ly/login"
     - "/ly/static/*"

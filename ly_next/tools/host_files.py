@@ -42,8 +42,8 @@ def _entry_info(path: Path) -> dict[str, object]:
 @tool(
     name="host_read_file",
     description=(
-        "Read a text file under the allowed host roots (default: user home directory). "
-        "Use for inspecting configs, logs, or source files. Binary files may be truncated."
+        "Read a full text file under allowed host roots. "
+        "For large files use read_file_range; to search use grep_code."
     ),
     category="host",
     parameters={
@@ -98,6 +98,85 @@ async def host_read_file(
             "size": size,
             "truncated": truncated,
             "content": text,
+        },
+    )
+
+
+@tool(
+    name="read_file_range",
+    description=(
+        "Read a line range from a text file under allowed host roots (1-based inclusive). "
+        "Prefer over host_read_file for large sources."
+    ),
+    category="host",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "File path"},
+            "start_line": {"type": "integer", "description": "First line (>=1)", "default": 1},
+            "end_line": {
+                "type": "integer",
+                "description": "Last line inclusive; omit to read through end_line=start+199",
+            },
+            "encoding": {"type": "string", "default": "utf-8"},
+        },
+        "required": ["path"],
+    },
+)
+async def read_file_range(
+    path: str,
+    start_line: int = 1,
+    end_line: int | None = None,
+    encoding: str = "utf-8",
+) -> ToolResult:
+    resolved, err = resolve_host_path(path, must_exist=True)
+    if err or resolved is None:
+        return ToolResult(success=False, error=err or "invalid path")
+    if not resolved.is_file():
+        return ToolResult(success=False, error=f"not a file: {resolved}")
+
+    start = max(1, int(start_line))
+    span = host_int_limit("tools.host.read_range_max_lines", 500, minimum=1, maximum=2000)
+    stop = end_line if end_line is not None else start + span - 1
+    stop = max(start, int(stop))
+    if stop - start + 1 > span:
+        stop = start + span - 1
+
+    cap_bytes = _max_read_bytes()
+    try:
+        size = resolved.stat().st_size
+        if size > cap_bytes:
+            return ToolResult(
+                success=False,
+                error=f"file too large ({size} bytes); max_read_bytes={cap_bytes}",
+            )
+        lines = resolved.read_text(encoding=encoding or "utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        return ToolResult(success=False, error=str(exc))
+
+    total = len(lines)
+    if start > total:
+        return ToolResult(
+            success=True,
+            result={
+                "path": str(resolved),
+                "total_lines": total,
+                "start_line": start,
+                "end_line": stop,
+                "content": "",
+            },
+        )
+
+    slice_lines = lines[start - 1 : stop]
+    body = "\n".join(f"{lineno}:{text}" for lineno, text in enumerate(slice_lines, start=start))
+    return ToolResult(
+        success=True,
+        result={
+            "path": str(resolved),
+            "total_lines": total,
+            "start_line": start,
+            "end_line": start + len(slice_lines) - 1,
+            "content": body,
         },
     )
 

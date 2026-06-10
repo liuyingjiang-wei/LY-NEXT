@@ -8,6 +8,7 @@ from ly_next.core.config import config
 from ly_next.tools.base import ToolResult, tool
 from ly_next.tools.http_fetch import _url_allowed
 from ly_next.tools.web_fetch_local import fetch_local
+from ly_next.tools.web_shared import format_web_fetch_text
 
 WEB_FETCH_PROVIDERS = ("trafilatura", "jina", "tavily", "firecrawl", "local")
 
@@ -189,18 +190,25 @@ async def web_fetch(url: str, max_length: int | None = None) -> ToolResult:
     try:
         final_url, content, fmt = await _dispatch(raw_url, opts)
         text, truncated = _truncate(content, cap)
-        return ToolResult(
-            success=True,
-            result={
-                "url": raw_url,
-                "final_url": final_url,
-                "provider": opts["provider"],
-                "content": text,
-                "length": len(text),
-                "truncated": truncated,
-                "format": fmt,
-            },
+        payload = {
+            "url": raw_url,
+            "final_url": final_url,
+            "provider": opts["provider"],
+            "content": text,
+            "length": len(text),
+            "truncated": truncated,
+            "format": fmt,
+        }
+        payload["text"] = format_web_fetch_text(
+            url=raw_url,
+            final_url=final_url,
+            provider=opts["provider"],
+            content=text,
+            truncated=truncated,
+            fmt=fmt,
+            length=len(text),
         )
+        return ToolResult(success=True, result=payload)
     except httpx.TimeoutException:
         return ToolResult(success=False, error=f"Request timed out: {raw_url}")
     except httpx.HTTPStatusError as e:
@@ -215,8 +223,8 @@ async def web_fetch(url: str, max_length: int | None = None) -> ToolResult:
 web_fetch_tool = tool(
     name="web_fetch",
     description=(
-        "Fetch a URL and return clean page text (markdown when supported). "
-        "Use after web_search to read full articles. Respects SSRF allowlist."
+        "Fetch a known URL and return clean page text. "
+        "Use after web_search, not for discovering URLs. Respects SSRF allowlist."
     ),
     category="network",
     parameters={

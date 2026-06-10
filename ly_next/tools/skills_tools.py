@@ -11,8 +11,8 @@ from ly_next.tools.base import ToolResult, tool
 @tool(
     name="list_skills",
     description=(
-        "List installed agent skills (SKILL.md playbooks). "
-        "Use before specialized tasks to see which skill applies."
+        "List agent skills (SKILL.md playbooks for how to execute tasks). "
+        "Not for project docs in the knowledge base (knowledge_search)."
     ),
     category="safe",
     parameters={"type": "object", "properties": {}},
@@ -42,8 +42,8 @@ async def list_skills() -> ToolResult:
 @tool(
     name="read_skill",
     description=(
-        "Read the full SKILL.md content for a skill id from list_skills. "
-        "Follow the skill instructions when executing the user's task."
+        "Read SKILL.md for a skill id from list_skills and follow its workflow. "
+        "Not for searching documents_path corpus (knowledge_search)."
     ),
     category="safe",
     parameters={

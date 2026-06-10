@@ -1,0 +1,42 @@
+# LY-NEXT 反向代理示例（Nginx + TLS）
+# 将 your-domain.com、证书路径与 upstream 改为实际值后 include 到 server {} 块。
+
+upstream ly_next_app {
+    server 127.0.0.1:8000;
+    keepalive 16;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    ssl_certificate     /etc/ssl/certs/your-domain.fullchain.pem;
+    ssl_certificate_key /etc/ssl/private/your-domain.key;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    client_max_body_size 32m;
+
+    location / {
+        proxy_pass http://ly_next_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+    }
+}
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# 启用后请在 data/ly_next/config.yaml 设置：
+#   auth.cookie_secure: true
+#   security.rate_limit.trust_proxy_headers: true

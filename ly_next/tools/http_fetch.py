@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import socket
 from typing import Any
 from urllib.parse import urlparse
 
@@ -38,6 +39,31 @@ def _host_blocked_reason(hostname: str) -> str | None:
     return None
 
 
+def _resolve_host_blocked_reason(hostname: str) -> str | None:
+    host = (hostname or "").strip()
+    if not host:
+        return "missing host"
+    try:
+        ipaddress.ip_address(host)
+        return _host_blocked_reason(host)
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        return f"DNS resolution failed: {exc}"
+    seen: set[str] = set()
+    for info in infos:
+        addr = info[4][0]
+        if addr in seen:
+            continue
+        seen.add(addr)
+        reason = _host_blocked_reason(addr)
+        if reason:
+            return f"resolved {addr}: {reason}"
+    return None
+
+
 def _url_allowed(url: str) -> tuple[bool, str]:
     try:
         p = urlparse(url)
@@ -50,6 +76,9 @@ def _url_allowed(url: str) -> tuple[bool, str]:
     reason = _host_blocked_reason(p.hostname)
     if reason:
         return False, reason
+    resolved = _resolve_host_blocked_reason(p.hostname)
+    if resolved:
+        return False, resolved
     if p.username is not None and p.username != "":
         return False, "userinfo in URL is not allowed"
     return True, ""

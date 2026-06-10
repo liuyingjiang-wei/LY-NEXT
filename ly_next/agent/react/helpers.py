@@ -7,6 +7,8 @@ import json
 from functools import partial
 from typing import Any
 
+import httpx
+
 from ly_next.agent.deps import AgentDeps
 from ly_next.agent.image_reply import format_image_tool_observation, record_tool_result
 from ly_next.agent.prompt_templates import format_tool_manifest_block, get_native_system_prefix
@@ -276,12 +278,56 @@ def validate_decision(obj: dict[str, Any], tool_names: list[str]) -> tuple[str, 
     raise ValueError("type must be 'tool' or 'final'")
 
 
+def format_agent_error(exc: BaseException) -> str:
+    text = str(exc).strip()
+    name = type(exc).__name__
+    if text:
+        return f"{name}: {text}"
+    return name
+
+
+def is_llm_timeout_error(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    msg = str(exc).lower()
+    return "timeout" in msg or "timed out" in msg
+
+
+def should_skip_native_legacy_fallback(exc: BaseException) -> bool:
+    if is_llm_timeout_error(exc):
+        return True
+    if isinstance(exc, httpx.RequestError):
+        return True
+    if isinstance(exc, RuntimeError):
+        msg = str(exc).lower()
+        if "timeout" in msg or "openai_compat" in msg:
+            return True
+    return False
+
+
+def native_react_failure_message(exc: BaseException) -> str:
+    summary = format_agent_error(exc)
+    if is_llm_timeout_error(exc):
+        return (
+            f"模型请求超时（{summary}）。"
+            "请增大 llm.agent_request_timeout（Agent 专用）或 llm.request_timeout。"
+        )
+    return f"Agent 调用失败：{summary}"
+
+
+def react_engine() -> str:
+    return str(config.get("agent.react_engine", "native")).strip().lower()
+
+
 def react_loop_kind(deps: AgentDeps) -> str:
     if deps._custom_llm_call or not deps.use_tools:
         return "legacy"
+    engine = react_engine()
     mode = (deps.tool_call_mode or "auto").strip().lower()
     if mode == "compat" or auto_use_compat_first_for_mcp(deps):
         return "compat"
+    if engine == "langgraph_native" and mode in ("auto", "native") and deps.native_tool_calls:
+        return "langgraph_native"
     if mode in ("auto", "native") and deps.native_tool_calls:
         return "native"
     return "legacy"

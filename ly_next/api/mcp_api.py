@@ -7,7 +7,6 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.websockets import WebSocketState
 
 from ly_next import __version__
-from ly_next.core.auth_http import extract_api_key_from_websocket
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.mcp.server import MCPError, mcp_server
@@ -30,19 +29,9 @@ mcp_router = APIRouter(tags=["mcp"])
 async def _ws_auth_ok(websocket: WebSocket) -> bool:
     if not config.get("auth.enabled", True):
         return True
-    key = config.get("auth.api_key", "")
-    if not key:
-        return True
-    header_name = config.get("auth.header_name", "X-API-Key")
-    cookie_name = config.get("auth.cookie_name", "ly_api_key")
-    allow_query = bool(config.get("auth.allow_api_key_in_query", False))
-    provided = extract_api_key_from_websocket(
-        websocket,
-        header_name=header_name,
-        cookie_name=cookie_name,
-        allow_query=allow_query,
-    )
-    if provided == key:
+    from ly_next.core.auth_gate import authenticate_websocket
+
+    if authenticate_websocket(websocket):
         return True
     if websocket.client_state != WebSocketState.CONNECTED:
         await websocket.accept()

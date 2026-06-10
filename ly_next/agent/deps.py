@@ -49,10 +49,15 @@ class AgentDeps:
     tool_deny_tools: list[str] = field(default_factory=list)
     tool_allow_categories: list[str] | None = None
     tool_max_tier: str = "network"
+    tool_router_query: str | None = None
+    tool_router_query_vec: list[float] | None = field(default=None, repr=False)
+    tool_router_tool_vectors: dict[str, list[float]] | None = field(default=None, repr=False)
+    tool_router_method: str | None = None
     native_tool_calls: bool = True
     tool_call_mode: str = "auto"
     stop_event: asyncio.Event | None = None
     thread_id: str | None = None
+    channel: str | None = None
     collected_tool_results: list[dict[str, Any]] = field(default_factory=list)
     last_mixed_message: MixedMessage | None = None
     _filtered_tools_cache: tuple[list[Any], list[str]] | None = field(default=None, repr=False)
@@ -217,6 +222,12 @@ class AgentDeps:
                         if self.stream_callback:
                             await self.stream_callback({"content": text, "done": False})
                         yield {"type": "chunk", "content": text}
+                elif kind == "tool_call_ready":
+                    yield {
+                        "type": "tool_call_ready",
+                        "index": int(item.get("index", 0)),
+                        "tool_call": item.get("tool_call") or {},
+                    }
                 elif kind == "done":
                     if self.stream_callback:
                         await self.stream_callback({"content": "", "done": True})
