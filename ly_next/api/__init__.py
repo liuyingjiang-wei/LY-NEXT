@@ -4,8 +4,8 @@ from ly_next.api.auth_api import router as auth_router
 from ly_next.api.chat_stream_api import router as chat_stream_router
 from ly_next.api.image_api import router as image_router
 from ly_next.api.ly_api import router as ly_router
-from ly_next.api.models_api import router as models_router
 from ly_next.api.mcp_api import mcp_router
+from ly_next.api.models_api import router as models_router
 from ly_next.api.runs_api import router as runs_router
 from ly_next.api.threads_api import router as threads_router
 from ly_next.api.ws_api import public_router as ws_public_router

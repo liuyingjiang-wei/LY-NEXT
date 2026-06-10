@@ -231,7 +231,7 @@ def _mermaid_from_schema(schema: dict[str, Any], executed: list[dict[str, Any]])
     visited = {row.get("node") for row in executed if row.get("node")}
     if visited:
         hot = ",".join(sorted(str(n) for n in visited if n))
-        lines.append(f"  classDef visited fill:#dbeafe,stroke:#2563eb")
+        lines.append("  classDef visited fill:#dbeafe,stroke:#2563eb")
         lines.append(f"  class {hot} visited")
     return "\n".join(lines)
 

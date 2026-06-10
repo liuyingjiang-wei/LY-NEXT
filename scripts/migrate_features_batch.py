@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Migrate SettingsPanel, bridge panels, RunsHistory, ChatPanel to features/."""
+
 from __future__ import annotations
 
 import re
@@ -17,9 +18,11 @@ SECTION_OPEN = re.compile(
 
 def convert_section_cards(content: str) -> str:
     content = SECTION_OPEN.sub(
-        lambda m: f'<SettingsSection title="{m.group(1)}"'
-        + (f' hint={m.group(2).strip()} ' if m.group(2) else " ")
-        + ">",
+        lambda m: (
+            f'<SettingsSection title="{m.group(1)}"'
+            + (f" hint={m.group(2).strip()} " if m.group(2) else " ")
+            + ">"
+        ),
         content,
     )
     return content.replace("</SettingsCard>", "</SettingsSection>")
@@ -43,7 +46,11 @@ def wrap_settings_page_layout(
         content,
         count=1,
     )
-    content = re.sub(r"async function (\w+)\(e\) \{\s*e\.preventDefault\(\);\s*", r"async function \1() {\n    ", content)
+    content = re.sub(
+        r"async function (\w+)\(e\) \{\s*e\.preventDefault\(\);\s*",
+        r"async function \1() {\n    ",
+        content,
+    )
     content = re.sub(r"<form onSubmit=\{(\w+)\}>\s*", "", content)
     content = re.sub(r"</form>\s*", "", content)
     content = re.sub(
@@ -91,7 +98,7 @@ def wrap_settings_page_layout(
 
 
 def patch_imports_settings_panel(text: str) -> str:
-    text = text.replace('import { Fragment, useCallback', "import { useCallback")
+    text = text.replace("import { Fragment, useCallback", "import { useCallback")
     text = text.replace('from "./agentPresets.js"', 'from "@/agentPresets.js"')
     text = text.replace('from "./settingsShared.js"', 'from "@/settingsShared.js"')
     insert = (
@@ -127,7 +134,11 @@ def patch_imports_bridge(text: str, explorer_import: str | None = None) -> str:
 def migrate_settings_panel() -> None:
     src = (ROOT / "SettingsPanel.jsx").read_text(encoding="utf-8")
     text = patch_imports_settings_panel(src)
-    text = re.sub(r"async function onSave\(e\) \{\s*e\.preventDefault\(\);\s*", "async function onSave() {\n    ", text)
+    text = re.sub(
+        r"async function onSave\(e\) \{\s*e\.preventDefault\(\);\s*",
+        "async function onSave() {\n    ",
+        text,
+    )
     text = re.sub(
         r"\s*if \(loading\) \{[\s\S]*?\}\s*\n",
         "\n",
@@ -170,7 +181,9 @@ def migrate_settings_panel() -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
     stub = ROOT / "SettingsPanel.jsx"
-    stub.write_text('export { default } from "@/features/settings/SettingsPanel.jsx";\n', encoding="utf-8")
+    stub.write_text(
+        'export { default } from "@/features/settings/SettingsPanel.jsx";\n', encoding="utf-8"
+    )
     print(f"wrote {dest}")
 
 
@@ -183,7 +196,7 @@ def migrate_qq_bridge() -> None:
         description="OneBot v11 / NapCat WebSocket 桥接与自动回复。",
         save_label="保存 QQ 配置",
         extra=(
-            '<Space wrap>\n'
+            "<Space wrap>\n"
             "          <Button onClick={refreshStatus} disabled={saving}>刷新连接状态</Button>\n"
             "          <Button onClick={refreshDiagnostics} disabled={saving}>刷新诊断</Button>\n"
             "          <Button onClick={copyUrl} disabled={saving}>复制 NapCat URL</Button>\n"
@@ -218,7 +231,7 @@ def migrate_telegram_bridge() -> None:
         save_label="保存 Telegram 配置",
         on_save_fn="onSubmit",
         extra=(
-            '<Space wrap>\n'
+            "<Space wrap>\n"
             "          <Button onClick={refreshAll} disabled={saving}>刷新状态</Button>\n"
             "        </Space>"
         ),
@@ -245,7 +258,7 @@ def migrate_runs_history() -> None:
         'import { Alert } from "antd";\n',
     )
     text = text.replace(
-        "return (\n    <div className=\"runs-panel\">",
+        'return (\n    <div className="runs-panel">',
         """return (
     <SettingsPageLayout
       title="执行轨迹"
@@ -260,7 +273,7 @@ def migrate_runs_history() -> None:
           {listErr}
         </div>
       ) : null}""",
-        "{listErr ? <Alert type=\"error\" message={listErr} showIcon style={{ marginBottom: 16 }} /> : null}",
+        '{listErr ? <Alert type="error" message={listErr} showIcon style={{ marginBottom: 16 }} /> : null}',
     )
     text = text.replace(
         '<SettingsCard className="panel runs-list-panel">',
@@ -298,17 +311,17 @@ def migrate_runs_history() -> None:
 def migrate_chat_panel() -> None:
     src = (ROOT / "ChatPanel.jsx").read_text(encoding="utf-8")
     replacements = {
-        './apiClient.js': '@/apiClient.js',
-        './chatTransport.js': '@/chatTransport.js',
-        './safeNavPath.js': '@/safeNavPath.js',
-        './chatMessageImages.js': '@/chatMessageImages.js',
-        './ChatToolTimeline.jsx': '@/ChatToolTimeline.jsx',
-        './chatStorage.js': '@/chatStorage.js',
-        './chatThreadSync.js': '@/chatThreadSync.js',
-        './MessageActions.jsx': '@/MessageActions.jsx',
-        './chatTranslate.js': '@/chatTranslate.js',
-        './ChatComposer.jsx': '@/ChatComposer.jsx',
-        './chatScenarioPresets.js': '@/chatScenarioPresets.js',
+        "./apiClient.js": "@/apiClient.js",
+        "./chatTransport.js": "@/chatTransport.js",
+        "./safeNavPath.js": "@/safeNavPath.js",
+        "./chatMessageImages.js": "@/chatMessageImages.js",
+        "./ChatToolTimeline.jsx": "@/ChatToolTimeline.jsx",
+        "./chatStorage.js": "@/chatStorage.js",
+        "./chatThreadSync.js": "@/chatThreadSync.js",
+        "./MessageActions.jsx": "@/MessageActions.jsx",
+        "./chatTranslate.js": "@/chatTranslate.js",
+        "./ChatComposer.jsx": "@/ChatComposer.jsx",
+        "./chatScenarioPresets.js": "@/chatScenarioPresets.js",
     }
     for old, new in replacements.items():
         src = src.replace(f'from "{old}"', f'from "{new}"')

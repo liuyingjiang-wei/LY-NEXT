@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Extract workbench chat + bridge API styles from app.css."""
+
 from __future__ import annotations
 
 import re

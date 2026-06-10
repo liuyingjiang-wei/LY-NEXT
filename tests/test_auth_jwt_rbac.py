@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from ly_next.core.auth_gate import authenticate_http, authorize_http, rbac_enabled
+from ly_next.core.auth_gate import authenticate_http, authorize_http
 from ly_next.core.auth_jwt import issue_access_token, verify_access_token
 from ly_next.core.auth_principal import Principal, required_permission
 
@@ -33,13 +33,16 @@ async def test_authenticate_http_accepts_api_key():
         client = _Client()
 
     with (
-        patch("ly_next.core.auth_gate.config.get", side_effect=lambda k, d=None: {
-            "auth.mode": "api_key",
-            "auth.api_key": "test-key",
-            "auth.header_name": "X-API-Key",
-            "auth.cookie_name": "ly_api_key",
-            "auth.allow_api_key_in_query": False,
-        }.get(k, d)),
+        patch(
+            "ly_next.core.auth_gate.config.get",
+            side_effect=lambda k, d=None: {
+                "auth.mode": "api_key",
+                "auth.api_key": "test-key",
+                "auth.header_name": "X-API-Key",
+                "auth.cookie_name": "ly_api_key",
+                "auth.allow_api_key_in_query": False,
+            }.get(k, d),
+        ),
         patch("ly_next.core.auth_gate.jwt_enabled", return_value=False),
     ):
         principal = authenticate_http(_Req())

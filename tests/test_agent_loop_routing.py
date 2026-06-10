@@ -46,7 +46,9 @@ def test_turn_plan_skips_rag_on_react(monkeypatch):
     monkeypatch.setattr(
         "ly_next.agent.turn_plan.pipeline_cfg",
         lambda key, default=None: (
-            True if key == "skip_rag_on_react" else (False if key == "auto_skip_tool_intents" else default)
+            True
+            if key == "skip_rag_on_react"
+            else (False if key == "auto_skip_tool_intents" else default)
         ),
     )
     monkeypatch.setattr("ly_next.agent.turn_plan.is_fast_chat_query", lambda _q: False)

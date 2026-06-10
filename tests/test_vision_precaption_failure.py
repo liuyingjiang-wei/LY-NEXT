@@ -22,7 +22,9 @@ async def test_apply_vision_precaption_degrades_on_llm_error(monkeypatch):
             else default
         ),
     )
-    monkeypatch.setattr(vp, "_resolve_precaption_model", lambda: ("mimo", "openai_compat", "mimo-v2.5"))
+    monkeypatch.setattr(
+        vp, "_resolve_precaption_model", lambda: ("mimo", "openai_compat", "mimo-v2.5")
+    )
 
     client = MagicMock()
     client.chat = AsyncMock(side_effect=RuntimeError("401 Unauthorized"))

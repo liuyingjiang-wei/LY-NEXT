@@ -14,7 +14,9 @@ __all__ = ["plugin_security_profile", "sha256_file", "trusted_plugin_hashes_map"
 def plugin_security_profile() -> str:
     raw = config.get("plugins.security_profile")
     if raw is None or str(raw).strip() == "":
-        raw = config.get("api.security_profile", "development")
+        # Do not inherit api.security_profile: dynamic APIs and directory plugins
+        # follow different threat models; plugins/local is the default install path.
+        raw = "development"
     profile = str(raw or "development").strip().lower()
     if profile in ("development", "production", "verified"):
         return profile

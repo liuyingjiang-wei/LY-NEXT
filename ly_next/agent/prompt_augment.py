@@ -85,9 +85,7 @@ def is_direct_chat_query(query: str) -> bool:
         return False
     if not _DIRECT_CHAT.search(q):
         return False
-    if re.search(r"[A-Za-z]", q):
-        return False
-    return True
+    return not re.search(r"[A-Za-z]", q)
 
 
 def is_fast_chat_query(query: str) -> bool:
@@ -104,9 +102,7 @@ def is_fast_chat_query(query: str) -> bool:
         return True
     max_chars = max(0, int(cfg.get("fast_chat_max_chars", 120) or 120))
     if max_chars and len(q) <= max_chars:
-        if re.search(r"[A-Za-z]", q):
-            return False
-        return True
+        return not re.search(r"[A-Za-z]", q)
     return False
 
 
@@ -123,9 +119,7 @@ def should_skip_retrieval_augment(query: str) -> bool:
     min_len = max(0, int(cfg.get("min_query_chars", 12) or 12))
     if min_len and len(q) < min_len:
         return True
-    if cfg.get("skip_greetings", True) and _CHAT_GREETING.match(q):
-        return True
-    return False
+    return bool(cfg.get("skip_greetings", True) and _CHAT_GREETING.match(q))
 
 
 def should_skip_skills_augment(query: str) -> bool:

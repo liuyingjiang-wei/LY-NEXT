@@ -25,28 +25,27 @@ from ly_next.api.base import APIRegistry
 from ly_next.api.mcp_api import get_mcp_mount_prefix
 from ly_next.core.app_context import AppContext, set_app_context
 from ly_next.core.auth_context import bind_principal, release_principal
-from ly_next.core.auth_gate import authenticate_http, authorize_http
+from ly_next.core.auth_gate import authenticate_http, authorize_http, login_with_password
 from ly_next.core.auth_jwt import issue_access_token, jwt_enabled
-from ly_next.core.auth_gate import login_with_password
 from ly_next.core.cache import cache
 from ly_next.core.checkpointer import init_checkpointer, shutdown_checkpointer
 from ly_next.core.config import config, get_project_root
 from ly_next.core.database import db
+from ly_next.core.first_run import sync_first_run_notice
 from ly_next.core.logger import (
     get_uvicorn_log_config,
     print_startup_report,
     refresh_ly_next_log_level_from_config,
     setup_logging,
 )
-from ly_next.core.first_run import sync_first_run_notice
 from ly_next.core.plugin import PluginLoader
+from ly_next.core.security_headers import SecurityHeadersMiddleware
 from ly_next.core.service_manager import (
     InstallStatus,
     ServiceInfo,
     ServiceStatus,
     get_service_manager,
 )
-from ly_next.core.security_headers import SecurityHeadersMiddleware
 from ly_next.core.startup_manager import get_startup_manager
 from ly_next.core.task_manager import get_task_manager
 from ly_next.mcp.remote_bridge import load_remote_mcp_tools
@@ -353,9 +352,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "set TELEGRAM_BOT_TOKEN or bridge.telegram.bot_token"
             )
         else:
-            logger.info(
-                "Telegram bridge enabled (plugin telegram-bot, long polling, pairing)"
-            )
+            logger.info("Telegram bridge enabled (plugin telegram-bot, long polling, pairing)")
 
     await print_startup_report(report)
 
@@ -407,7 +404,9 @@ def create_app() -> FastAPI:
     if config.get("security.headers.enabled", True):
         app.add_middleware(SecurityHeadersMiddleware)
 
-    from ly_next.core.plugin.early_bridges import bootstrap_message_bridges, collect_bridge_ws_exempt_paths
+    from ly_next.core.plugin.early_bridges import (
+        bootstrap_message_bridges,
+    )
 
     _bridge_reg, bridge_ws_paths = bootstrap_message_bridges(ws_public_router, app)
     app.state.bridge_ws_paths = bridge_ws_paths

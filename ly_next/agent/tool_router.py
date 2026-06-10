@@ -179,9 +179,7 @@ def route_tools_by_query(
     scored: list[tuple[float, Any]] = []
     if use_method in ("embedding", "hybrid") and query_vec and tool_vectors:
         scored = score_tools_embedding(tools, query_vec=query_vec, tool_vectors=tool_vectors)
-    if not scored and use_method == "hybrid":
-        scored = score_tools_lexical(q, tools)
-    elif not scored:
+    if not scored and use_method == "hybrid" or not scored:
         scored = score_tools_lexical(q, tools)
 
     selected = _apply_threshold(

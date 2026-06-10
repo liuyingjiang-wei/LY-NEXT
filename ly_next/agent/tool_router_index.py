@@ -37,7 +37,9 @@ def _tools_signature(tools: list[Any]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-async def _embed_texts(texts: list[str], hp: dict[str, Any], *, task: str | None) -> list[list[float]]:
+async def _embed_texts(
+    texts: list[str], hp: dict[str, Any], *, task: str | None
+) -> list[list[float]]:
     dims = hp.get("dimensions")
     dim_opt: int | None = None
     if dims is not None:
@@ -69,7 +71,7 @@ async def ensure_tool_vectors(tools: list[Any]) -> dict[str, list[float]] | None
 
     global _TOOL_VEC_SIG
     sig = _tools_signature(tools)
-    if _TOOL_VEC_SIG == sig and _TOOL_VEC_CACHE:
+    if sig == _TOOL_VEC_SIG and _TOOL_VEC_CACHE:
         return _TOOL_VEC_CACHE
 
     docs = [tool_document(t) for t in tools]

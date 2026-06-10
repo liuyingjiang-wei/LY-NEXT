@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -21,10 +20,7 @@ def host_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.asyncio
 async def test_host_run_command_echo(host_home: Path):
-    if os.name == "nt":
-        cmd = "Write-Output hello-host"
-    else:
-        cmd = "echo hello-host"
+    cmd = "Write-Output hello-host" if os.name == "nt" else "echo hello-host"
     out = await host_run_command(command=cmd, cwd=str(host_home))
     assert out.result["exit_code"] == 0
     assert "hello-host" in out.result["stdout"]

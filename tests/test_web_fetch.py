@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from ly_next.core.tool_result_spill import coerce_tool_payload_text
 from ly_next.tools.web_fetch import WEB_FETCH_PROVIDERS, _dispatch, _settings, _truncate, web_fetch
 from ly_next.tools.web_fetch_local import extract_html, looks_like_html
 from ly_next.tools.web_shared import format_web_fetch_text
-from ly_next.core.tool_result_spill import coerce_tool_payload_text
 
 
 def test_truncate():

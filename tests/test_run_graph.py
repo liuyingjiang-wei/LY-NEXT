@@ -20,7 +20,7 @@ from ly_next.core.run_graph import (
     emit_graph_node_exit,
 )
 from ly_next.core.run_lifecycle import finish_observed_run, start_observed_run
-from ly_next.core.run_store import clear_memory_runs_for_tests, get_run_store
+from ly_next.core.run_store import clear_memory_runs_for_tests
 from ly_next.core.run_telemetry import set_run_loop_kind
 
 

@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
 """Replace LiquidGlass with Ant Design SettingsCard in workbench panels."""
+
 import re
 from pathlib import Path
 

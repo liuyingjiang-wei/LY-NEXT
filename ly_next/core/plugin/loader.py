@@ -176,6 +176,56 @@ def _discover_module_paths(plugin_dir: Path) -> list[Path]:
     return sorted(modules, key=lambda p: p.name)
 
 
+def discover_directory_plugin_candidates() -> list[str]:
+    """Human-readable paths of plugin modules/packages found on disk under plugin dirs."""
+    names: list[str] = []
+    for plugin_dir in _plugin_search_dirs():
+        if not plugin_dir.is_dir():
+            continue
+        root = plugin_dir.resolve()
+        for module_path in _discover_module_paths(plugin_dir):
+            try:
+                rel = (
+                    module_path.parent.name
+                    if module_path.name == "__init__.py"
+                    else module_path.stem
+                )
+                names.append(f"{root.name}/{rel}")
+            except OSError:
+                continue
+    return names
+
+
+def directory_plugin_load_status() -> dict[str, Any]:
+    """Report whether directory scanning is active and if disk plugins are being skipped."""
+    profile = plugin_security_profile()
+    candidates = discover_directory_plugin_candidates()
+    blocked = False
+    hint: str | None = None
+    if profile == "production":
+        blocked = bool(candidates)
+        hint = (
+            "plugins.security_profile=production 已关闭目录扫描，"
+            "plugins/local 中的插件不会加载。请改为 development，"
+            "或在 plugins.modules 中显式声明模块。"
+        )
+    elif profile == "verified" and not trusted_plugin_hashes_map():
+        blocked = bool(candidates)
+        hint = (
+            "plugins.security_profile=verified 但 trusted_module_hashes 为空，"
+            "目录插件已全部跳过。请填写哈希或改用 development。"
+        )
+    return {
+        "security_profile": profile,
+        "directory_scan_enabled": profile == "development"
+        or (profile == "verified" and bool(trusted_plugin_hashes_map())),
+        "candidates": candidates,
+        "candidate_count": len(candidates),
+        "blocked": blocked,
+        "hint": hint,
+    }
+
+
 def _verify_module_path(module_path: Path, plugin_root: Path, trusted: dict[str, str]) -> bool:
     rel = module_path.resolve().relative_to(plugin_root.resolve()).as_posix()
     expected = trusted.get(rel)
@@ -191,10 +241,20 @@ def _verify_module_path(module_path: Path, plugin_root: Path, trusted: dict[str,
 
 def _load_directory_plugins(registry: PluginRegistry) -> int:
     profile = plugin_security_profile()
+    pending = discover_directory_plugin_candidates()
     if profile == "production":
-        logger.info(
-            "[PluginLoader] plugins.security_profile=production: directory loading disabled"
-        )
+        if pending:
+            logger.warning(
+                "[PluginLoader] plugins.security_profile=production: skipped %s directory "
+                "plugin(s) under plugins/ and extra_dirs (%s). Set plugins.security_profile "
+                "to development or list plugins.modules explicitly.",
+                len(pending),
+                ", ".join(pending[:8]) + ("…" if len(pending) > 8 else ""),
+            )
+        else:
+            logger.info(
+                "[PluginLoader] plugins.security_profile=production: directory loading disabled"
+            )
         return 0
 
     plugin_dirs = _ensure_plugins_import_path()
@@ -206,9 +266,17 @@ def _load_directory_plugins(registry: PluginRegistry) -> int:
     if profile == "verified":
         trusted = trusted_plugin_hashes_map()
         if not trusted:
-            logger.warning(
-                "[PluginLoader] verified profile but plugins.trusted_module_hashes is empty"
-            )
+            if pending:
+                logger.warning(
+                    "[PluginLoader] verified profile but plugins.trusted_module_hashes is "
+                    "empty; skipped %s directory plugin(s): %s",
+                    len(pending),
+                    ", ".join(pending[:8]) + ("…" if len(pending) > 8 else ""),
+                )
+            else:
+                logger.warning(
+                    "[PluginLoader] verified profile but plugins.trusted_module_hashes is empty"
+                )
             return 0
 
     loaded = 0
@@ -218,18 +286,14 @@ def _load_directory_plugins(registry: PluginRegistry) -> int:
             continue
         plugin_root = plugin_dir.resolve()
         for module_path in _discover_module_paths(plugin_dir):
-            if trusted is not None and not _verify_module_path(
-                module_path, plugin_root, trusted
-            ):
+            if trusted is not None and not _verify_module_path(module_path, plugin_root, trusted):
                 continue
             pkg_dir = module_path.parent if module_path.name == "__init__.py" else None
             if pkg_dir and pkg_dir.is_dir() and (pkg_dir / "__init__.py").is_file():
                 try:
                     module = importlib.import_module(pkg_dir.name)
                 except Exception as e:
-                    logger.error(
-                        "[PluginLoader] failed to import package %s: %s", pkg_dir.name, e
-                    )
+                    logger.error("[PluginLoader] failed to import package %s: %s", pkg_dir.name, e)
                     continue
             else:
                 module = _load_module_from_file(module_path)
@@ -237,9 +301,7 @@ def _load_directory_plugins(registry: PluginRegistry) -> int:
                     continue
             plugin = _extract_plugin_from_module(module)
             if plugin is None:
-                if getattr(module, "tools", None) is not None and not hasattr(
-                    module, "plugin"
-                ):
+                if getattr(module, "tools", None) is not None and not hasattr(module, "plugin"):
                     logger.debug(
                         "[PluginLoader] skip tool-only module %s (belongs in tools.plugin_dir)",
                         module_path.name,

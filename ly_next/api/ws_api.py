@@ -8,8 +8,8 @@ from starlette.websockets import WebSocketState
 
 from ly_next.agent.chat_pipeline import ChatTurnRequest, await_user_persist
 from ly_next.agent.chat_runtime import (
-    bind_agent_deps,
     begin_chat_task,
+    bind_agent_deps,
     iter_turn_stream,
     prepare_turn,
     run_turn_blocking,
@@ -288,22 +288,22 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
             ):
                 raise _ChatUserCancelError()
             chat_req = ChatTurnRequest(
-                    client_messages=list(client_messages),
-                    thread_id=thread_id,
-                    mode=requested_mode,
-                    temperature=float(data.get("temperature", 0.7)),
-                    max_tokens=int(data.get("max_tokens", 2048)),
-                    provider=data.get("provider"),
-                    model=data.get("model"),
-                    skip_vision_precaption=data.get("vision_precaption") is False,
-                    tool_call_mode=data.get("tool_call_mode"),
-                    channel=str(data.get("channel") or "web"),
-                    turn_meta_extra={
-                        "task_id": task_id,
-                        "requested_mode": requested_mode,
-                        "channel": "web",
-                    },
-                )
+                client_messages=list(client_messages),
+                thread_id=thread_id,
+                mode=requested_mode,
+                temperature=float(data.get("temperature", 0.7)),
+                max_tokens=int(data.get("max_tokens", 2048)),
+                provider=data.get("provider"),
+                model=data.get("model"),
+                skip_vision_precaption=data.get("vision_precaption") is False,
+                tool_call_mode=data.get("tool_call_mode"),
+                channel=str(data.get("channel") or "web"),
+                turn_meta_extra={
+                    "task_id": task_id,
+                    "requested_mode": requested_mode,
+                    "channel": "web",
+                },
+            )
             prepared, mode = await prepare_turn(chat_req)
             chat_trace_info(
                 "prepared",
@@ -560,12 +560,11 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                         c = event.get("content") or ""
                         if c:
                             full_response = c
-                            if not event.get("chunked"):
-                                if not await _send_chat_json(
-                                    websocket, {"type": "chat_chunk", "content": c}
-                                ):
-                                    end_reason = "client_gone"
-                                    break
+                            if not event.get("chunked") and not await _send_chat_json(
+                                websocket, {"type": "chat_chunk", "content": c}
+                            ):
+                                end_reason = "client_gone"
+                                break
             finally:
                 if not pump_task.done():
                     pump_task.cancel()

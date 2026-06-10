@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Move chat modules into features/chat/ and write root re-export stubs."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,7 +38,7 @@ def main() -> None:
         text = text.replace('from "./chatStorage.js"', 'from "./chatStorage.js"')
         text = text.replace('from "./chatTranslate.js"', 'from "./chatTranslate.js"')
         dst.write_text(text, encoding="utf-8")
-        export_line = "{ default }" if name.endswith(".jsx") else "*"
+        "{ default }" if name.endswith(".jsx") else "*"
         if name.endswith(".js") and not name.endswith(".jsx"):
             # named exports only files
             if name == "chatTranslate.js":
@@ -56,15 +57,15 @@ def main() -> None:
     if panel.exists():
         t = panel.read_text(encoding="utf-8")
         replacements = {
-            '@/chatTransport.js': './chatTransport.js',
-            '@/chatMessageImages.js': './chatMessageImages.js',
-            '@/ChatToolTimeline.jsx': './ChatToolTimeline.jsx',
-            '@/chatStorage.js': './chatStorage.js',
-            '@/chatThreadSync.js': './chatThreadSync.js',
-            '@/MessageActions.jsx': './MessageActions.jsx',
-            '@/chatTranslate.js': './chatTranslate.js',
-            '@/ChatComposer.jsx': './ChatComposer.jsx',
-            '@/chatScenarioPresets.js': './chatScenarioPresets.js',
+            "@/chatTransport.js": "./chatTransport.js",
+            "@/chatMessageImages.js": "./chatMessageImages.js",
+            "@/ChatToolTimeline.jsx": "./ChatToolTimeline.jsx",
+            "@/chatStorage.js": "./chatStorage.js",
+            "@/chatThreadSync.js": "./chatThreadSync.js",
+            "@/MessageActions.jsx": "./MessageActions.jsx",
+            "@/chatTranslate.js": "./chatTranslate.js",
+            "@/ChatComposer.jsx": "./ChatComposer.jsx",
+            "@/chatScenarioPresets.js": "./chatScenarioPresets.js",
         }
         for old, new in replacements.items():
             t = t.replace(f'from "{old}"', f'from "{new}"')

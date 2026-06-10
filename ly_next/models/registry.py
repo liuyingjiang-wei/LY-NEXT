@@ -165,7 +165,9 @@ class ModelRegistry:
         if norm["format"] not in ("ollama",) and not norm.get("api_key"):
             if norm["format"] == "openai_compat" and str(norm.get("base_url") or "").strip():
                 pass
-            elif norm["format"] != "openai_compat" or str(norm.get("api_key") or "").lower() not in (
+            elif norm["format"] != "openai_compat" or str(
+                norm.get("api_key") or ""
+            ).lower() not in (
                 "not-needed",
                 "not_needed",
             ):

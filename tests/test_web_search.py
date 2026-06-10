@@ -4,9 +4,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from ly_next.tools.web_search import run_web_search, web_search
-from ly_next.tools.web_shared import format_web_fetch_text, format_web_search_text, normalize_search_hit
 from ly_next.core.tool_result_spill import coerce_tool_payload_text
+from ly_next.tools.web_search import run_web_search, web_search
+from ly_next.tools.web_shared import (
+    format_web_search_text,
+    normalize_search_hit,
+)
 
 
 def test_normalize_search_hit_shape():
@@ -19,13 +22,16 @@ async def test_run_web_search_returns_normalized_results():
     fake = [
         normalize_search_hit(title="A", url="https://a.test", snippet="sa"),
     ]
-    with patch(
-        "ly_next.tools.web_search._resolve_provider",
-        return_value=("duckduckgo", ""),
-    ), patch(
-        "ly_next.tools.web_search._search_duckduckgo",
-        new_callable=AsyncMock,
-        return_value=fake,
+    with (
+        patch(
+            "ly_next.tools.web_search._resolve_provider",
+            return_value=("duckduckgo", ""),
+        ),
+        patch(
+            "ly_next.tools.web_search._search_duckduckgo",
+            new_callable=AsyncMock,
+            return_value=fake,
+        ),
     ):
         provider, results = await run_web_search("openclaw tools", count=3)
 

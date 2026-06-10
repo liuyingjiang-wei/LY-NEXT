@@ -81,7 +81,9 @@ async def iter_direct_answer(
                 yield {"type": "chunk", "content": piece}
     except Exception as e:
         logger.error("[turn_engine] direct stream failed: %s", e)
-        chat_trace_warn("direct_stream_failed", thread_id=getattr(deps, "thread_id", None), error=str(e))
+        chat_trace_warn(
+            "direct_stream_failed", thread_id=getattr(deps, "thread_id", None), error=str(e)
+        )
         yield {"type": "error", "content": str(e)}
         return
 
@@ -89,7 +91,12 @@ async def iter_direct_answer(
     if not text and think_parts:
         text = "".join(think_parts).strip()
     text = text or "No response."
-    yield {"type": "final", "content": text, "chunked": bool(parts), "had_thinking": bool(think_parts)}
+    yield {
+        "type": "final",
+        "content": text,
+        "chunked": bool(parts),
+        "had_thinking": bool(think_parts),
+    }
 
 
 async def iter_agent_turn(
@@ -98,8 +105,8 @@ async def iter_agent_turn(
     *,
     mode: str,
 ) -> AsyncIterator[dict[str, Any]]:
-    from ly_next.agent.factory import AgentFactory
     from ly_next.agent.content_trust import reset_content_trust, seed_untrusted_from_channel
+    from ly_next.agent.factory import AgentFactory
     from ly_next.agent.tool_context import reset_tool_run_deps, set_tool_run_deps
 
     token = set_tool_run_deps(deps)

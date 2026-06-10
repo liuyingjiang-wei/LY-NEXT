@@ -38,9 +38,7 @@ def _is_unset_secret(value: str) -> bool:
     s = str(value or "").strip()
     if not s:
         return True
-    if _PLACEHOLDER_RE.search(s):
-        return True
-    return False
+    return bool(_PLACEHOLDER_RE.search(s))
 
 
 def llm_provider_status(provider: str | None = None) -> dict[str, Any]:
@@ -57,16 +55,37 @@ def llm_provider_status(provider: str | None = None) -> dict[str, Any]:
         if fmt == "ollama":
             ok = bool(model)
             hint = None if ok else "请为 Ollama 模型填写模型 ID"
-            return {"ok": ok, "provider": name, "format": fmt, "model": model, "base_url": base_url, "hint": hint}
+            return {
+                "ok": ok,
+                "provider": name,
+                "format": fmt,
+                "model": model,
+                "base_url": base_url,
+                "hint": hint,
+            }
 
         if fmt == "openai_compat" and api_key.lower() in ("not-needed", "not_needed"):
             ok = bool(base_url and model)
             hint = None if ok else "请填写 OpenAI 兼容网关的 Base URL 与模型"
-            return {"ok": ok, "provider": name, "format": fmt, "model": model, "base_url": base_url, "hint": hint}
+            return {
+                "ok": ok,
+                "provider": name,
+                "format": fmt,
+                "model": model,
+                "base_url": base_url,
+                "hint": hint,
+            }
 
         ok = not _is_unset_secret(api_key) and bool(model)
         hint = None if ok else f"请在「模型配置」为「{name}」填写 API 密钥与模型 ID"
-        return {"ok": ok, "provider": name, "format": fmt, "model": model, "base_url": base_url, "hint": hint}
+        return {
+            "ok": ok,
+            "provider": name,
+            "format": fmt,
+            "model": model,
+            "base_url": base_url,
+            "hint": hint,
+        }
 
     prov = str(provider or config.get("llm.default_provider") or "openai").strip().lower()
     block_key = f"{prov}_llm"

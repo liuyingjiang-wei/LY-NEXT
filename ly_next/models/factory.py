@@ -94,7 +94,18 @@ class LLMFactory:
                     "model": merged.get("model", ""),
                     "api_key": merged.get("api_key", ""),
                     "base_url": merged.get("base_url", ""),
-                    **{k: merged[k] for k in ("auth_mode", "auth_header_name", "token_field", "model_aliases", "headers", "path") if k in merged},
+                    **{
+                        k: merged[k]
+                        for k in (
+                            "auth_mode",
+                            "auth_header_name",
+                            "token_field",
+                            "model_aliases",
+                            "headers",
+                            "path",
+                        )
+                        if k in merged
+                    },
                 },
                 **kwargs,
             )

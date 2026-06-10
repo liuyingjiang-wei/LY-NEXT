@@ -19,7 +19,9 @@ def _normalize_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
         "type": "function",
         "function": {
             "name": tool_call.get("name"),
-            "arguments": tool_call.get("arguments") if tool_call.get("arguments") is not None else "{}",
+            "arguments": tool_call.get("arguments")
+            if tool_call.get("arguments") is not None
+            else "{}",
         },
     }
 

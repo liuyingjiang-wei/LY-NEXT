@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from ly_next.core.audit_log import audit_enabled
 from ly_next.core.auth_gate import auth_mode, rbac_enabled
 from ly_next.core.auth_jwt import jwt_enabled, jwt_secret_configured
 from ly_next.core.auth_users import users_configured, users_with_plaintext_password
-from ly_next.core.audit_log import audit_enabled
 from ly_next.core.config import UNSAFE_DOCS_WHITELIST, config
 
 _WEAK_KEY_SAMPLES = frozenset({"changeme", "password", "12345678", "test", "secret"})
@@ -40,13 +40,21 @@ def gather_security_health() -> dict[str, Any]:
     cors_origins = config.get("cors.origins") or []
     whitelist = config.get("auth.whitelist") or []
     store_prompts = bool((config.get("agent.observability") or {}).get("store_prompts", False))
-    api_profile = str(config.get("api.security_profile", "development") or "development").strip().lower()
-    plugin_profile = str(
-        config.get("plugins.security_profile") or config.get("api.security_profile", "development") or "development"
-    ).strip().lower()
-    tools_profile = str(
-        config.get("tools.security_profile") or plugin_profile or "development"
-    ).strip().lower()
+    api_profile = (
+        str(config.get("api.security_profile", "development") or "development").strip().lower()
+    )
+    plugin_profile = (
+        str(
+            config.get("plugins.security_profile")
+            or config.get("api.security_profile", "development")
+            or "development"
+        )
+        .strip()
+        .lower()
+    )
+    tools_profile = (
+        str(config.get("tools.security_profile") or plugin_profile or "development").strip().lower()
+    )
     host_enabled = bool((config.get("tools.host") or {}).get("enabled", False))
     host_exec = bool(((config.get("tools.host") or {}).get("exec") or {}).get("enabled", False))
     built_in = config.get("tools.built_in") or []
@@ -54,9 +62,7 @@ def gather_security_health() -> dict[str, Any]:
     policy = config.get("agent.tool_policy") or {}
     deny_raw = policy.get("deny_tools") if isinstance(policy, dict) else []
     deny_names = (
-        {str(x) for x in deny_raw if str(x).strip()}
-        if isinstance(deny_raw, list)
-        else set()
+        {str(x) for x in deny_raw if str(x).strip()} if isinstance(deny_raw, list) else set()
     )
     security = config.get("security") or {}
     headers_cfg = security.get("headers") if isinstance(security, dict) else {}
@@ -65,9 +71,11 @@ def gather_security_health() -> dict[str, Any]:
     trust_proxy = bool((rate_cfg or {}).get("trust_proxy_headers", False))
     agent_policy = security.get("agent_policy") if isinstance(security, dict) else {}
     agent_policy_enabled = bool((agent_policy or {}).get("enabled", True))
-    host_exec_cfg = ((config.get("tools.host") or {}).get("exec") or {}) if isinstance(
-        config.get("tools.host"), dict
-    ) else {}
+    host_exec_cfg = (
+        ((config.get("tools.host") or {}).get("exec") or {})
+        if isinstance(config.get("tools.host"), dict)
+        else {}
+    )
     host_minimal_env = bool(host_exec_cfg.get("minimal_env", True))
     host_hard_blocks = host_exec_cfg.get("hard_block_patterns")
     has_custom_hard_blocks = isinstance(host_hard_blocks, list) and len(host_hard_blocks) > 0
@@ -214,6 +222,22 @@ def gather_security_health() -> dict[str, Any]:
             else f"plugins.security_profile={plugin_profile}；生产请设为 production 或 verified",
         )
     )
+    try:
+        from ly_next.core.plugin.loader import directory_plugin_load_status
+
+        plugin_dir_status = directory_plugin_load_status()
+        if plugin_dir_status.get("blocked"):
+            checks.append(
+                _check(
+                    "plugins_directory_blocked",
+                    ok=False,
+                    label="plugins/local 目录插件",
+                    hint=str(plugin_dir_status.get("hint") or "目录插件被安全档位拦截"),
+                    severity="critical",
+                )
+            )
+    except Exception:
+        pass
     checks.append(
         _check(
             "tools_security_profile",

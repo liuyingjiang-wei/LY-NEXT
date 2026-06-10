@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from ly_next.tools import host_platform as hp
@@ -25,7 +23,9 @@ def test_default_shell_command_rejects_empty():
 
 def test_windows_argv_shape(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(hp, "detect_host_platform", lambda: "windows")
-    monkeypatch.setattr(hp.shutil, "which", lambda name: "C:\\Windows\\cmd.exe" if name == "cmd" else None)
+    monkeypatch.setattr(
+        hp.shutil, "which", lambda name: "C:\\Windows\\cmd.exe" if name == "cmd" else None
+    )
     argv = hp.default_shell_command("dir")
     assert argv[0].endswith("cmd.exe")
     assert argv[-1] == "dir"

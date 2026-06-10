@@ -10,7 +10,12 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
-from ly_next.agent.chat_pipeline import ChatTurnRequest, await_user_persist, effective_turn_mode, prepare_chat_turn
+from ly_next.agent.chat_pipeline import (
+    ChatTurnRequest,
+    await_user_persist,
+    effective_turn_mode,
+    prepare_chat_turn,
+)
 from ly_next.agent.chat_runtime import bind_agent_deps, iter_turn_stream
 from ly_next.agent.image_reply import ensure_mixed_reply
 from ly_next.core.chat_trace_log import chat_info as chat_trace_info

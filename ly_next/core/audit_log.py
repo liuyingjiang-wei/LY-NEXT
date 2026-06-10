@@ -67,9 +67,8 @@ def write_audit_event(event: str, **fields: Any) -> None:
     path = _audit_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with _lock:
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+        with _lock, path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
     except Exception as e:
         logger.warning("audit log write failed: %s", e)
 

@@ -29,7 +29,9 @@ def _config_path() -> Path:
 
 def _telegram_check() -> dict[str, Any]:
     enabled = bool(config.get("bridge.telegram.enabled", False))
-    token = str(config.get("bridge.telegram.bot_token") or config.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    token = str(
+        config.get("bridge.telegram.bot_token") or config.get("TELEGRAM_BOT_TOKEN") or ""
+    ).strip()
     api_key = str(config.get("auth.api_key") or "").strip()
     dm_policy = str(config.get("bridge.telegram.dm_policy") or "pairing").strip().lower()
     token_hint_extra = ""
@@ -37,7 +39,9 @@ def _telegram_check() -> dict[str, Any]:
         from telegram_bot.token_check import token_matches_api_key, validate_bot_token_format
 
         if token and token_matches_api_key(token, api_key):
-            token_hint_extra = "bot_token 与 auth.api_key 相同，请改用 @BotFather 的 Telegram Bot Token"
+            token_hint_extra = (
+                "bot_token 与 auth.api_key 相同，请改用 @BotFather 的 Telegram Bot Token"
+            )
         elif token:
             fmt_err = validate_bot_token_format(token)
             if fmt_err:

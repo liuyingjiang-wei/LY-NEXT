@@ -9,7 +9,12 @@ from pydantic import BaseModel, Field
 
 from ly_next.core.audit_log import audit_auth_event
 from ly_next.core.auth_context import bind_principal, get_principal, release_principal
-from ly_next.core.auth_gate import auth_mode, login_with_password, principal_from_request_state, rbac_enabled
+from ly_next.core.auth_gate import (
+    auth_mode,
+    login_with_password,
+    principal_from_request_state,
+    rbac_enabled,
+)
 from ly_next.core.auth_jwt import issue_access_token, jwt_enabled
 from ly_next.core.auth_users import users_configured
 from ly_next.core.config import config
@@ -54,9 +59,7 @@ async def auth_me(request: Request) -> dict[str, Any]:
         p = get_principal()
         body = {"authenticated": True}
         if p:
-            body.update(
-                {"subject": p.subject, "role": p.role, "auth_method": p.auth_method}
-            )
+            body.update({"subject": p.subject, "role": p.role, "auth_method": p.auth_method})
         return body
     finally:
         release_principal(token)

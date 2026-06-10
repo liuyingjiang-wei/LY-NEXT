@@ -85,15 +85,16 @@ def build_turn_plan(req: Any, messages: list[dict[str, Any]] | None = None) -> T
         skip_rag, skip_context = True, True
 
     skip_memory = bool(getattr(req, "skip_memory", False))
-    if not skip_memory and bool(pipeline_cfg("auto_skip_memory_on_fast_path", True)):
-        if fast_path:
-            skip_memory = True
+    if not skip_memory and bool(pipeline_cfg("auto_skip_memory_on_fast_path", True)) and fast_path:
+        skip_memory = True
 
     skip_skills = bool(query and should_skip_skills_augment(query))
 
     skip_augment = getattr(req, "skip_augment", None) is True
-    if getattr(req, "skip_augment", None) is None and fast_path and bool(
-        pipeline_cfg("skip_augment_on_fast_path", True)
+    if (
+        getattr(req, "skip_augment", None) is None
+        and fast_path
+        and bool(pipeline_cfg("skip_augment_on_fast_path", True))
     ):
         skip_augment = True
 

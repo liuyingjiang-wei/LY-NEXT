@@ -208,7 +208,9 @@ async def run_web_search(query: str, count: int | None = None) -> tuple[str, lis
     return provider, results
 
 
-async def web_search(query: str, count: int | None = None, num_results: int | None = None) -> ToolResult:
+async def web_search(
+    query: str, count: int | None = None, num_results: int | None = None
+) -> ToolResult:
     try:
         n = count if count is not None else num_results
         provider, results = await run_web_search(query, n)

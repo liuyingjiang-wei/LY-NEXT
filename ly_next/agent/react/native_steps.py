@@ -26,6 +26,7 @@ from ly_next.agent.react.tool_exec import execute_native_tool_call
 from ly_next.agent.streaming_tool_executor import StreamingToolExecutor
 from ly_next.agent.tool_filter import get_openai_tools_for_deps
 from ly_next.agent.turn_engine import iter_direct_answer
+from ly_next.core.config import config
 from ly_next.core.context_budget import (
     cumulative_budget_limit,
     effective_context_window_tokens,
@@ -34,7 +35,6 @@ from ly_next.core.context_budget import (
     parse_completion_meta,
     prune_old_tool_message_contents,
 )
-from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.core.run_graph import (
     NODE_DIRECT_ANSWER,
@@ -110,9 +110,7 @@ class NativeReactSession:
     ctx_window: int = 0
 
     @classmethod
-    def from_messages(
-        cls, messages: list[dict[str, Any]], deps: AgentDeps
-    ) -> NativeReactSession:
+    def from_messages(cls, messages: list[dict[str, Any]], deps: AgentDeps) -> NativeReactSession:
         openai_tools, allowed_names, _objs = get_openai_tools_for_deps(deps)
         session = cls(
             deps=deps,

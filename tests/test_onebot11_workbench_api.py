@@ -5,8 +5,8 @@ import pytest
 pytest.importorskip("qq_onebot")
 
 from fastapi.testclient import TestClient
-
 from qq_onebot.bridge.napcat_actions import NAPCAT_ACTION_NAMES
+
 from ly_next.core.config import config
 from ly_next.main import create_app
 

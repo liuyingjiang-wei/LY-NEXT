@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -106,10 +107,8 @@ async def test_model(req: ModelTestRequest):
         latency_ms = int((time.perf_counter() - t0) * 1000)
         close_fn = getattr(client, "close", None)
         if callable(close_fn):
-            try:
+            with contextlib.suppress(Exception):
                 await close_fn()
-            except Exception:
-                pass
         return {
             "ok": True,
             "name": name,
@@ -134,9 +133,13 @@ async def add_model(req: ModelAddRequest):
     name = req.name.strip()
     is_update = name in ModelRegistry.list_names()
 
-    if not is_update and not req.api_key.strip() and fmt not in ("ollama",):
-        if fmt != "openai_compat" or not req.base_url.strip():
-            return {"ok": False, "error": "API Key 不能为空"}
+    if (
+        not is_update
+        and not req.api_key.strip()
+        and fmt not in ("ollama",)
+        and (fmt != "openai_compat" or not req.base_url.strip())
+    ):
+        return {"ok": False, "error": "API Key 不能为空"}
 
     extra: dict[str, Any] = {}
     if req.auth_mode:

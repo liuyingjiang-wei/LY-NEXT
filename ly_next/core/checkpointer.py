@@ -19,11 +19,7 @@ def checkpoint_enabled() -> bool:
 
 
 def checkpoint_active() -> bool:
-    return (
-        checkpoint_enabled()
-        and _checkpointer is not None
-        and checkpoint_writes_during_run()
-    )
+    return checkpoint_enabled() and _checkpointer is not None and checkpoint_writes_during_run()
 
 
 async def init_checkpointer() -> None:

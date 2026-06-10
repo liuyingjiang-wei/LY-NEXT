@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Any
 
@@ -97,7 +98,5 @@ async def probe_llm_connectivity(
         if client is not None:
             close_fn = getattr(client, "close", None)
             if callable(close_fn):
-                try:
+                with contextlib.suppress(Exception):
                     await close_fn()
-                except Exception:
-                    pass

@@ -69,15 +69,21 @@ async def test_handle_chat_recv_does_not_crash_before_prepare(monkeypatch):
     monkeypatch.setattr(
         ws_api,
         "begin_chat_task",
-        AsyncMock(return_value=type("H", (), {"task_id": "task-test-1", "name": "WebSocket Chat"})()),
+        AsyncMock(
+            return_value=type("H", (), {"task_id": "task-test-1", "name": "WebSocket Chat"})()
+        ),
     )
-    monkeypatch.setattr(ws_api, "get_task_manager", lambda: MagicMock(
-        update=AsyncMock(),
-        get_stop_event=MagicMock(return_value=None),
-        is_stopped=MagicMock(return_value=False),
-        complete=AsyncMock(),
-        fail=AsyncMock(),
-    ))
+    monkeypatch.setattr(
+        ws_api,
+        "get_task_manager",
+        lambda: MagicMock(
+            update=AsyncMock(),
+            get_stop_event=MagicMock(return_value=None),
+            is_stopped=MagicMock(return_value=False),
+            complete=AsyncMock(),
+            fail=AsyncMock(),
+        ),
+    )
     monkeypatch.setattr(
         ws_api,
         "get_task_broadcaster",
@@ -128,7 +134,9 @@ async def test_handle_chat_sends_chat_started_after_routed_log(monkeypatch):
     monkeypatch.setattr(
         ws_api,
         "begin_chat_task",
-        AsyncMock(return_value=type("H", (), {"task_id": "task-routed-1", "name": "WebSocket Chat"})()),
+        AsyncMock(
+            return_value=type("H", (), {"task_id": "task-routed-1", "name": "WebSocket Chat"})()
+        ),
     )
     routed = ChatModelSelection(
         name="openai",
@@ -146,7 +154,6 @@ async def test_handle_chat_sends_chat_started_after_routed_log(monkeypatch):
         plan=None,
     )
 
-
     monkeypatch.setattr(ws_api, "get_task_manager", lambda: manager)
     monkeypatch.setattr(
         ws_api,
@@ -161,7 +168,9 @@ async def test_handle_chat_sends_chat_started_after_routed_log(monkeypatch):
     monkeypatch.setattr(ws_api, "prepare_turn", AsyncMock(return_value=(prepared, "chat")))
     monkeypatch.setattr(ws_api, "start_observed_run", AsyncMock(return_value=object()))
     monkeypatch.setattr(ws_api, "finish_observed_run", AsyncMock(return_value=None))
-    monkeypatch.setattr(ws_api, "bind_agent_deps", MagicMock(return_value=MagicMock(tool_registry=None)))
+    monkeypatch.setattr(
+        ws_api, "bind_agent_deps", MagicMock(return_value=MagicMock(tool_registry=None))
+    )
     monkeypatch.setattr(ws_api, "run_turn_blocking", AsyncMock(return_value="ok"))
     monkeypatch.setattr(ws_api, "await_user_persist", AsyncMock())
     monkeypatch.setattr(

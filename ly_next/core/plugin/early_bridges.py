@@ -17,12 +17,18 @@ from ly_next.core.plugin.loader import (
     _extract_plugin_from_module,
     _plugins_enabled,
 )
+from ly_next.core.plugin.loader_security import plugin_security_profile, trusted_plugin_hashes_map
 
 logger = get_bridge_logger(__name__)
 
 
 def _load_directory_bridge_plugins(registry: BridgeRegistry, ctx: AppContext) -> None:
     if not _plugins_enabled():
+        return
+    profile = plugin_security_profile()
+    if profile == "production":
+        return
+    if profile == "verified" and not trusted_plugin_hashes_map():
         return
     plugin_dirs = _ensure_plugins_import_path()
     if not any(d.is_dir() for d in plugin_dirs):
@@ -54,9 +60,7 @@ def _load_directory_bridge_plugins(registry: BridgeRegistry, ctx: AppContext) ->
             try:
                 plugin.register_bridges(registry, ctx)
             except Exception as e:
-                logger.error(
-                    "[EarlyBridges] register_bridges failed for %s: %s", plugin.name, e
-                )
+                logger.error("[EarlyBridges] register_bridges failed for %s: %s", plugin.name, e)
 
 
 def _load_module_bridge_plugins(registry: BridgeRegistry, ctx: AppContext) -> None:

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
@@ -15,7 +15,6 @@ from ly_next.core.checkpointer import compile_graph, graph_astream
 from ly_next.core.logger import get_logger
 from ly_next.core.run_graph import (
     NODE_DIRECT_ANSWER,
-    NODE_EXECUTE_TOOLS,
     NODE_PREP,
     NODE_REACT_STEP,
     emit_graph_edge,

@@ -225,9 +225,8 @@ async def host_list_dir(path: str = ".", recursive: bool = False) -> ToolResult:
             if len(entries) >= limit:
                 return True
             entries.append(_entry_info(child))
-            if recursive and child.is_dir():
-                if _walk_dir(child):
-                    return True
+            if recursive and child.is_dir() and _walk_dir(child):
+                return True
         return False
 
     truncated = _walk_dir(resolved)

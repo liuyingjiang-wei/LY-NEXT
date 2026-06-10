@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ly_next.tools.document_tools import generate_docx, generate_xlsx, generate_pptx
+from ly_next.tools.document_tools import generate_docx, generate_pptx, generate_xlsx
 from ly_next.tools.export_paths import resolve_export_path
 
 

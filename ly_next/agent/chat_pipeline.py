@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ly_next.agent.chat_middleware import get_chat_middleware_chain
+from ly_next.agent.chat_model import ChatModelSelection, resolve_chat_model, selection_payload
 from ly_next.agent.deps import AgentDeps, create_agent_deps
 from ly_next.agent.image_reply import begin_agent_run, ensure_mixed_reply
-from ly_next.agent.chat_model import ChatModelSelection, resolve_chat_model, selection_payload
 from ly_next.agent.prompt_augment import augment_messages_async, last_user_query
 from ly_next.agent.turn_engine import iter_agent_turn
 from ly_next.agent.turn_plan import (
@@ -21,7 +21,6 @@ from ly_next.agent.vision_precaption import (
     apply_vision_precaption_if_needed,
     messages_need_vision_precaption,
 )
-from ly_next.core.config import config
 from ly_next.core.thread_persistence import persist_chat_turn, prepare_messages_for_agent
 from ly_next.messaging.models import MixedMessage, mixed_message_to_dict
 from ly_next.tools import get_tool_registry
@@ -111,7 +110,9 @@ async def prepare_chat_turn(req: ChatTurnRequest) -> PreparedChatTurn:
     effective_mode = plan.effective_mode
 
     parallel = (
-        req.parallel_prep if req.parallel_prep is not None else bool(pipeline_cfg("parallel_prep", True))
+        req.parallel_prep
+        if req.parallel_prep is not None
+        else bool(pipeline_cfg("parallel_prep", True))
     )
     overlap_augment = bool(pipeline_cfg("overlap_augment", True))
     needs_vision = messages_need_vision_precaption(

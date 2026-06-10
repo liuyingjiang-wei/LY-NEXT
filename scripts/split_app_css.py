@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Move feature-scoped CSS blocks from app.css into split stylesheets."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,19 +11,19 @@ APP = ROOT / "app.css"
 # 1-based inclusive line ranges to extract (verified against current app.css)
 EXTRACT = {
     "styles/status.css": [
-        (625, 718),   # kpi, resource, ring
-        (1041, 1126), # spark, net
+        (625, 718),  # kpi, resource, ring
+        (1041, 1126),  # spark, net
     ],
     "styles/api.css": [
-        (1128, 1208), # api explorer (not global form controls)
+        (1128, 1208),  # api explorer (not global form controls)
     ],
     "styles/tasks.css": [
-        (747, 791),   # tasks-panel toolbar/table
-        (759, 767),   # btn-task-primary (overlaps - handled by dedupe)
+        (747, 791),  # tasks-panel toolbar/table
+        (759, 767),  # btn-task-primary (overlaps - handled by dedupe)
         (981, 1022),  # task-actions, btn-inline, task-status
     ],
     "styles/runs.css": [
-        (798, 951),   # runs-panel tables/events
+        (798, 951),  # runs-panel tables/events
     ],
 }
 
@@ -127,7 +128,7 @@ def remove_prefix_blocks(css: str) -> str:
         if next_dot == -1:
             parts.append(css[i:])
             break
-        parts.append(css[i:next_dot + 1])
+        parts.append(css[i : next_dot + 1])
         i = next_dot + 1
     return "".join(parts)
 
@@ -151,14 +152,19 @@ def main() -> None:
 
     settings_extra = ""
     if ".settings-lead-panel" in remaining:
-        settings_extra += ".settings-lead-panel .settings-lead,\n.api-page-panel .api {\n  margin: 0;\n}\n\n"
+        settings_extra += (
+            ".settings-lead-panel .settings-lead,\n.api-page-panel .api {\n  margin: 0;\n}\n\n"
+        )
     settings_extra += ".settings-lead { margin: 0 0 14px; max-width: 52rem; }\n\n"
     settings_extra += extract_by_prefix(remaining)
 
     settings_path = ROOT / "styles" / "settings.css"
     existing = settings_path.read_text(encoding="utf-8") if settings_path.exists() else ""
     settings_path.write_text(
-        existing.rstrip() + "\n\n/* --- split from app.css --- */\n\n" + settings_extra.strip() + "\n",
+        existing.rstrip()
+        + "\n\n/* --- split from app.css --- */\n\n"
+        + settings_extra.strip()
+        + "\n",
         encoding="utf-8",
     )
     print(f"appended to {settings_path}")

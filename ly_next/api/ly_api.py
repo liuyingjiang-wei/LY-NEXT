@@ -23,15 +23,14 @@ from ly_next.agent.chat_pipeline import (
 from ly_next.agent.factory import AgentFactory
 from ly_next.agent.image_reply import ensure_mixed_reply
 from ly_next.agent.startup_memory import invalidate_startup_memory_cache
-from ly_next.core.config import get_project_root
-from ly_next.core.plugin.loader_security import plugin_security_profile
 from ly_next.core.cache import cache
 from ly_next.core.chat_trace_log import chat_info as chat_trace_info
 from ly_next.core.chat_trace_log import chat_warn as chat_trace_warn
-from ly_next.core.config import config
+from ly_next.core.config import config, get_project_root
 from ly_next.core.database import db
 from ly_next.core.logger import get_logger, refresh_ly_next_log_level_from_config
 from ly_next.core.observability import attach_run_fields
+from ly_next.core.plugin.loader_security import plugin_security_profile
 from ly_next.core.run_lifecycle import finish_observed_run, start_observed_run
 from ly_next.core.run_telemetry import snapshot_usage_for_api
 from ly_next.core.task_manager import get_task_manager
@@ -54,6 +53,12 @@ def _resolve_plugins_dir() -> Path:
     if not path.is_absolute():
         path = get_project_root() / path
     return path
+
+
+def _plugins_directory_status() -> dict[str, Any]:
+    from ly_next.core.plugin.loader import directory_plugin_load_status
+
+    return directory_plugin_load_status()
 
 
 def _tool_catalog() -> list[dict[str, Any]]:
@@ -489,6 +494,7 @@ async def get_system_extensions(request: Request):
             "security_profile": plugin_security_profile(),
             "entry_points": bool(config.get("plugins.entry_points", True)),
             "tools_plugin_dir": str(config.get("tools.plugin_dir") or ""),
+            "directory": _plugins_directory_status(),
         },
         "plugin_extras": plugin_extras,
         "bridges": bridge_info,

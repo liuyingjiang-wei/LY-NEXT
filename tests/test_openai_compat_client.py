@@ -80,7 +80,9 @@ async def test_stream_chat_complete_yields_content_and_done():
         assert request.method == "POST"
         body = __import__("json").loads(request.content)
         assert body.get("stream") is True
-        return httpx.Response(200, content="".join(chunks), headers={"content-type": "text/event-stream"})
+        return httpx.Response(
+            200, content="".join(chunks), headers={"content-type": "text/event-stream"}
+        )
 
     transport = httpx.MockTransport(handler)
     client = OpenAICompatibleLLMClient(

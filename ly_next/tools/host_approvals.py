@@ -51,7 +51,7 @@ def approval_ttl_seconds() -> int:
 def _purge_expired() -> None:
     ttl = approval_ttl_seconds()
     now = time.time()
-    for aid, item in list(_store.items()):
+    for _aid, item in list(_store.items()):
         if item.status == "pending" and now - item.created_at > ttl:
             item.status = "expired"
             item.decided_at = now

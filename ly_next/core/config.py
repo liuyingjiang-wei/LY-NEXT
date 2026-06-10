@@ -103,7 +103,7 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
             "extra_dirs": ["plugins/local"],
             "modules": [],
             "entry_points": True,
-            "security_profile": "production",
+            "security_profile": "development",
             "trusted_module_hashes": {},
         },
         "auth": {
@@ -452,7 +452,49 @@ class Config:
         self._migrate_auth_whitelist()
         self._migrate_onebot11_config()
         self._migrate_telegram_config()
+        self._migrate_plugins_security_profile()
         self._cache.clear()
+
+    def _plugins_local_has_candidates(self) -> bool:
+        local = self.project_root / "plugins" / "local"
+        if not local.is_dir():
+            return False
+        try:
+            for item in local.iterdir():
+                if item.name.startswith("."):
+                    continue
+                if item.is_file() and item.suffix == ".py" and not item.name.startswith("_"):
+                    return True
+                if item.is_dir() and (item / "__init__.py").is_file():
+                    return True
+        except OSError:
+            return False
+        return False
+
+    def _migrate_plugins_security_profile(self) -> None:
+        """Earlier releases defaulted to production, which disables plugins/local scanning."""
+        plugins = self._config.get("plugins")
+        if not isinstance(plugins, dict):
+            return
+        profile = str(plugins.get("security_profile") or "").strip().lower()
+        modules = plugins.get("modules") or []
+        if profile != "production" or (isinstance(modules, list) and modules):
+            return
+        if not self._plugins_local_has_candidates():
+            return
+        plugins["security_profile"] = "development"
+        self._config["plugins"] = plugins
+        try:
+            from ly_next.core.logger import get_logger
+
+            get_logger(__name__).warning(
+                "plugins.security_profile was production while plugins/local contains "
+                "plugins; switched to development so directory plugins load. To keep "
+                "production, set plugins.modules explicitly and remove local plugins."
+            )
+        except Exception:
+            pass
+        self.save()
 
     def _migrate_telegram_config(self) -> None:
         bridge = self._config.get("bridge")
@@ -531,18 +573,21 @@ class Config:
         self.ensure_required_auth_whitelist()
 
     def _migrate_onebot11_config(self) -> None:
+        default_onebot11_ws_paths: tuple[str, ...]
         try:
             from ly_next.core.plugin.loader import _ensure_plugins_import_path
 
             _ensure_plugins_import_path()
             from qq_onebot.bridge.paths import DEFAULT_ONEBOT11_WS_PATHS, merge_ws_paths
+
+            default_onebot11_ws_paths = DEFAULT_ONEBOT11_WS_PATHS
         except ImportError:
-            DEFAULT_ONEBOT11_WS_PATHS = ("/OneBotv11", "/onebot/v11/ws")
+            default_onebot11_ws_paths = ("/OneBotv11", "/onebot/v11/ws")
 
             def merge_ws_paths(configured: tuple[str, ...]) -> tuple[str, ...]:
                 seen: set[str] = set()
                 out: list[str] = []
-                for item in (*configured, *DEFAULT_ONEBOT11_WS_PATHS):
+                for item in (*configured, *default_onebot11_ws_paths):
                     norm = item if item.startswith("/") else f"/{item}"
                     if norm in seen:
                         continue
@@ -572,7 +617,7 @@ class Config:
                 ob["ws_paths"] = merged
                 changed = True
         elif not raw_paths:
-            ob["ws_paths"] = list(DEFAULT_ONEBOT11_WS_PATHS)
+            ob["ws_paths"] = list(default_onebot11_ws_paths)
             changed = True
 
         auth = self._config.get("auth")
@@ -581,7 +626,7 @@ class Config:
             if not isinstance(wl, list):
                 wl = []
             existing = {str(x) for x in wl}
-            for p in DEFAULT_ONEBOT11_WS_PATHS:
+            for p in default_onebot11_ws_paths:
                 if p not in existing:
                     wl.append(p)
                     changed = True

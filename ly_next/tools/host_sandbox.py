@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -78,10 +79,7 @@ def _path_under_root(path: Path, root: Path) -> bool:
 
 def _is_denied(path: Path) -> bool:
     real = path.resolve(strict=False)
-    for denied in _deny_prefixes():
-        if _path_under_root(real, denied) or real == denied:
-            return True
-    return False
+    return any(_path_under_root(real, denied) or real == denied for denied in _deny_prefixes())
 
 
 def resolve_host_path(
@@ -165,11 +163,11 @@ def host_exec_max_output_chars() -> int:
     exec_cfg = host.get("exec", {}) if isinstance(host, dict) else {}
     default = 120_000
     if isinstance(exec_cfg, dict) and exec_cfg.get("max_output_chars") is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             default = int(exec_cfg.get("max_output_chars"))
-        except (TypeError, ValueError):
-            pass
-    return host_int_limit("tools.host.exec.max_output_chars", default, minimum=1024, maximum=500_000)
+    return host_int_limit(
+        "tools.host.exec.max_output_chars", default, minimum=1024, maximum=500_000
+    )
 
 
 def default_shell_command(command: str) -> list[str]:

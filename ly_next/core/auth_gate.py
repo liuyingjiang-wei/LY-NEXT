@@ -7,7 +7,7 @@ from typing import Any
 from starlette.requests import Request
 from starlette.websockets import WebSocket
 
-from ly_next.core.auth_context import bind_principal, get_principal, release_principal
+from ly_next.core.auth_context import get_principal
 from ly_next.core.auth_http import extract_api_key_from_request, extract_api_key_from_websocket
 from ly_next.core.auth_jwt import jwt_enabled, verify_access_token
 from ly_next.core.auth_principal import Principal, normalize_role, required_permission

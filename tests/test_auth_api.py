@@ -2,7 +2,6 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from ly_next.core.config import config
 from ly_next.main import create_app
 
 
@@ -16,7 +15,7 @@ def test_auth_config_endpoint():
 
 
 def test_auth_login_with_users(monkeypatch):
-    hashed = "pbkdf2_sha256$" + "00" * 16 + "$" + "11" * 32
+    "pbkdf2_sha256$" + "00" * 16 + "$" + "11" * 32
     with (
         patch("ly_next.api.auth_api.users_configured", return_value=True),
         patch("ly_next.api.auth_api.jwt_enabled", return_value=True),

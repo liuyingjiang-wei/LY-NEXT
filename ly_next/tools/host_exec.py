@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 
 from ly_next.tools.base import ToolResult, tool
 from ly_next.tools.host_approvals import check_approval_gate, command_needs_approval
+from ly_next.tools.host_platform import platform_label
 from ly_next.tools.host_sandbox import (
     default_shell_command,
     host_exec_max_output_chars,
     host_exec_timeout_seconds,
     resolve_host_cwd,
 )
-from ly_next.tools.host_platform import platform_label
 
 
 def _truncate_output(text: str, cap: int) -> tuple[str, bool]:
@@ -86,10 +87,8 @@ async def host_run_command(
 
     timeout = host_exec_timeout_seconds()
     if timeout_seconds is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             timeout = max(1.0, min(float(timeout_seconds), host_exec_timeout_seconds()))
-        except (TypeError, ValueError):
-            pass
 
     cap = host_exec_max_output_chars()
     try:

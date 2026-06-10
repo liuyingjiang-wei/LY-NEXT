@@ -22,7 +22,8 @@ plugins:
     - plugins/local
   modules: []
   entry_points: true
-  security_profile: "production"
+  # development = scan plugins/ + extra_dirs (plugins/local); production = plugins.modules only
+  security_profile: "development"
   trusted_module_hashes: {}
 
 llm:

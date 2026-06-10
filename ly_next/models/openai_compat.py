@@ -7,6 +7,10 @@ from typing import Any
 
 import httpx
 
+from ly_next.agent.llm_text import (
+    content_from_stream_delta,
+    reasoning_from_stream_delta,
+)
 from ly_next.core.config import config
 from ly_next.core.http_url import ensure_http_base
 from ly_next.core.logger import get_logger
@@ -26,11 +30,6 @@ from ly_next.models.stream_assemble import (
     accumulate_tool_call_delta,
     build_chat_completion_from_stream,
     is_tool_call_sealed,
-)
-from ly_next.agent.llm_text import (
-    content_from_stream_delta,
-    reasoning_from_stream_delta,
-    text_from_stream_delta,
 )
 
 logger = get_logger(__name__)
@@ -68,9 +67,7 @@ async def _recovery_sleep(attempt: int, base_delay: float) -> None:
     await asyncio.sleep(min(12.0, base_delay * (2**attempt)))
 
 
-def _resolve_parallel_tool_calls(
-    overrides: dict[str, Any], cfg: dict[str, Any]
-) -> bool | None:
+def _resolve_parallel_tool_calls(overrides: dict[str, Any], cfg: dict[str, Any]) -> bool | None:
     pt = overrides.get("parallel_tool_calls")
     if pt is None:
         pt = cfg.get("parallel_tool_calls") or cfg.get("parallelToolCalls")
@@ -475,7 +472,9 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         tool_phase = False
         sealed_emitted: set[int] = set()
         model_name = str(body.get("model") or self.model)
-        record_llm_call_start(model=model_name, messages_count=len(messages), provider=self.provider_name)
+        record_llm_call_start(
+            model=model_name, messages_count=len(messages), provider=self.provider_name
+        )
 
         try:
             async for chunk in self._stream_chat(body):

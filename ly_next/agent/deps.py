@@ -7,7 +7,6 @@ from ly_next.agent.llm_text import (
     content_from_stream_delta,
     reasoning_from_stream_delta,
     text_from_chat_response,
-    text_from_stream_delta,
 )
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
@@ -75,9 +74,7 @@ class AgentDeps:
                 name = str(self.provider or "").strip()
                 entry = ModelRegistry.get_entry(name) if name else None
                 if entry:
-                    kw = ModelRegistry.build_client_kwargs(
-                        entry["name"], model_override=self.model
-                    )
+                    kw = ModelRegistry.build_client_kwargs(entry["name"], model_override=self.model)
                 elif name:
                     kw["provider"] = name
                 self.llm_client = LLMFactory.get_client(**kw)
@@ -156,7 +153,9 @@ class AgentDeps:
                 content = str(chunk)
             if reasoning:
                 if self.stream_callback:
-                    await self.stream_callback({"content": reasoning, "kind": "think", "done": False})
+                    await self.stream_callback(
+                        {"content": reasoning, "kind": "think", "done": False}
+                    )
                 yield {"type": "think", "content": reasoning}
             if content:
                 if self.stream_callback:
@@ -214,7 +213,9 @@ class AgentDeps:
                     text = str(item.get("text") or "")
                     if text:
                         if self.stream_callback:
-                            await self.stream_callback({"content": text, "kind": "think", "done": False})
+                            await self.stream_callback(
+                                {"content": text, "kind": "think", "done": False}
+                            )
                         yield {"type": "think_chunk", "content": text}
                 elif kind == "content":
                     text = str(item.get("text") or "")
@@ -234,9 +235,7 @@ class AgentDeps:
                     yield {"type": "completion", "response": item.get("response") or {}}
             return
 
-        resp = await self.chat_with_tools(
-            messages, tools, tool_choice=tool_choice
-        )
+        resp = await self.chat_with_tools(messages, tools, tool_choice=tool_choice)
         yield {"type": "completion", "response": resp}
 
     async def call_llm_limited(
