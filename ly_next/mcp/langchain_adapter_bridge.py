@@ -7,6 +7,7 @@ from langchain_core.tools import BaseTool as LangChainBaseTool
 
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
+from ly_next.mcp.config_adapter import adapt_merged_mcp_servers
 from ly_next.mcp.remote_bridge import legacy_servers_to_blocks, merge_mcp_server_blocks
 from ly_next.mcp.search_dedup import is_mcp_search_tool, search_dedup_strategy
 from ly_next.mcp.server import MCPTool, mcp_server
@@ -137,6 +138,8 @@ async def load_mcp_tools_via_langchain(registry: Any) -> int:
     merged = merge_mcp_server_blocks(blocks)
     if not merged:
         return 0
+
+    merged = await adapt_merged_mcp_servers(merged)
 
     use_prefix = bool(mcp_cfg.get("langgraph_tool_name_prefix", True))
     connections: dict[str, dict[str, Any]] = {}

@@ -296,6 +296,7 @@ def _minimal_fallback_defaults() -> dict[str, Any]:
                 "path": "/mcp",
                 "langgraph_tool_name_prefix": True,
                 "search_dedup": {"strategy": "prefer_builtin"},
+                "vendor_adapt_probe": False,
                 "remote": {"enabled": False, "mcpServers": []},
             },
         },

@@ -409,6 +409,7 @@ tools:
     langgraph_tool_name_prefix: true
     search_dedup:
       strategy: "prefer_builtin"
+    vendor_adapt_probe: false
     remote:
       enabled: false
       mcpServers: []
