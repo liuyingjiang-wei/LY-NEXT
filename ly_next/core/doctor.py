@@ -184,6 +184,9 @@ def _static_checks() -> list[dict[str, Any]]:
     checks.append(_port_check())
     checks.append(_napcat_check())
     checks.append(_telegram_check())
+    from ly_next.mcp.preflight import gather_mcp_runtime_checks
+
+    checks.extend(gather_mcp_runtime_checks())
     return checks
 
 

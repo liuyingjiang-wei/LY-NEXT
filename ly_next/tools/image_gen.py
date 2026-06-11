@@ -30,8 +30,8 @@ def _user_key(explicit: str | None) -> str:
 @tool(
     name="generate_image",
     description=(
-        "根据文字描述生成图片（AI 绘图）。用户要求画画、生成图片、画图时使用。"
-        "返回 JSON：成功含 image_url；失败含 message。"
+        "Call when the user wants AI-generated art from a text prompt (画画/生成图片). "
+        "Returns image_url on success. Not for finding existing images (search_images)."
     ),
     category="image",
 )

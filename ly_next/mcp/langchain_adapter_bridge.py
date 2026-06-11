@@ -8,6 +8,7 @@ from langchain_core.tools import BaseTool as LangChainBaseTool
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
 from ly_next.mcp.remote_bridge import legacy_servers_to_blocks, merge_mcp_server_blocks
+from ly_next.mcp.search_dedup import is_mcp_search_tool, search_dedup_strategy
 from ly_next.mcp.server import MCPTool, mcp_server
 from ly_next.tools.base import BaseTool, ToolDefinition, ToolResult
 
@@ -156,12 +157,15 @@ async def load_mcp_tools_via_langchain(registry: Any) -> int:
     _cached_lc_mcp_tools = list(lc_tools)
 
     n_reg = 0
+    mcp_search_names: list[str] = []
     for lc in lc_tools:
         bridge = LangChainMCPToolBridge(lc)
         try:
             registry.register(bridge)
             _registered_registry_names.append(bridge.definition.name)
             n_reg += 1
+            if is_mcp_search_tool(bridge):
+                mcp_search_names.append(bridge.definition.name)
         except Exception as e:
             logger.warning("注册 MCP 工具到 registry 失败 %s: %s", getattr(lc, "name", ""), e)
             continue
@@ -186,5 +190,14 @@ async def load_mcp_tools_via_langchain(registry: Any) -> int:
             logger.warning("注册 MCP 工具到协议层失败 %s: %s", lc.name, e)
 
     if n_reg:
-        logger.info("langchain-mcp-adapters: 已加载 %s 个 MCP 工具", n_reg)
+        if mcp_search_names:
+            logger.info(
+                "langchain-mcp-adapters: 已加载 %s 个 MCP 工具；检测到搜索类 MCP: %s "
+                "(search_dedup.strategy=%s)",
+                n_reg,
+                mcp_search_names,
+                search_dedup_strategy(),
+            )
+        else:
+            logger.info("langchain-mcp-adapters: 已加载 %s 个 MCP 工具", n_reg)
     return n_reg

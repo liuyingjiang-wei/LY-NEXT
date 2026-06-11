@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ly_next.core.config import config
 from ly_next.rag.document_retriever import get_document_retriever
+from ly_next.rag.rag_format import format_knowledge_search_text
 from ly_next.tools.base import ToolResult, tool
 
 
@@ -14,9 +15,9 @@ def _rag_enabled() -> bool:
 @tool(
     name="knowledge_search",
     description=(
-        "Search indexed project docs (agent.rag.documents_path). "
-        "Use for LY-NEXT config, architecture, plugins, deployment. "
-        "Not for agent playbooks (list_skills/read_skill) or live web (web_search)."
+        "Call when the question is about this project's indexed docs: config, architecture, "
+        "plugins, deployment. Returns ranked snippets with sources. "
+        "Not for live web (web_search) or task playbooks (read_skill)."
     ),
     category="general",
     parameters={
@@ -57,15 +58,24 @@ async def knowledge_search(query: str, top_k: int | None = None) -> ToolResult:
     if not payload.get("enabled"):
         return ToolResult(success=False, error=str(payload.get("hint") or "RAG disabled"))
     hits = payload.get("hits") or []
+    doc_path = str(payload.get("documents_path") or "")
+    chunks_loaded = int(payload.get("chunks_loaded") or 0)
+    text = format_knowledge_search_text(
+        query=q,
+        hits=hits,
+        documents_path=doc_path,
+        chunks_loaded=chunks_loaded,
+    )
     if not hits:
         return ToolResult(
             success=True,
             result={
                 "query": q,
                 "hits": [],
-                "chunks_loaded": payload.get("chunks_loaded", 0),
-                "documents_path": payload.get("documents_path", ""),
+                "chunks_loaded": chunks_loaded,
+                "documents_path": doc_path,
                 "hint": payload.get("hint") or "No matching snippets",
+                "text": text,
             },
         )
     return ToolResult(
@@ -73,7 +83,8 @@ async def knowledge_search(query: str, top_k: int | None = None) -> ToolResult:
         result={
             "query": q,
             "hits": hits,
-            "chunks_loaded": payload.get("chunks_loaded", 0),
-            "documents_path": payload.get("documents_path", ""),
+            "chunks_loaded": chunks_loaded,
+            "documents_path": doc_path,
+            "text": text,
         },
     )

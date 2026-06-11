@@ -121,9 +121,9 @@ def _normalize_headers(raw: Any) -> dict[str, str]:
 @tool(
     name="http_fetch",
     description=(
-        "Perform an HTTP/HTTPS request and return status, final URL, response headers, and body text. "
-        "Use for REST APIs, JSON endpoints, or fetching plain text/HTML. "
-        "Private IPs, loopback, and cloud metadata hosts are blocked."
+        "Call for REST/JSON APIs or when you need raw HTTP status, headers, and body. "
+        "Not for reading articles (web_fetch). "
+        "Private IPs and metadata hosts blocked."
     ),
     category="network",
     parameters={

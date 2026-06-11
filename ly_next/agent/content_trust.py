@@ -27,7 +27,7 @@ _DEFAULT_SENSITIVE_TOOLS = frozenset(
         "host_delete_path",
         "host_list_dir",
         "host_run_command",
-        "host_search",
+        "grep_code",
     }
 )
 _DEFAULT_UNTRUSTED_CHANNELS = frozenset({"qq", "telegram"})

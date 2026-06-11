@@ -40,8 +40,14 @@ def merge_mcp_server_blocks(blocks: list[Any]) -> dict[str, dict[str, Any]]:
             continue
         for k, v in m.items():
             key = _slug(str(k))
-            if key and isinstance(v, dict):
-                merged[key] = v
+            if not key or not isinstance(v, dict):
+                continue
+            if key in merged:
+                logger.warning(
+                    "MCP 配置块中服务器名 %s 重复，后一块将覆盖前一块（请为每个服务器使用不同名称）",
+                    key,
+                )
+            merged[key] = v
     return merged
 
 

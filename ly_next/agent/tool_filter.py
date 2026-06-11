@@ -9,7 +9,7 @@ from ly_next.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-_TIER_RANK = {"safe": 0, "general": 1, "network": 2, "host": 3}
+_TIER_RANK = {"safe": 0, "general": 1, "image": 1, "network": 2, "host": 3}
 _STRIP_SCHEMA_KEYS = frozenset({"description", "examples", "title"})
 
 
@@ -208,6 +208,10 @@ def filter_tools_for_agent(
             tool_vectors=router_tool_vectors,
             method=router_method,
         )
+
+    from ly_next.mcp.search_dedup import apply_search_tool_dedup
+
+    picked = apply_search_tool_dedup(picked)
 
     names = [t.definition.name for t in picked]
     logger.debug("[tool_filter] visible tools (%s): %s", len(names), names)

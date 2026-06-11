@@ -206,6 +206,24 @@ def _bridge_settings_effects(fragment: dict[str, Any]) -> tuple[list[str], list[
     return restart, hot, notes
 
 
+def _patch_affects_rag_index(patch: dict[str, Any]) -> bool:
+    agent = patch.get("agent")
+    if not isinstance(agent, dict):
+        return False
+    rag = agent.get("rag")
+    return isinstance(rag, dict) and bool(rag)
+
+
+def _patch_affects_example_index(patch: dict[str, Any]) -> bool:
+    agent = patch.get("agent")
+    if not isinstance(agent, dict):
+        return False
+    if _patch_affects_rag_index(patch):
+        return True
+    context = agent.get("context")
+    return isinstance(context, dict) and bool(context)
+
+
 def _settings_effects(patch: dict[str, Any]) -> dict[str, Any]:
     restart: list[str] = []
     hot: list[str] = []
@@ -778,8 +796,10 @@ async def patch_workbench_settings(body: dict[str, Any]):
     refresh_ly_next_log_level_from_config()
     LLMFactory.clear_cache()
     ModelRegistry.reload()
-    reset_document_retriever()
-    reset_example_selector()
+    if _patch_affects_rag_index(body):
+        reset_document_retriever()
+    if _patch_affects_example_index(body):
+        reset_example_selector()
     invalidate_startup_memory_cache()
     init = config.ensure_initialized()
     full = config.to_dict()

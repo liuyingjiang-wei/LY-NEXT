@@ -63,6 +63,26 @@ def test_low_confidence_falls_back_to_pins_only(monkeypatch):
     assert names == ["list_tools", "describe_tool"]
 
 
+def test_hybrid_uses_lexical_only_when_embedding_missing(monkeypatch):
+    monkeypatch.setattr(
+        "ly_next.agent.tool_router._policy",
+        lambda: {
+            "semantic_method": "hybrid",
+            "semantic_min_score": 0.01,
+            "semantic_relative_factor": 0.5,
+            "semantic_min_pool": 2,
+            "semantic_fallback": "all",
+            "pin_tools": [],
+        },
+    )
+    tools = [
+        _T("web_search", "search the live web for news and facts"),
+        _T("calculator", "math expressions"),
+    ]
+    ordered = route_tools_by_query("latest AI news today", tools, limit=1, query_vec=None)
+    assert ordered[0].definition.name == "web_search"
+
+
 def test_small_pool_skips_semantic_filter(monkeypatch):
     monkeypatch.setattr(
         "ly_next.agent.tool_router._policy",

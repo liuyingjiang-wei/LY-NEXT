@@ -7,7 +7,7 @@ from ly_next.tools.base import ToolResult, tool
 
 @tool(
     name="calculator",
-    description="Perform mathematical calculations.",
+    description="Call for numeric math expressions. Not for dates (get_current_time).",
     category="safe",
     parameters={
         "type": "object",

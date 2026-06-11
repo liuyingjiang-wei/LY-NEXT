@@ -46,7 +46,7 @@ def _resolve_image_block() -> dict[str, Any]:
 async def generate_openai_compat_image(prompt: str) -> str:
     block = _resolve_image_block()
     api_key = str(block.get("api_key") or "").strip()
-    base = ensure_http_base(str(block.get("base_url") or "https://api.openai.com/v1"))
+    base = ensure_http_base(block.get("base_url"), default="https://api.openai.com/v1")
     require_remote_api_key(
         api_key,
         base,

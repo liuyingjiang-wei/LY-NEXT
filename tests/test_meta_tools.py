@@ -41,3 +41,18 @@ async def test_describe_tool_returns_schema():
     assert result.success is True
     assert result.result["name"] == "alpha"
     assert "parameters" in result.result
+
+
+@pytest.mark.asyncio
+async def test_describe_tool_rejects_invisible_tool():
+    reg = ToolRegistry()
+    reg.register(FakeTool("alpha", "safe"))
+    reg.register(FakeTool("secret", "network"))
+    deps = AgentDeps(tool_registry=reg, tool_max_tier="safe", max_tools=40)
+    token = set_tool_run_deps(deps)
+    try:
+        result = await describe_tool(name="secret")
+    finally:
+        reset_tool_run_deps(token)
+    assert result.success is False
+    assert "not visible" in (result.error or "").lower()

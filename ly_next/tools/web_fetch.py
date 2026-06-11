@@ -223,8 +223,9 @@ async def web_fetch(url: str, max_length: int | None = None) -> ToolResult:
 web_fetch_tool = tool(
     name="web_fetch",
     description=(
-        "Fetch a known URL and return clean page text. "
-        "Use after web_search, not for discovering URLs. Respects SSRF allowlist."
+        "Call when you already have an HTTP(S) URL and need readable article/page text. "
+        "Typical chain: web_search → web_fetch. "
+        "Not for REST/JSON APIs (http_fetch) or URL discovery (web_search)."
     ),
     category="network",
     parameters={

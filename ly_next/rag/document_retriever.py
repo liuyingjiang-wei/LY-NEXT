@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import time
 from pathlib import Path
 from typing import Any
 
@@ -10,11 +12,16 @@ from ly_next.core.logger import get_logger
 from ly_next.rag.chunk_document import chunk_document
 from ly_next.rag.embedding_config import resolve_embedding_http_config
 from ly_next.rag.embeddings import fetch_embeddings
+from ly_next.rag.query_rewrite import expand_queries, rewrite_enabled, should_expand_weak_recall
 from ly_next.rag.reranker import rerank_chunks
 from ly_next.rag.retrieval_fusion import bm25_rank, mmr_select_vectors, rrf_fuse
 from ly_next.rag.similarity import cosine_similarity, jaccard_similarity
 
 logger = get_logger(__name__)
+
+_DOC_SUFFIXES = frozenset({".md", ".txt", ".markdown"})
+_QUERY_RESULT_CACHE: dict[str, tuple[float, list[tuple[float, str, str]]]] = {}
+_QUERY_CACHE_MAX = 128
 
 
 def _resolve_documents_path(raw: str) -> Path:
@@ -44,12 +51,66 @@ def _resolve_documents_path(raw: str) -> Path:
     return candidates[0]
 
 
+def _list_corpus_files(target: Path) -> list[Path]:
+    if target.is_file():
+        return [target] if target.suffix.lower() in _DOC_SUFFIXES else []
+    if not target.is_dir():
+        return []
+    return sorted(p for p in target.rglob("*") if p.is_file() and p.suffix.lower() in _DOC_SUFFIXES)
+
+
+def _build_index_config_sig() -> str:
+    h = hashlib.sha256()
+    for key in ("chunk_size", "chunk_overlap", "chunk_strategy", "contextual_chunks"):
+        h.update(f"{key}={config.get(f'agent.rag.{key}', '')}".encode())
+    return h.hexdigest()[:16]
+
+
+def _build_corpus_sig(target: Path) -> str:
+    h = hashlib.sha256()
+    for p in _list_corpus_files(target):
+        try:
+            st = p.stat()
+            rel = str(p)
+            h.update(f"{rel}:{st.st_size}:{st.st_mtime_ns}".encode("utf-8", errors="ignore"))
+        except OSError:
+            h.update(str(p).encode("utf-8", errors="ignore"))
+    return h.hexdigest()
+
+
+def _query_cache_key(query: str, top_k: int, corpus_sig: str) -> str:
+    norm = " ".join((query or "").strip().lower().split())
+    digest = hashlib.sha256(f"{norm}|{top_k}|{corpus_sig}".encode()).hexdigest()[:40]
+    return digest
+
+
+def _query_cache_get(key: str, ttl_seconds: float) -> list[tuple[float, str, str]] | None:
+    row = _QUERY_RESULT_CACHE.get(key)
+    if row is None:
+        return None
+    ts, value = row
+    if time.monotonic() - ts > ttl_seconds:
+        _QUERY_RESULT_CACHE.pop(key, None)
+        return None
+    return value
+
+
+def _query_cache_put(key: str, value: list[tuple[float, str, str]]) -> None:
+    if len(_QUERY_RESULT_CACHE) >= _QUERY_CACHE_MAX:
+        oldest = min(_QUERY_RESULT_CACHE.items(), key=lambda item: item[1][0])[0]
+        _QUERY_RESULT_CACHE.pop(oldest, None)
+    _QUERY_RESULT_CACHE[key] = (time.monotonic(), value)
+
+
 class DocumentRetriever:
     def __init__(self) -> None:
         self._chunks: list[str] = []
+        self._embed_texts: list[str] = []
         self._sources: list[str] = []
         self._vectors: list[list[float]] | None = None
         self._loaded_path = ""
+        self._corpus_sig = ""
+        self._index_config_sig = ""
         self._pg_store_sig = ""
         self._pg_store_disabled = False
         self._warned_empty_path = False
@@ -57,14 +118,17 @@ class DocumentRetriever:
 
     def configure(self) -> None:
         raw = str(config.get("agent.rag.documents_path", "") or "").strip()
-        self._chunks = []
-        self._sources = []
-        self._vectors = None
-        self._loaded_path = raw
-        self._configured_once = True
-        self._pg_store_sig = ""
-        self._pg_store_disabled = False
         if not raw:
+            self._chunks = []
+            self._embed_texts = []
+            self._sources = []
+            self._vectors = None
+            self._loaded_path = raw
+            self._corpus_sig = ""
+            self._index_config_sig = ""
+            self._configured_once = True
+            self._pg_store_sig = ""
+            self._pg_store_disabled = False
             if bool(config.get("agent.rag.enabled", False)) and not self._warned_empty_path:
                 self._warned_empty_path = True
                 logger.warning(
@@ -74,18 +138,39 @@ class DocumentRetriever:
         self._warned_empty_path = False
 
         target = _resolve_documents_path(raw)
+        new_sig = _build_corpus_sig(target)
+        new_index_sig = _build_index_config_sig()
+        if (
+            self._configured_once
+            and self._loaded_path == raw
+            and new_sig == self._corpus_sig
+            and new_index_sig == self._index_config_sig
+            and self._chunks
+        ):
+            return
+
+        self._chunks = []
+        self._embed_texts = []
+        self._sources = []
+        self._vectors = None
+        self._loaded_path = raw
+        self._corpus_sig = new_sig
+        self._index_config_sig = new_index_sig
+        self._configured_once = True
+        self._pg_store_sig = ""
+        self._pg_store_disabled = False
+        contextual = bool(config.get("agent.rag.contextual_chunks", True))
 
         file_units: list[tuple[str, str]] = []
         if target.is_file():
             file_units.append((target.name, _read_file(target)))
         elif target.is_dir():
-            for p in sorted(target.rglob("*")):
-                if p.is_file() and p.suffix.lower() in {".md", ".txt", ".markdown"}:
-                    try:
-                        rel = str(p.relative_to(target))
-                    except ValueError:
-                        rel = p.name
-                    file_units.append((rel, _read_file(p)))
+            for p in _list_corpus_files(target):
+                try:
+                    rel = str(p.relative_to(target))
+                except ValueError:
+                    rel = p.name
+                file_units.append((rel, _read_file(p)))
         else:
             logger.warning("[rag.docs] Path not found: %s", target)
 
@@ -99,6 +184,10 @@ class DocumentRetriever:
                 if c:
                     self._chunks.append(c)
                     self._sources.append(src_label)
+                    if contextual and src_label:
+                        self._embed_texts.append(f"[{src_label}]\n{c}")
+                    else:
+                        self._embed_texts.append(c)
 
     async def retrieve_formatted(self, user_query: str, *, top_k: int | None = None) -> str:
         if not config.get("agent.rag.enabled", False):
@@ -189,14 +278,109 @@ class DocumentRetriever:
         self, user_query: str, *, top_k: int | None = None
     ) -> list[tuple[float, str, str]]:
         effective_top_k = int(top_k if top_k is not None else config.get("agent.rag.top_k", 5) or 5)
-        top_k = max(1, effective_top_k)
+        effective_top_k = max(1, effective_top_k)
+        cache_ttl = float(config.get("agent.rag.query_cache_ttl_seconds", 90) or 0)
+        if cache_ttl > 0:
+            cache_key = _query_cache_key(user_query, effective_top_k, self._corpus_sig)
+            cached = _query_cache_get(cache_key, cache_ttl)
+            if cached is not None:
+                return cached
+
+        timeout = float(config.get("agent.rag.retrieval_timeout_seconds", 45) or 0)
+        try:
+            if timeout > 0:
+                picked = await asyncio.wait_for(
+                    self._pick_for_query_impl(user_query, top_k=effective_top_k),
+                    timeout=timeout,
+                )
+            else:
+                picked = await self._pick_for_query_impl(user_query, top_k=effective_top_k)
+        except TimeoutError:
+            logger.warning("[rag.docs] Retrieval timed out after %.1fs", timeout)
+            picked = self._lexical_fallback_picks(user_query, top_k=effective_top_k)
+
+        if cache_ttl > 0 and picked:
+            _query_cache_put(cache_key, picked)
+        return picked
+
+    def _lexical_fallback_picks(
+        self, user_query: str, *, top_k: int
+    ) -> list[tuple[float, str, str]]:
+        ranked = self._rank_lexical(user_query)[:top_k]
+        return [(float(s), ch, self._source_for_chunk(ch)) for s, ch in ranked]
+
+    def _rewrite_cfg(self) -> dict[str, Any]:
+        raw = config.get("agent.rag.query_rewrite", {}) or {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _recall_queries(self, user_query: str, *, expand: bool) -> list[str]:
+        if not expand or not rewrite_enabled(self._rewrite_cfg()):
+            return [user_query]
+        cfg = self._rewrite_cfg()
+        max_variants = max(1, int(cfg.get("max_variants", 4) or 4))
+        return expand_queries(
+            user_query,
+            max_variants=max_variants,
+            include_keywords=bool(cfg.get("include_keywords", True)),
+            include_identifiers=bool(cfg.get("include_identifiers", True)),
+        )
+
+    async def _l1_hybrid_recall(
+        self,
+        user_query: str,
+        *,
+        pool_n: int,
+        use_emb: bool,
+        hybrid: bool,
+        rrf_k: int,
+        expand: bool,
+    ) -> tuple[list[tuple[float, str]], list[float] | None]:
+        """L1 recall: parallel dense + BM25 lists, fused with RRF (k=60 default)."""
+        rank_lists: list[list[tuple[float, str]]] = []
+        q_vec: list[float] | None = None
+
+        if use_emb:
+            try:
+                queries = self._recall_queries(user_query, expand=expand)
+                for q in queries:
+                    dense_ranked, qv = await self._rank_embedding_with_query_vec(q)
+                    if qv is not None and q_vec is None:
+                        q_vec = qv
+                    if dense_ranked:
+                        rank_lists.append(dense_ranked[:pool_n])
+            except Exception as e:
+                logger.warning(
+                    "[rag.docs] Embedding retrieve failed, fallback lexical (%s): %s",
+                    type(e).__name__,
+                    str(e).strip() or repr(e),
+                )
+                rank_lists.append(self._rank_lexical(user_query)[:pool_n])
+        else:
+            rank_lists.append(self._rank_lexical(user_query)[:pool_n])
+
+        if hybrid and self._chunks:
+            bm25_ranked = bm25_rank(user_query, self._chunks)[:pool_n]
+            rank_lists.append(bm25_ranked)
+            if use_emb:
+                lex_jac = self._rank_lexical(user_query)[:pool_n]
+                rank_lists.append(lex_jac)
+
+        if not rank_lists:
+            return ([], q_vec)
+        if len(rank_lists) == 1:
+            return (rank_lists[0], q_vec)
+        return (rrf_fuse(rank_lists, k=rrf_k), q_vec)
+
+    async def _pick_for_query_impl(
+        self, user_query: str, *, top_k: int
+    ) -> list[tuple[float, str, str]]:
         min_sim = float(config.get("agent.rag.min_similarity", 0.20) or 0.0)
         use_emb = bool(config.get("agent.rag.use_embeddings", True))
         hybrid = bool(config.get("agent.rag.hybrid_enabled", True))
         rrf_k = int(config.get("agent.rag.rrf_k", 60) or 60)
         mmr_on = bool(config.get("agent.rag.mmr_enabled", True))
         mmr_lambda = float(config.get("agent.rag.mmr_lambda", 0.6) or 0.6)
-        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 10) or 10))
+        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 5) or 5))
         rerank_cfg = config.get("agent.rag.rerank", {}) or {}
         if not isinstance(rerank_cfg, dict):
             rerank_cfg = {}
@@ -204,30 +388,35 @@ class DocumentRetriever:
         rerank_top_n = max(top_k, int(rerank_cfg.get("top_n", top_k * mult) or top_k * mult))
         pool_n = max(top_k * mult, rerank_top_n if rerank_on else top_k * mult)
 
-        q_vec: list[float] | None = None
-        ranked: list[tuple[float, str]] = []
+        rewrite_cfg = self._rewrite_cfg()
+        adaptive = bool(rewrite_cfg.get("adaptive", True))
+        weak_threshold = float(rewrite_cfg.get("weak_score_threshold", 0.35) or 0.35)
 
-        if use_emb:
-            try:
-                ranked, q_vec = await self._rank_embedding_with_query_vec(user_query)
-            except Exception as e:
-                logger.warning(
-                    "[rag.docs] Embedding retrieve failed, fallback lexical (%s): %s",
-                    type(e).__name__,
-                    str(e).strip() or repr(e),
-                )
-                ranked = self._rank_lexical(user_query)
-                q_vec = None
-        else:
-            ranked = self._rank_lexical(user_query)
-
-        if hybrid and self._chunks:
-            lex_bm25 = bm25_rank(user_query, self._chunks)
-            lex_jac = self._rank_lexical(user_query)
-            if use_emb and ranked:
-                ranked = rrf_fuse([ranked, lex_bm25], k=rrf_k)
-            else:
-                ranked = rrf_fuse([lex_jac, lex_bm25], k=rrf_k)
+        ranked, q_vec = await self._l1_hybrid_recall(
+            user_query,
+            pool_n=pool_n,
+            use_emb=use_emb,
+            hybrid=hybrid,
+            rrf_k=rrf_k,
+            expand=False,
+        )
+        if ranked and should_expand_weak_recall(
+            ranked[0][0],
+            threshold=weak_threshold,
+            adaptive=adaptive,
+        ):
+            expanded_ranked, expanded_qv = await self._l1_hybrid_recall(
+                user_query,
+                pool_n=pool_n,
+                use_emb=use_emb,
+                hybrid=hybrid,
+                rrf_k=rrf_k,
+                expand=True,
+            )
+            if expanded_ranked:
+                ranked = rrf_fuse([ranked, expanded_ranked], k=rrf_k)
+                if expanded_qv is not None:
+                    q_vec = expanded_qv
 
         pool = ranked[:pool_n] if ranked else []
 
@@ -294,11 +483,12 @@ class DocumentRetriever:
                 dim_opt = None
         xbody = hp.get("extra_body") if isinstance(hp.get("extra_body"), dict) else None
 
-        if self._vectors is None or len(self._vectors) != len(self._chunks):
+        embed_inputs = self._embed_texts or self._chunks
+        if self._vectors is None or len(self._vectors) != len(embed_inputs):
             batch = 32
             all_vec: list[list[float]] = []
-            for i in range(0, len(self._chunks), batch):
-                sub = self._chunks[i : i + batch]
+            for i in range(0, len(embed_inputs), batch):
+                sub = embed_inputs[i : i + batch]
                 part = await fetch_embeddings(
                     sub,
                     model=model,
@@ -346,10 +536,8 @@ class DocumentRetriever:
 
     def _build_chunk_store_sig(self) -> str:
         h = hashlib.sha256()
+        h.update(self._corpus_sig.encode("utf-8"))
         h.update(str(len(self._chunks)).encode("utf-8"))
-        if self._chunks:
-            h.update(self._chunks[0][:400].encode("utf-8", errors="ignore"))
-            h.update(self._chunks[-1][:400].encode("utf-8", errors="ignore"))
         vlen = len(self._vectors or [])
         h.update(str(vlen).encode("utf-8"))
         if self._vectors:
@@ -416,7 +604,7 @@ class DocumentRetriever:
             return []
 
         top_k = int(config.get("agent.rag.top_k", 5) or 5)
-        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 3) or 3))
+        mult = max(1, int(config.get("agent.rag.retrieve_multiplier", 5) or 5))
         limit = max(1, top_k * mult)
 
         try:
@@ -448,3 +636,4 @@ def get_document_retriever() -> DocumentRetriever:
 def reset_document_retriever() -> None:
     global _retriever
     _retriever = None
+    _QUERY_RESULT_CACHE.clear()

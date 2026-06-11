@@ -49,12 +49,83 @@ def clamp_count(value: Any, *, default: int, maximum: int = MAX_SEARCH_COUNT) ->
     return max(1, min(n, maximum))
 
 
-def normalize_search_hit(*, title: str, url: str, snippet: str) -> dict[str, str]:
-    return {
+def domain_from_url(url: str) -> str:
+    return _domain_from_url(url)
+
+
+def _normalize_domain_pattern(value: str) -> str:
+    raw = (value or "").strip().lower()
+    for prefix in ("https://", "http://"):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix) :]
+    return raw.strip("/").split("/", 1)[0]
+
+
+def domain_matches(host: str, pattern: str) -> bool:
+    h = _normalize_domain_pattern(host)
+    p = _normalize_domain_pattern(pattern)
+    if not h or not p:
+        return False
+    return h == p or h.endswith(f".{p}")
+
+
+def filter_results_by_domains(
+    results: list[dict[str, str]],
+    *,
+    allowed_domains: list[str] | None = None,
+    blocked_domains: list[str] | None = None,
+) -> list[dict[str, str]]:
+    allow = [_normalize_domain_pattern(x) for x in (allowed_domains or []) if str(x).strip()]
+    block = [_normalize_domain_pattern(x) for x in (blocked_domains or []) if str(x).strip()]
+    if not allow and not block:
+        return results
+
+    kept: list[dict[str, str]] = []
+    for hit in results:
+        host = hit.get("domain") or domain_from_url(str(hit.get("url") or ""))
+        if block and any(domain_matches(host, b) for b in block):
+            continue
+        if allow and not any(domain_matches(host, a) for a in allow):
+            continue
+        kept.append(hit)
+    return kept
+
+
+def suggest_fetch_urls(results: list[dict[str, str]], *, max_urls: int = 3) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for hit in results:
+        url = (hit.get("url") or "").strip()
+        if not url or not url.startswith("http") or url in seen:
+            continue
+        seen.add(url)
+        out.append(url)
+        if len(out) >= max(1, max_urls):
+            break
+    return out
+
+
+def normalize_search_hit(
+    *,
+    title: str,
+    url: str,
+    snippet: str,
+    score: float | None = None,
+    published: str | None = None,
+) -> dict[str, str]:
+    clean_url = (url or "").strip()
+    hit: dict[str, str] = {
         "title": (title or "").strip(),
-        "url": (url or "").strip(),
+        "url": clean_url,
         "snippet": (snippet or "").strip(),
     }
+    if clean_url:
+        hit["domain"] = domain_from_url(clean_url)
+    if score is not None:
+        hit["score"] = f"{float(score):.4f}".rstrip("0").rstrip(".")
+    if published:
+        hit["published"] = str(published).strip()
+    return hit
 
 
 def truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
@@ -107,7 +178,7 @@ def format_web_search_text(
         "",
     ]
     if not results:
-        lines.append("（未找到相关结果，可换关键词或调大 count）")
+        lines.append("（未找到相关结果：缩短 query、换关键词、放宽域名过滤或调大 count）")
         return "\n".join(lines)
     for i, hit in enumerate(results, 1):
         title = (hit.get("title") or "（无标题）").strip()
@@ -127,6 +198,11 @@ def format_web_search_text(
             lines.append(f"    {compact}")
         if i < len(results):
             lines.append("")
+    fetch_urls = suggest_fetch_urls(results, max_urls=3)
+    if fetch_urls:
+        lines.extend(["", "下一步：对以下 1–3 条 URL 调用 web_fetch 读取正文后再回答："])
+        for u in fetch_urls:
+            lines.append(f"  · {u}")
     return "\n".join(lines).rstrip()
 
 

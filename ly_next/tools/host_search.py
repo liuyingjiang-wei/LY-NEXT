@@ -57,9 +57,9 @@ def _grep_file(
 @tool(
     name="grep_code",
     description=(
-        "Search text under allowed host roots with a regex. "
-        "Use for finding symbols, config keys, or log lines. "
-        "For reading a known file, prefer read_file_range or host_read_file."
+        "Call when you need to find code or text in the repo but don't know the file path. "
+        "Regex search under allowed host roots. "
+        "Then read_file_range on hits. Not for indexed docs (knowledge_search)."
     ),
     category="host",
     parameters={

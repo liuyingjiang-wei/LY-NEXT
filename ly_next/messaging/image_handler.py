@@ -29,7 +29,7 @@ def _urls_from_tool_payload(payload: Any) -> list[str]:
         return []
 
     inner: Any = data.get("result")
-    if inner is None and "status" in data or inner is None:
+    if inner is None:
         inner = data
     if isinstance(inner, str):
         try:
@@ -112,13 +112,13 @@ def build_mixed_message(
         return MixedMessage(parts=_collapse_adjacent_text(parts))
 
     if tool_urls:
-        parts: list[MessagePart] = []
+        merged_parts: list[MessagePart] = []
         body = (text or "").strip()
         if body:
-            parts.append(MessagePart(type="text", content=body))
+            merged_parts.append(MessagePart(type="text", content=body))
         for u in tool_urls:
-            parts.append(MessagePart(type="image", content=u))
-        return MixedMessage(parts=parts)
+            merged_parts.append(MessagePart(type="image", content=u))
+        return MixedMessage(parts=merged_parts)
 
     body = text or ""
     if body.strip():

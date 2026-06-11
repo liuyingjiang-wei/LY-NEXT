@@ -49,9 +49,9 @@ def _visible_tools(*, category: str | None = None, max_tier: str | None = None) 
 @tool(
     name="list_tools",
     description=(
-        "List tools available in this run (name, category, short description). "
-        "Call before choosing a tool when the task is unclear or many tools exist. "
-        "Do not use for executing work."
+        "Call only when unsure which tool fits the task. "
+        "Lists name, category, short description for tools visible this run. "
+        "Not for executing work — pick a domain tool after listing."
     ),
     category="safe",
     parameters={
@@ -85,9 +85,8 @@ async def list_tools(category: str | None = None, max_tier: str | None = None) -
 @tool(
     name="describe_tool",
     description=(
-        "Return full schema and description for one tool by name. "
-        "Use after list_tools when you need argument details. "
-        "Do not use for running the tool."
+        "Call after list_tools to get full JSON schema for one visible tool. "
+        "Not for running the tool — use the target tool directly once args are clear."
     ),
     category="safe",
     parameters={
@@ -106,12 +105,10 @@ async def describe_tool(name: str) -> ToolResult:
     objs = _visible_tools()
     match = next((t for t in objs if t.definition.name == key), None)
     if match is None:
-        from ly_next.tools import get_tool_registry
-
-        reg_tool = get_tool_registry().get(key)
-        if reg_tool is None:
-            return ToolResult(success=False, error=f"tool not found: {key}")
-        match = reg_tool
+        return ToolResult(
+            success=False,
+            error=f"tool not found or not visible in this run: {key}",
+        )
 
     payload = list_tools_payload([match])[0]
     return ToolResult(
