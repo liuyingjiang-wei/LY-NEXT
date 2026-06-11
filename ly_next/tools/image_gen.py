@@ -30,12 +30,19 @@ def _user_key(explicit: str | None) -> str:
 @tool(
     name="generate_image",
     description=(
-        "Call when the user wants AI-generated art from a text prompt (画画/生成图片). "
-        "Returns image_url on success. Not for finding existing images (search_images)."
+        "Call when the user wants AI-generated art (画画/生成图片). "
+        "Put composition, aspect ratio, and size in the prompt (e.g. 1536x864, 16:10 landscape, ultra-wide). "
+        "Omit fixed size unless the user asks; the server parses size from prompt or uses model auto. "
+        "Use negative_prompt only for extra exclusions beyond defaults. "
+        "Keep prompt concise; do not retry after failure."
     ),
     category="image",
 )
-async def generate_image(prompt: str, user_key: str = "") -> ToolResult:
+async def generate_image(
+    prompt: str,
+    negative_prompt: str = "",
+    user_key: str = "",
+) -> ToolResult:
     prompt = (prompt or "").strip()
     if not prompt:
         return ToolResult(
@@ -57,7 +64,9 @@ async def generate_image(prompt: str, user_key: str = "") -> ToolResult:
         )
 
     provider = GEN_PROVIDER_ID
-    cached = await get_cached_image_url(prompt, provider)
+    neg = (negative_prompt or "").strip()
+    cache_key = f"{prompt}\n---\n{neg}" if neg else prompt
+    cached = await get_cached_image_url(cache_key, provider)
     if cached:
         await record_tool_call("generate_image", success=True)
         return ToolResult(
@@ -84,21 +93,29 @@ async def generate_image(prompt: str, user_key: str = "") -> ToolResult:
         )
 
     try:
-        image_url = await generate_openai_compat_image(prompt)
+        image_url, truncated, size_used = await generate_openai_compat_image(
+            prompt,
+            negative_prompt=neg or None,
+        )
         if image_url.startswith("http"):
-            await set_cached_image_url(prompt, provider, image_url)
+            await set_cached_image_url(cache_key, provider, image_url)
         await record_tool_call("generate_image", success=True)
+        extra: dict[str, object] = {
+            "image_url": image_url,
+            "provider": provider,
+            "image_quota_remaining": left,
+        }
+        if truncated:
+            extra["prompt_truncated"] = True
+        if size_used:
+            extra["size"] = size_used
         return ToolResult(
             success=True,
-            result=tool_result_json(
-                True,
-                image_url=image_url,
-                provider=provider,
-                image_quota_remaining=left,
-            ),
+            result=tool_result_json(True, **extra),
         )
     except Exception as e:
-        logger.warning("[generate_image] failed: %s", e)
+        err_msg = str(e).strip() or type(e).__name__
+        logger.warning("[generate_image] failed: %s", err_msg)
         await release_quota(uk)
         remaining_after = await get_remaining_quota(uk)
         await record_tool_call("generate_image", success=False)
@@ -106,7 +123,7 @@ async def generate_image(prompt: str, user_key: str = "") -> ToolResult:
             success=False,
             result=tool_result_json(
                 False,
-                message=str(e),
+                message=err_msg,
                 image_quota_remaining=remaining_after,
             ),
         )

@@ -47,6 +47,7 @@ class AgentDeps:
     tool_allow_tools: list[str] | None = None
     tool_deny_tools: list[str] = field(default_factory=list)
     tool_allow_categories: list[str] | None = None
+    mcp_enabled_slugs: frozenset[str] | None = None
     tool_max_tier: str = "network"
     tool_router_query: str | None = None
     tool_router_query_vec: list[float] | None = field(default=None, repr=False)

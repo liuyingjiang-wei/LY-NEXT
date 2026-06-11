@@ -62,6 +62,7 @@ class ChatTurnRequest:
     turn_meta_extra: dict[str, Any] = field(default_factory=dict)
     history_limit: int | None = None
     channel: str | None = None
+    mcp_enabled_slugs: list[str] | None = None
 
 
 @dataclass
@@ -169,6 +170,8 @@ async def prepare_chat_turn(req: ChatTurnRequest) -> PreparedChatTurn:
     }
     if req.channel:
         turn_meta["channel"] = str(req.channel).strip()
+    if req.mcp_enabled_slugs is not None:
+        turn_meta["mcp_enabled_slugs"] = list(req.mcp_enabled_slugs)
 
     persist_async = (
         req.persist_user_async
@@ -256,6 +259,10 @@ def build_agent_deps(
         deps.tool_router_query = last_user_query(prepared.messages) or None
     if tool_call_mode is not None:
         deps.tool_call_mode = str(tool_call_mode).strip().lower() or deps.tool_call_mode
+    from ly_next.mcp.catalog import parse_mcp_enabled_slugs
+
+    if "mcp_enabled_slugs" in prepared.turn_meta:
+        deps.mcp_enabled_slugs = parse_mcp_enabled_slugs(prepared.turn_meta.get("mcp_enabled_slugs"))
     if begin_run:
         begin_agent_run(deps)
     return deps

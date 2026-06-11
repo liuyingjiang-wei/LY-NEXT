@@ -363,8 +363,9 @@ tools:
     provider: "openai_compat"
     config_ref: "openai_compat_llm"
     model: "gpt-image-1"
-    size: "1024x1024"
     quality: "auto"
+    negative_prompt: "text, watermark, logo, signature, blurry, low quality, jpeg artifacts, deformed anatomy, extra fingers"
+    negative_prompt_mode: "prompt"
     api_key: ""
     base_url: ""
     auth_mode: "bearer"
@@ -379,6 +380,8 @@ tools:
     brave_search_api_key: ""
     daily_limit: 20
     cache_ttl: 3600
+    max_prompt_chars: 2000
+    request_timeout_seconds: 120
     loading_text: "正在为你创作图片，稍等一下哦~"
   web_search:
     provider: "duckduckgo"

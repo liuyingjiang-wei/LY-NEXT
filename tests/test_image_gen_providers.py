@@ -53,7 +53,8 @@ async def test_generate_openai_compat_image_uses_default_base_url(monkeypatch):
 
     result = await igp.generate_openai_compat_image("a cat")
 
-    assert result == "https://example.com/generated.png"
+    assert result[0] == "https://example.com/generated.png"
+    assert result[2] is None
     assert captured["url"] == "https://api.openai.com/v1/images/generations"
 
 

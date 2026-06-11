@@ -287,6 +287,8 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                 {"type": "chat_status", "phase": "prep", "detail": "正在准备上下文…"},
             ):
                 raise _ChatUserCancelError()
+            mcp_raw = data.get("mcp_enabled_slugs")
+            mcp_enabled_slugs = mcp_raw if isinstance(mcp_raw, list) else None
             chat_req = ChatTurnRequest(
                 client_messages=list(client_messages),
                 thread_id=thread_id,
@@ -298,6 +300,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                 skip_vision_precaption=data.get("vision_precaption") is False,
                 tool_call_mode=data.get("tool_call_mode"),
                 channel=str(data.get("channel") or "web"),
+                mcp_enabled_slugs=mcp_enabled_slugs,
                 turn_meta_extra={
                     "task_id": task_id,
                     "requested_mode": requested_mode,

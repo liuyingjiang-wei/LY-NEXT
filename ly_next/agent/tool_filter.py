@@ -242,6 +242,12 @@ def get_filtered_tools_for_deps(deps: AgentDeps) -> tuple[list[Any], list[str]]:
         router_tool_vectors=getattr(deps, "tool_router_tool_vectors", None),
         router_method=getattr(deps, "tool_router_method", None),
     )
+    from ly_next.mcp.server_filter import filter_tools_by_mcp_slugs
+
+    objs, names = picked
+    objs = filter_tools_by_mcp_slugs(objs, getattr(deps, "mcp_enabled_slugs", None))
+    names = [t.definition.name for t in objs]
+    picked = (objs, names)
     deps._filtered_tools_cache = picked
     return picked
 

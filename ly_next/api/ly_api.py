@@ -366,6 +366,7 @@ class ChatRequest(BaseModel):
     vision_precaption: bool | None = None
     thread_id: str | None = None
     channel: str | None = "web"
+    mcp_enabled_slugs: list[str] | None = None
 
 
 class TaskCreateRequest(BaseModel):
@@ -386,6 +387,13 @@ class LlmTestRequest(BaseModel):
 @router.get("/health")
 async def health_check():
     return {"status": "ok", "service": "ly-next"}
+
+
+@router.get("/mcp/catalog")
+async def mcp_catalog():
+    from ly_next.mcp.catalog import build_mcp_catalog_payload
+
+    return build_mcp_catalog_payload()
 
 
 @router.get("/info")
@@ -935,6 +943,7 @@ async def chat(request: ChatRequest):
             model=request.model,
             skip_vision_precaption=request.vision_precaption is False,
             channel=request.channel or "web",
+            mcp_enabled_slugs=request.mcp_enabled_slugs,
             turn_meta_extra={
                 "task_id": task_id,
                 "requested_mode": request.mode,

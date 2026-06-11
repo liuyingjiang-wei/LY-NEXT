@@ -41,6 +41,7 @@ class ChatStreamRequest(BaseModel):
     thread_id: str | None = None
     channel: str | None = "web"
     tool_call_mode: str | None = None
+    mcp_enabled_slugs: list[str] | None = None
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -88,6 +89,7 @@ async def _iter_chat_sse(req: ChatStreamRequest) -> AsyncIterator[str]:
             skip_vision_precaption=req.vision_precaption is False,
             tool_call_mode=req.tool_call_mode,
             channel=req.channel or "web",
+            mcp_enabled_slugs=req.mcp_enabled_slugs,
             turn_meta_extra={"task_id": task_id, "requested_mode": req.mode, "channel": "web"},
         )
         prepared = await prepare_chat_turn(chat_req)

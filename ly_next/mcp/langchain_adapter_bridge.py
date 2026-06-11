@@ -7,8 +7,9 @@ from langchain_core.tools import BaseTool as LangChainBaseTool
 
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
+from ly_next.mcp.catalog import entries_to_blocks, normalize_remote_entries, set_loaded_mcp_slugs
 from ly_next.mcp.config_adapter import adapt_merged_mcp_servers
-from ly_next.mcp.remote_bridge import legacy_servers_to_blocks, merge_mcp_server_blocks
+from ly_next.mcp.remote_bridge import merge_mcp_server_blocks
 from ly_next.mcp.search_dedup import is_mcp_search_tool, search_dedup_strategy
 from ly_next.mcp.server import MCPTool, mcp_server
 from ly_next.tools.base import BaseTool, ToolDefinition, ToolResult
@@ -126,17 +127,11 @@ async def load_mcp_tools_via_langchain(registry: Any) -> int:
     if not isinstance(remote, dict) or not remote.get("enabled"):
         return 0
 
-    blocks: list[Any] = []
-    ms = remote.get("mcpServers")
-    if isinstance(ms, list):
-        blocks = list(ms)
-    if not blocks:
-        legacy = mcp_cfg.get("servers")
-        if isinstance(legacy, list) and legacy:
-            blocks = legacy_servers_to_blocks(legacy)
-
+    entries = normalize_remote_entries(remote)
+    blocks = entries_to_blocks(entries)
     merged = merge_mcp_server_blocks(blocks)
     if not merged:
+        set_loaded_mcp_slugs([])
         return 0
 
     merged = await adapt_merged_mcp_servers(merged)
@@ -153,8 +148,10 @@ async def load_mcp_tools_via_langchain(registry: Any) -> int:
             logger.warning("MCP 配置缺少 url+transport 或 command+args，已跳过: %s", name)
 
     if not connections:
+        set_loaded_mcp_slugs([])
         return 0
 
+    set_loaded_mcp_slugs(connections.keys())
     client = MultiServerMCPClient(connections=connections, tool_name_prefix=use_prefix)
     lc_tools = await client.get_tools()
     _cached_lc_mcp_tools = list(lc_tools)
