@@ -15,15 +15,44 @@ def _tool_spill_cfg() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _text_from_mcp_content_blocks(blocks: Any) -> str:
+    if not isinstance(blocks, list):
+        return ""
+    parts: list[str] = []
+    for item in blocks:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "").lower() == "text":
+            parts.append(str(item.get("text") or ""))
+        elif item.get("text"):
+            parts.append(str(item.get("text")))
+    return "\n".join(p for p in parts if p).strip()
+
+
 def coerce_tool_payload_text(result: Any) -> str:
     if isinstance(result, str):
         return result
+    if isinstance(result, list):
+        text = _text_from_mcp_content_blocks(result)
+        if text:
+            return text
     if isinstance(result, dict):
+        if result.get("success") is False:
+            err = str(result.get("error") or "").strip()
+            if err:
+                return err
         inner = result.get("result")
+        if isinstance(inner, list):
+            text = _text_from_mcp_content_blocks(inner)
+            if text:
+                return text
         if isinstance(inner, dict):
             text = inner.get("text")
             if isinstance(text, str) and text.strip():
                 return text
+            nested = _text_from_mcp_content_blocks(inner.get("content"))
+            if nested:
+                return nested
         if isinstance(inner, str) and inner.strip():
             return inner
     try:

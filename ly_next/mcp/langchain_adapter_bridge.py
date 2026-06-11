@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import suppress
 from typing import Any
 
@@ -19,6 +20,49 @@ logger = get_logger(__name__)
 _cached_lc_mcp_tools: list[LangChainBaseTool] = []
 _registered_registry_names: list[str] = []
 _registered_mcp_protocol_names: list[str] = []
+
+
+def _normalize_mcp_invoke_result(out: Any) -> tuple[str, bool]:
+    """Flatten langchain-mcp-adapters output; return (text, is_error)."""
+    if isinstance(out, str):
+        text = out.strip()
+        return text, False
+
+    if isinstance(out, list):
+        parts: list[str] = []
+        is_error = False
+        for item in out:
+            if not isinstance(item, dict):
+                continue
+            if item.get("isError"):
+                is_error = True
+            if str(item.get("type") or "").lower() == "text":
+                parts.append(str(item.get("text") or ""))
+            elif item.get("text"):
+                parts.append(str(item.get("text")))
+        text = "\n".join(p for p in parts if p).strip()
+        if text:
+            return text, is_error
+        try:
+            return json.dumps(out, ensure_ascii=False), is_error
+        except TypeError:
+            return str(out), is_error
+
+    if isinstance(out, dict):
+        if out.get("isError"):
+            text = str(out.get("text") or out.get("message") or out).strip()
+            return text, True
+        content = out.get("content")
+        if isinstance(content, list):
+            return _normalize_mcp_invoke_result(content)
+        text = str(out.get("text") or "").strip()
+        if text:
+            return text, False
+
+    try:
+        return json.dumps(out, ensure_ascii=False), False
+    except TypeError:
+        return str(out), False
 
 
 def _schema_from_lc_tool(t: LangChainBaseTool) -> dict[str, Any]:
@@ -48,7 +92,12 @@ class LangChainMCPToolBridge(BaseTool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         try:
             out = await self._lc.ainvoke(kwargs)
-            return ToolResult(success=True, result=out)
+            text, is_error = _normalize_mcp_invoke_result(out)
+            if is_error:
+                return ToolResult(success=False, error=text or "MCP tool returned an error")
+            if not text:
+                return ToolResult(success=True, result="(MCP tool completed with no output)")
+            return ToolResult(success=True, result=text)
         except Exception as e:
             logger.warning("MCP tool %s failed: %s", self._lc.name, e)
             return ToolResult(success=False, error=str(e))
