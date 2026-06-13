@@ -49,7 +49,6 @@ from ly_next.core.service_manager import (
 from ly_next.core.startup_manager import get_startup_manager
 from ly_next.core.task_manager import get_task_manager
 from ly_next.mcp.remote_bridge import (
-    ensure_remote_mcp_loaded,
     load_remote_mcp_tools,
     remote_mcp_configured,
     remote_mcp_startup_load_enabled,

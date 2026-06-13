@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import importlib
 
-import pytest
-
 from ly_next.core.cli_select import select_option
 from ly_next.core.server_port import (
     DEFAULT_LISTEN_PORT,

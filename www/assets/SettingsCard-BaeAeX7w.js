@@ -1,0 +1,1 @@
+import{j as o}from"./index-w86uI7oV.js";import{i}from"./app-CG1Lo3_M.js";import{C as e,n as m}from"./SettingsPageLayout-TAmtJxgx.js";function p({className:t="",children:s}){const a=i(),r=t.trim();return a?o.jsx(e,{className:r||void 0,children:s}):o.jsx(m,{className:r,variant:"borderless",styles:{body:{padding:0}},children:s})}export{p as S};

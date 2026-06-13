@@ -20,7 +20,7 @@
 - MCP 向导添加（HTTP / stdio 表单 + `POST /api/system/mcp/preflight` 连接测试）
 - 桥接一站式安装向导（插件 → 配置 → 验证）
 - 运行概览「可选依赖」信息卡片（PG / Redis / pgvector 非告警态）
-- 侧栏独立 **插件管理** Tab（Git 克隆 / 桥接插件安装，不再藏在基础设施深处）
+- 侧栏独立 **插件管理** Tab（统一 Git 仓库地址克隆、代理/镜像加速，不再藏在基础设施深处）
 - 运行概览 **环境诊断（ly doctor）** 面板与 `POST /api/system/doctor/fix` 一键修复
 - 对话页活动状态条（工具轮次 / 推理 / 传输方式）与侧边栏存储备份卡片
 

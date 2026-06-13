@@ -238,7 +238,6 @@ def enrich_plugin_catalog(
 
     enriched: list[dict[str, Any]] = []
     for entry in catalog:
-        plugin_id = str(entry.get("id") or "").strip()
         name = str(entry.get("name") or "").strip()
         name_key = name.lower()
         clone_path = str(entry.get("clone_path") or "")

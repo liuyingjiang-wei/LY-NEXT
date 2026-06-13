@@ -2,7 +2,7 @@
 
 核心仓库 **不包含** 第三方插件源码。每人可在自己的仓库里开发插件，安装到本机后 Git 不会跟踪。
 
-官方工作台「插件安装」仅列出 **QQ / Telegram 桥接槽位**（见 `catalog.json`），**不包含官方托管仓库** — 请在工作台「基础设施 → 插件」自行填写 Git 地址，并可配置本机代理或镜像加速。其它能力插件由第三方自行分发。
+官方工作台 **插件管理** 页列出目录中的插件槽位（见 `catalog.json`，含 QQ / Telegram 桥接），**不包含官方托管仓库** — 请填写 **一个 Git 仓库地址**（`plugins.git_clone.repo_url`），并可配置本机代理或镜像加速后复制克隆命令。其它能力插件由第三方自行分发。
 
 ## 插件类型
 
@@ -21,11 +21,11 @@
 
 ### 1. 放入 `plugins/local/`（最简单）
 
-在工作台 **基础设施 → 插件** 为桥接槽位填写 Git 仓库地址，配置代理或镜像加速后复制克隆命令，或在项目根目录手动执行：
+在工作台 **插件管理** 填写 Git 仓库地址，配置代理或镜像加速后复制克隆命令，或在项目根目录手动执行（目标目录由 URL 自动推断，一般为 `plugins/local/<repo名>/`）：
 
 ```bash
+# 示例：克隆到 plugins/local/qq_onebot（以工作台显示的命令为准）
 git clone <你的仓库地址> plugins/local/qq_onebot
-git clone <你的仓库地址> plugins/local/telegram_bot
 # 第三方能力插件：按其 README clone 到 plugins/local/<name>/
 ```
 
