@@ -2,16 +2,18 @@
 
 核心仓库 **不包含** 第三方插件源码。每人可在自己的仓库里开发插件，安装到本机后 Git 不会跟踪。
 
+官方工作台「插件目录」仅列出 **QQ / Telegram 桥接**（见 `catalog.json`）。其它能力插件由第三方自行分发，文档写在各自仓库的 README 中。
+
 ## 插件类型
 
-| 类型 | 说明 | 示例 |
-|------|------|------|
+| 类型 | 说明 | 官方目录示例 |
+|------|------|----------------|
 | **桥接** | 接入外部 IM，注册 `register_bridges` | `qq-onebot` · `telegram-bot` |
-| **能力** | HTTP 路由 + Agent 工具 + 可选 OneBot 指令 | `jmcomic` |
+| **能力** | HTTP 路由 + Agent 工具 + 可选 OneBot 指令 | 第三方自行发布 |
 | **示例** | core 自带演示 | `plugins/hello_plugin.py` |
 
 桥接常用配置键：`bridge.onebot11.*`、`bridge.telegram.*`。  
-能力插件可在 `data/ly_next/config.yaml` 用 `plugins.<name>` 覆盖，或使用插件自有配置目录（如 `data/jmcomic/config.yaml`）。
+能力插件可在 `data/ly_next/config.yaml` 用 `plugins.<name>` 覆盖，或使用插件自有数据目录（`data/<plugin_name>/`）。
 
 ---
 
@@ -22,20 +24,13 @@
 ```bash
 git clone https://github.com/you/ly-next-qq-onebot.git plugins/local/qq_onebot
 git clone https://github.com/you/ly-next-telegram-bot.git plugins/local/telegram_bot
-# 能力插件示例（若本地已有目录）：
-# plugins/local/jmcomic_plugin/
+# 第三方能力插件：按其 README clone 到 plugins/local/<name>/
 ```
 
 默认会扫描 `plugins/` 与 `plugins/local/`（见 `config/default_config.yaml` 的 `plugins.extra_dirs`）。  
 这些目录已在根 `.gitignore` 中忽略，**提交 core 时不会带上插件**。
 
-**jmcomic 额外步骤：**
-
-```bash
-uv pip install -r plugins/local/jmcomic_plugin/requirements.txt
-```
-
-详见 [jmcomic_plugin/README.md](./local/jmcomic_plugin/README.md)。
+若插件有额外 pip 依赖，在其目录执行 `uv pip install -r requirements.txt`（路径以插件 README 为准）。
 
 ### 2. pip 可编辑安装 + `plugins.modules`
 
@@ -52,7 +47,7 @@ plugins:
   modules:
     - telegram_bot.plugin
     - qq_onebot.plugin
-    - jmcomic_plugin.plugin
+    - my_capability_plugin.plugin
 ```
 
 模块名以你插件包的实际 import 路径为准（例如 `my_plugin.plugin`）。
@@ -110,18 +105,18 @@ plugin = MyPlugin()
 
 ### OneBot 指令扩展（非桥接插件）
 
-桥接由 `qq-onebot` 提供 WS 连接；其它插件可注册群指令，在自动回复之前处理：
+桥接由 `qq-onebot` 提供 WS 连接；其它插件可注册群/私聊指令，在自动回复之前处理：
 
 ```python
 from ly_next.messaging.onebot_commands import register_onebot_command_handler
 
-def handle_chepai(ctx):
+def handle_custom_command(ctx):
     ...
 
-register_onebot_command_handler(handle_chepai, priority=50)
+register_onebot_command_handler(handle_custom_command, priority=50)
 ```
 
-参考：`plugins/local/jmcomic_plugin/qq_chepai.py`（`#车牌{相册ID}`）。
+实现细节见 `ly_next/messaging/onebot_commands.py`。
 
 ---
 
@@ -131,7 +126,7 @@ register_onebot_command_handler(handle_chepai, priority=50)
 |------|------|------------|
 | Bot Token、API Key | `.env` 或 `data/ly_next/config.yaml` | 否（已 ignore） |
 | 插件源码 | `plugins/local/*` 或 venv 内 pip 包 | 否 |
-| 插件运行时数据 | 如 `data/jmcomic/` | 否 |
+| 插件运行时数据 | `data/<plugin_name>/` 等 | 否 |
 | 示例单文件插件 | `plugins/hello_plugin.py` | 是（LyNextPlugin 演示） |
 
 ---
@@ -158,10 +153,11 @@ curl -H "X-API-Key: …" http://127.0.0.1:8000/api/system/extensions
 
 ---
 
-## 本地插件索引（本工作区）
+## 官方桥接插件索引
 
-| 目录 | `name` | 类型 |
-|------|--------|------|
+| 目录（本地安装） | `name` | 类型 |
+|------------------|--------|------|
 | `plugins/local/qq_onebot/` | `qq-onebot` | 桥接 |
 | `plugins/local/telegram_bot/` | `telegram-bot` | 桥接 |
-| `plugins/local/jmcomic_plugin/` | `jmcomic` | 能力（HTTP + 工具 + `#车牌`） |
+
+第三方能力插件不在此列表；安装后同样出现在 `GET /api/system/extensions`，但请阅读其独立文档。

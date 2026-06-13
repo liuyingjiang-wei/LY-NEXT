@@ -32,6 +32,13 @@ LY-NEXT 依赖安装向导
     --force               已安装也重新执行
     --configure-only      仅写入 config.yaml + 建库/pgvector（不安装包）
     -h, --help
+
+  环境变量（写 config / 连库）:
+    LY_NEXT_POSTGRES_PASSWORD / POSTGRES_PASSWORD
+    LY_NEXT_DATABASE_HOST / DATABASE_HOST   (默认 127.0.0.1)
+    LY_NEXT_DATABASE_PORT / DATABASE_PORT   (默认 5432)
+    LY_NEXT_REDIS_HOST / REDIS_HOST         (默认 127.0.0.1)
+    LY_NEXT_REDIS_PORT / REDIS_PORT         (默认 6379)
 EOF
 }
 
@@ -206,16 +213,56 @@ need_root() {
   fi
 }
 
-_ubuntu_setup_pgvector() {
+_pg_detect_major_version() {
   local PG_VER
   PG_VER="$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $1 ~ /^[0-9]+$/ { print $1; exit }')"
   [ -z "$PG_VER" ] && PG_VER="$(psql --version 2>/dev/null | sed -n 's/.* \([0-9][0-9]*\)\.[0-9].*/\1/p' | head -1)"
-  [ -z "$PG_VER" ] && { warn "无法检测 PG 主版本，见 install/pgvector.md"; return 0; }
-  apt-get install -y "postgresql-${PG_VER}-pgvector" 2>/dev/null || warn "未找到 postgresql-${PG_VER}-pgvector"
+  printf '%s' "$PG_VER"
+}
+
+_pg_ensure_ly_next_db() {
   sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='ly_next'" 2>/dev/null | grep -q 1 \
     || sudo -u postgres createdb ly_next 2>/dev/null || true
   sudo -u postgres psql -d ly_next -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null \
     && ok "已启用 vector 扩展" || warn "CREATE EXTENSION 失败"
+}
+
+_ubuntu_setup_pgvector() {
+  local PG_VER
+  PG_VER="$(_pg_detect_major_version)"
+  [ -z "$PG_VER" ] && { warn "无法检测 PG 主版本，见 install/pgvector.md"; return 0; }
+  apt-get install -y "postgresql-${PG_VER}-pgvector" 2>/dev/null || warn "未找到 postgresql-${PG_VER}-pgvector"
+  _pg_ensure_ly_next_db
+}
+
+_rhel_setup_pgvector() {
+  local PG_VER id
+  PG_VER="$(_pg_detect_major_version)"
+  [ -z "$PG_VER" ] && PG_VER=17
+  id="$(detect_linux_id)"
+  case "$id" in
+    fedora) dnf install -y "pgvector_${PG_VER}" 2>/dev/null || warn "未找到 pgvector_${PG_VER}" ;;
+    *) yum install -y "pgvector_${PG_VER}" 2>/dev/null || dnf install -y "pgvector_${PG_VER}" 2>/dev/null \
+      || warn "未找到 pgvector_${PG_VER}" ;;
+  esac
+  _pg_ensure_ly_next_db
+}
+
+_macos_setup_pgvector() {
+  if command -v brew >/dev/null 2>&1; then
+    brew install pgvector 2>/dev/null || warn "brew install pgvector 失败，见 install/pgvector.md"
+  else
+    warn "需要 Homebrew 安装 pgvector，见 install/pgvector.md"
+    return 0
+  fi
+  if ly_postgres_reachable; then
+    export PGPASSWORD="${LY_NEXT_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}"
+    if psql -d ly_next -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null; then
+      ok "已启用 vector 扩展"
+    else
+      warn "CREATE EXTENSION 失败（见 install/pgvector.md）"
+    fi
+  fi
 }
 
 _ubuntu_redis_password_hint() {
@@ -363,22 +410,36 @@ _run_configure_local() {
   fi
   patch="$(LY_PG_PW="$pw" LY_REDIS_PW="$rp" python3 - <<'PY'
 import json, os
+def _env_int(keys, default):
+    for key in keys:
+        val = os.environ.get(key)
+        if val:
+            return int(val)
+    return default
+
+def _env_str(keys, default):
+    for key in keys:
+        val = os.environ.get(key)
+        if val:
+            return val
+    return default
+
 print(json.dumps({
     "server": {
         "host": "0.0.0.0",
         "port": 8000,
     },
     "database": {
-        "host": "127.0.0.1",
-        "port": 5432,
+        "host": _env_str(("LY_NEXT_DATABASE_HOST", "DATABASE_HOST"), "127.0.0.1"),
+        "port": _env_int(("LY_NEXT_DATABASE_PORT", "DATABASE_PORT"), 5432),
         "username": "postgres",
         "password": os.environ.get("LY_PG_PW", "postgres"),
         "database": "ly_next",
         "try_unix_socket": False,
     },
     "redis": {
-        "host": "127.0.0.1",
-        "port": 6379,
+        "host": _env_str(("LY_NEXT_REDIS_HOST", "REDIS_HOST"), "127.0.0.1"),
+        "port": _env_int(("LY_NEXT_REDIS_PORT", "REDIS_PORT"), 6379),
         "password": os.environ.get("LY_REDIS_PW", ""),
         "db": 0,
     },
@@ -408,7 +469,8 @@ finalize_postgres_stack() {
   if ly_component_ok pgvector; then return 0; fi
   case "$(detect_linux_id)" in
     ubuntu|debian) _ubuntu_setup_pgvector ;;
-    *) warn "pgvector 自动安装仅支持 Ubuntu/Debian，见 install/pgvector.md" ;;
+    fedora|rhel|centos|rocky|almalinux|ol) _rhel_setup_pgvector ;;
+    *) warn "pgvector 请按 install/pgvector.md 手动安装" ;;
   esac
 }
 
@@ -443,7 +505,7 @@ run_install() {
         install_postgresql_macos
       fi
       if [ "$INSTALL_PGVECTOR" -eq 1 ] || [ "$INSTALL_ALL" -eq 1 ]; then
-        warn "macOS 请按 install/pgvector.md 手动安装 pgvector"
+        _macos_setup_pgvector
       fi
       ;;
     *)

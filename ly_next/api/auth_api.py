@@ -67,10 +67,13 @@ async def auth_me(request: Request) -> dict[str, Any]:
 
 @router.get("/auth/config")
 async def auth_config() -> dict[str, Any]:
+    from ly_next.core.onboarding_helpers import login_page_hints
+
     return {
         "mode": auth_mode(),
         "rbac_enabled": rbac_enabled(),
         "jwt_enabled": jwt_enabled(),
         "users_configured": users_configured(),
         "cookie_name": str((config.get("auth.jwt") or {}).get("cookie_name") or "ly_session"),
+        "login_hints": login_page_hints(),
     }

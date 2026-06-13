@@ -55,7 +55,7 @@ def test_llm_provider_status_ollama_ok(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gather_readiness_shape():
-    result = await gather_readiness()
+    result = await gather_readiness(force_refresh=True)
     assert "ready_for_chat" in result
     assert "checks" in result
     assert "auth" in result["checks"]
@@ -64,3 +64,7 @@ async def test_gather_readiness_shape():
     assert "redis" in result["checks"]
     assert isinstance(result["degraded"], list)
     assert isinstance(result["suggestions"], list)
+    assert "auth_key" in result
+    assert "actions" in result
+    assert "presets" in result
+    assert isinstance(result["presets"], list)

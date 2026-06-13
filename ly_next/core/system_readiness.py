@@ -175,15 +175,26 @@ _READINESS_CACHE: tuple[float, dict[str, Any]] | None = None
 _READINESS_CACHE_TTL_SEC = 5.0
 
 
+def invalidate_readiness_cache() -> None:
+    global _READINESS_CACHE
+    _READINESS_CACHE = None
+
+
 async def gather_readiness(*, force_refresh: bool = False) -> dict[str, Any]:
     global _READINESS_CACHE
     now = time.monotonic()
+    if force_refresh:
+        invalidate_readiness_cache()
     if (
         not force_refresh
         and _READINESS_CACHE is not None
         and now - _READINESS_CACHE[0] < _READINESS_CACHE_TTL_SEC
     ):
         return _READINESS_CACHE[1]
+
+    from ly_next.core.config_presets import list_config_presets
+    from ly_next.core.onboarding_helpers import dependency_actions, gather_auth_key_status
+
     auth_key = str(config.get("auth.api_key") or "").strip()
     auth_ok = bool(auth_key) or not config.get("auth.enabled", True)
 
@@ -209,8 +220,16 @@ async def gather_readiness(*, force_refresh: bool = False) -> dict[str, Any]:
     if auth_ok and ready_for_chat and not suggestions:
         suggestions.append("配置就绪，可在「智能对话」发送第一条消息")
 
+    actions = dependency_actions(db_connected=db_connected, redis_connected=redis_connected)
+
+    mem_cfg = config.get("agent.memory") or {}
+    memory_enabled = isinstance(mem_cfg, dict) and mem_cfg.get("enabled") is not False
+
     payload = {
         "ready_for_chat": ready_for_chat,
+        "auth_key": gather_auth_key_status(),
+        "actions": actions,
+        "presets": list_config_presets(),
         "checks": {
             "auth": {
                 "ok": auth_ok,
@@ -233,6 +252,11 @@ async def gather_readiness(*, force_refresh: bool = False) -> dict[str, Any]:
                 "connected": redis_connected,
                 "error": redis_probe.get("error"),
                 "hint": None if redis_connected else "Redis 未连接（可选）",
+            },
+            "memory": {
+                "ok": memory_enabled,
+                "enabled": memory_enabled,
+                "hint": None if memory_enabled else "在「智能体进阶」启用 agent.memory",
             },
         },
         "degraded": degraded,

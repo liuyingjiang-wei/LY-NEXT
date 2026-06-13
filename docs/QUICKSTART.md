@@ -1,6 +1,6 @@
-# Quick Start — 五条上手路径
+# Quick Start — 四条上手路径
 
-每条路径控制在 **5 步以内**。完整说明见 [README](../README.md)。
+每条路径控制在 **5 步以内**。概览见 [README](../README.md)，排障见 [USER.md](./USER.md)。
 
 > **成熟度：** LY-NEXT 当前为 **Alpha**（打包版本 1.0.1）。适合自托管与实验，**不建议公网裸奔**。部署前请运行 `uv run ly doctor` 并阅读 [SECURITY.md](../SECURITY.md)。
 
@@ -41,22 +41,50 @@
 
 ## 路径 ② 完整栈（PostgreSQL + Redis + RAG）
 
-适合：会话持久化、Run 追踪、知识库检索。
+适合：会话持久化、Run 追踪、知识库检索。基础设施可 **Docker**、**安装脚本（同机）** 或 **远程/托管库**。
 
-1. **启动依赖**
+1. **启动依赖（任选一种）**
+
+   **Docker（推荐，不污染系统）：**
 
    ```bash
    docker compose -f docker/docker-compose.yml up -d
-   # 或 bash install.sh / install.ps1
    ```
 
+   **系统包（与 `uv run ly` 同机）：**
+
+   ```bash
+   # Windows 管理员: .\install.ps1 -Yes
+   # Linux: sudo bash install.sh -y
+   # macOS: bash install.sh -y
+   ```
+
+   **远程 PostgreSQL / Redis：** 在 `data/ly_next/config.yaml` 填写 host/port，或启动前设置环境变量：
+
+   ```bash
+   export DATABASE_HOST=your-db-host
+   export REDIS_HOST=your-redis-host
+   export LY_NEXT_POSTGRES_PASSWORD='your-password'
+   ```
+
+   托管库需支持 pgvector（RAG）；见 [pgvector 托管列表](https://github.com/pgvector/pgvector#hosted-postgres)。
+
 2. **（可选 RAG）启用 pgvector**
+
+   Docker：
 
    ```bash
    docker compose -f docker/docker-compose.yml -f docker/compose.pgvector.yml up -d
    ```
 
-   建库后执行 `CREATE EXTENSION IF NOT EXISTS vector;`
+   在库 `ly_next` 中执行：`CREATE EXTENSION IF NOT EXISTS vector;`（安装脚本与 pgvector 镜像通常会代为执行）。
+
+   宿主机跑 LY-NEXT、Docker 跑依赖时：
+
+   ```bash
+   export DATABASE_HOST=127.0.0.1 REDIS_HOST=127.0.0.1
+   bash install.sh --configure-only
+   ```
 
 3. **配置 LLM 与 Embedding**  
    工作台「模型配置」填对话模型；RAG 嵌入模型使用 `rag_embedding_llm`（可与对话模型相同 provider）。
@@ -104,28 +132,6 @@
 3. **配置 Token** — 环境变量 `TELEGRAM_BOT_TOKEN` 或工作台「Telegram」页；`bridge.telegram.enabled: true`。
 4. **用户配对** — 用户向 Bot 发送 `/start` 获取配对码；管理员在工作台批准。
 5. **验证** — `GET /api/system/extensions` 中 `telegram-bot` 为 loaded；私聊收到 Agent 回复。
-
----
-
-## 路径 ⑤ JMComic（搜索 / PDF + QQ `#车牌`）
-
-适合：群内 `#车牌123456` 下载漫画 PDF；或 Agent / HTTP 搜索下载。
-
-1. **安装依赖**
-
-   ```bash
-   uv pip install -r plugins/local/jmcomic_plugin/requirements.txt
-   ```
-
-2. **确认插件目录** — `plugins/local/jmcomic_plugin/` 存在；`plugins.enabled: true`。
-3. **（QQ `#车牌`）先完成路径 ③** — 需 `qq-onebot` 与 NapCat 已连接。
-4. **配置（可选）** — `data/ly_next/config.yaml` 中 `plugins.jmcomic.client.impl: api`；无代理时保持 `use_system_proxy: false`。
-5. **验证**
-   - HTTP：`curl -H "X-API-Key: …" "http://127.0.0.1:8000/api/jmcomic/search?q=test&page=1"`
-   - QQ：发送 `#车牌{数字相册ID}`（无需 @）
-   - 基础设施页应显示 `jmcomic`
-
-详见 [jmcomic_plugin/README.md](../plugins/local/jmcomic_plugin/README.md)。
 
 ---
 

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "qq_onebot",
+      "name": "qq-onebot",
+      "label": "QQ / OneBot 桥接",
+      "type": "bridge",
+      "description": "NapCat 反向 WebSocket、群聊/私聊自动回复与 OneBot API。",
+      "repo_url": "https://github.com/you/ly-next-qq-onebot.git",
+      "clone_path": "plugins/local/qq_onebot",
+      "config_keys": ["bridge.onebot11"],
+      "requirements_path": null,
+      "workbench_tab": "qq",
+      "recommended_when": "bridge.onebot11.enabled"
+    },
+    {
+      "id": "telegram_bot",
+      "name": "telegram-bot",
+      "label": "Telegram 桥接",
+      "type": "bridge",
+      "description": "Long polling、配对码准入与白名单私聊策略。",
+      "repo_url": "https://github.com/you/ly-next-telegram-bot.git",
+      "clone_path": "plugins/local/telegram_bot",
+      "config_keys": ["bridge.telegram"],
+      "requirements_path": null,
+      "workbench_tab": "telegram",
+      "recommended_when": "bridge.telegram.enabled"
+    }
+  ]
+}

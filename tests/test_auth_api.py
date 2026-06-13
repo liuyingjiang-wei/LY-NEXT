@@ -12,6 +12,8 @@ def test_auth_config_endpoint():
     data = r.json()
     assert data["mode"] in ("api_key", "jwt", "hybrid")
     assert "rbac_enabled" in data
+    assert "login_hints" in data
+    assert "hint" in data["login_hints"]
 
 
 def test_auth_login_with_users(monkeypatch):

@@ -814,21 +814,32 @@ function Invoke-PgCommonConfigureLyNextLocal {
         throw "RepoRoot 不能为空，请在项目根目录运行 .\install.ps1"
     }
     $repo = (Resolve-Path -LiteralPath $RepoRoot).ProviderPath
+    $dbHost = if ($env:LY_NEXT_DATABASE_HOST) { $env:LY_NEXT_DATABASE_HOST }
+        elseif ($env:DATABASE_HOST) { $env:DATABASE_HOST } else { "127.0.0.1" }
+    $dbPort = 5432
+    if ($env:LY_NEXT_DATABASE_PORT) { $dbPort = [int]$env:LY_NEXT_DATABASE_PORT }
+    elseif ($env:DATABASE_PORT) { $dbPort = [int]$env:DATABASE_PORT }
+    $redisHost = if ($env:LY_NEXT_REDIS_HOST) { $env:LY_NEXT_REDIS_HOST }
+        elseif ($env:REDIS_HOST) { $env:REDIS_HOST } else { "127.0.0.1" }
+    $redisPort = 6379
+    if ($env:LY_NEXT_REDIS_PORT) { $redisPort = [int]$env:LY_NEXT_REDIS_PORT }
+    elseif ($env:REDIS_PORT) { $redisPort = [int]$env:REDIS_PORT }
+
     $patch = @{
         server = @{
             host = "0.0.0.0"
             port = 8000
         }
         database = @{
-            host              = "127.0.0.1"
-            port              = 5432
+            host              = $dbHost
+            port              = $dbPort
             username          = "postgres"
             database          = "ly_next"
             try_unix_socket   = $false
         }
         redis = @{
-            host = "127.0.0.1"
-            port = 6379
+            host = $redisHost
+            port = $redisPort
             db   = 0
         }
     }
@@ -837,11 +848,11 @@ function Invoke-PgCommonConfigureLyNextLocal {
     $existingPw = (Read-PgCommonLyNextDatabaseConfig -RepoRoot $repo).password
     $hit = Resolve-PgCommonPsqlExe
     if ($hit) {
-        $port = Read-PgCommonPostgresPort -PgRoot $hit.Root -DefaultPort 5432
+        $port = if ($dbPort -gt 0) { $dbPort } elseif ($dbCfg.port -gt 0) { $dbCfg.port } else { (Read-PgCommonPostgresPort -PgRoot $hit.Root -DefaultPort 5432) }
         $patch.database.port = $port
         [void](Start-PgCommonWindowsPostgresServices -RestartIfPortClosed -Port $port)
-        if (-not (Wait-PgCommonTcpPort -HostName "127.0.0.1" -Port $port -TimeoutSeconds 30)) {
-            Write-Warning "PostgreSQL 端口 $port 未监听；已在 config 中写入连接信息，请启动 postgresql-x64-* 后重新运行 -ConfigureOnly"
+        if (-not (Wait-PgCommonTcpPort -HostName $dbHost -Port $port -TimeoutSeconds 30)) {
+            Write-Warning "PostgreSQL 在 ${dbHost}:$port 未监听；已在 config 中写入连接信息，请启动 postgresql-x64-* 后重新运行 -ConfigureOnly"
             if (-not [string]::IsNullOrEmpty($existingPw)) {
                 $patch.database.password = $existingPw
             } else {
@@ -855,7 +866,7 @@ function Invoke-PgCommonConfigureLyNextLocal {
                 $pgAuthOk = $true
             } elseif (-not [string]::IsNullOrEmpty($existingPw)) {
                 $patch.database.password = $existingPw
-                $pgAuthOk = Test-PgCommonPostgresAuth -Psql $hit.Path -DbHost "127.0.0.1" -Port $port `
+                $pgAuthOk = Test-PgCommonPostgresAuth -Psql $hit.Path -DbHost $dbHost -Port $port `
                     -Username $patch.database.username -Password $existingPw
                 if (-not $pgAuthOk) {
                     Write-Warning (
@@ -870,9 +881,9 @@ function Invoke-PgCommonConfigureLyNextLocal {
         }
     }
 
-    $redisPort = 6379
+    $redisPort = $patch.redis.port
     if (Get-Command redis-cli -ErrorAction SilentlyContinue) {
-        $patch.redis.password = Find-PgCommonRedisPassword -HostName "127.0.0.1" -Port $redisPort
+        $patch.redis.password = Find-PgCommonRedisPassword -HostName $redisHost -Port $redisPort
     } else {
         $patch.redis.password = ""
     }

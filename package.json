@@ -7,7 +7,8 @@
   "scripts": {
     "build:workbench": "vite build --config .workbench-src/vite.config.js && uv run --no-sync --with pillow python scripts/compress_firefly_images.py && uv run --no-sync --with pillow python scripts/compress_orbit_images.py && uv run --no-sync --with pillow python scripts/sync_www_assets.py",
     "dev:workbench": "uv run --no-sync --with pillow python scripts/compress_firefly_images.py && uv run --no-sync --with pillow python scripts/compress_orbit_images.py && vite --config .workbench-src/vite.config.js",
-    "preview:workbench": "vite preview --config .workbench-src/vite.config.js"
+    "preview:workbench": "vite preview --config .workbench-src/vite.config.js",
+    "test:workbench": "vitest run --config .workbench-src/vite.config.js"
   },
   "dependencies": {
     "@ant-design/icons": "^6.2.5",
@@ -24,6 +25,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.2",
     "typescript": "^6.0.3",
-    "vite": "^7.1.0"
+    "vite": "^7.1.0",
+    "vitest": "^3.2.4"
   }
 }

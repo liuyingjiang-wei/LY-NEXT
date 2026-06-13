@@ -42,7 +42,12 @@ def _bootstrap_config(repo: Path, cfg_file: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Write local LY-NEXT service settings into config.yaml"
+        description=(
+            "Merge database/redis settings into data/ly_next/config.yaml. "
+            "Hosts default to 127.0.0.1 when written by install.sh; "
+            "set LY_NEXT_DATABASE_HOST / LY_NEXT_REDIS_HOST (or DATABASE_HOST / REDIS_HOST) "
+            "before install --configure-only for remote or Docker-mapped endpoints."
+        )
     )
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--patch-json", default="", help="JSON object to deep-merge into config")

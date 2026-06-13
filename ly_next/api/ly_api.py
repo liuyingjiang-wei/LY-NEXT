@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from starlette.responses import FileResponse
 
@@ -96,6 +96,7 @@ _SETTINGS_EDITABLE_ROOTS = frozenset(
         "api",
         "auth",
         "bridge",
+        "plugins",
     }
 )
 _SETTINGS_RESTART_ROOTS = frozenset({"server", "database", "redis", "services", "bridge"})
@@ -244,12 +245,17 @@ def _settings_effects(patch: dict[str, Any]) -> dict[str, Any]:
                 k in mcp for k in ("remote", "enabled", "transport", "path")
             ):
                 notes.append("远程 MCP 在进程启动时连接，修改后请重启 uv run ly")
+            if "security_profile" in fragment:
+                notes.append("tools.security_profile 变更后建议重启 uv run ly")
         elif root == "auth":
             notes.append("鉴权变更后，已登录 Cookie 可能需要重新登录")
         elif root == "api" and isinstance(fragment, dict):
             hot.append(_SETTINGS_HOT_LABELS["api"])
             if any(k in fragment for k in ("auto_load", "security_profile", "api_dir")):
                 notes.append("动态 API 加载策略变更后建议重启进程")
+        elif root == "plugins" and isinstance(fragment, dict):
+            if "security_profile" in fragment:
+                notes.append("plugins.security_profile 变更后需重启 uv run ly")
         elif root in _SETTINGS_HOT_LABELS:
             hot.append(_SETTINGS_HOT_LABELS[root])
         elif root == "agent" and isinstance(fragment, dict):
@@ -409,11 +415,75 @@ async def get_info():
     }
 
 
+@router.get("/system/plugins/catalog")
+async def get_plugin_catalog(request: Request):
+    from ly_next.core.plugin_catalog import enrich_plugin_catalog
+
+    plugin_reg = getattr(request.app.state, "plugin_registry", None)
+    ctx = getattr(request.app.state, "app_context", None)
+    if plugin_reg is None and ctx is not None:
+        plugin_reg = ctx.plugin_registry
+
+    plugin_info: list[dict[str, Any]] = []
+    bridge_info: list[dict[str, str | bool]] = []
+    if plugin_reg is not None:
+        plugin_info = plugin_reg.list_info()
+        bridge_info = plugin_reg.bridge_registry.list_info()
+
+    return {
+        "catalog": enrich_plugin_catalog(plugin_info=plugin_info, bridge_info=bridge_info),
+        "directory": _plugins_directory_status(),
+    }
+
+
 @router.get("/system/readiness")
 async def get_system_readiness():
     from ly_next.core.system_readiness import gather_readiness
 
     return await gather_readiness()
+
+
+@router.get("/system/auth/key-status")
+async def get_auth_key_status():
+    from ly_next.core.onboarding_helpers import gather_auth_key_status
+
+    return gather_auth_key_status()
+
+
+@router.post("/system/auth/sync-first-run")
+async def post_sync_first_run():
+    from ly_next.core.onboarding_helpers import sync_auth_first_run_file
+    from ly_next.core.system_readiness import invalidate_readiness_cache
+
+    result = sync_auth_first_run_file()
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "同步失败")
+    invalidate_readiness_cache()
+    return result
+
+
+@router.get("/system/config/presets")
+async def get_config_presets():
+    from ly_next.core.config_presets import list_config_presets
+
+    return {"presets": list_config_presets()}
+
+
+class ApplyPresetRequest(BaseModel):
+    preset_id: str = Field(..., min_length=1, max_length=32)
+
+
+@router.post("/system/config/apply-preset")
+async def post_apply_config_preset(body: ApplyPresetRequest):
+    from ly_next.core.config_presets import apply_config_preset
+    from ly_next.core.system_readiness import invalidate_readiness_cache
+
+    try:
+        result = apply_config_preset(body.preset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    invalidate_readiness_cache()
+    return result
 
 
 @router.get("/system/security/health")

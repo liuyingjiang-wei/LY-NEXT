@@ -79,9 +79,8 @@
 | OpenAI 兼容 | `models/openai_compat.py` · `models/registry.py` |
 | RAG / 记忆 | `rag/document_retriever.py`、`example_selector.py`；`tools/memory_note.py` |
 | QQ / OneBot 桥接 | 独立插件 `qq-onebot` · `/api/onebot11/*` · [plugins/README.md](./plugins/README.md) |
-| OneBot 指令扩展 | `messaging/onebot_commands.py` · 例：jmcomic `#车牌` |
+| OneBot 指令扩展 | `messaging/onebot_commands.py` · `register_onebot_command_handler` |
 | Telegram 桥接 | 独立插件 `telegram_bot` · `/api/telegram/*` |
-| JMComic 能力插件 | `plugins/local/jmcomic_plugin/` · `/api/jmcomic/*` · 工具 · `#车牌` |
 | 桥接早期挂载 | `ly_next/core/plugin/early_bridges.py` · `bootstrap_message_bridges()` |
 
 **标识符**：`thread_id`（跨轮会话）≠ `task_id` / `run_id`（单次请求）
