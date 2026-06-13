@@ -6,6 +6,7 @@ import shutil
 from typing import Any
 
 from ly_next.core.config import config
+from ly_next.mcp.catalog import entries_to_blocks, normalize_remote_entries
 from ly_next.mcp.remote_bridge import merge_mcp_server_blocks
 
 _NODE_CMDS = frozenset({"npx", "npm", "node", "pnpm", "yarn"})
@@ -23,8 +24,8 @@ def _mcp_remote_blocks() -> list[Any]:
     remote = mcp.get("remote") or {}
     if not isinstance(remote, dict) or not remote.get("enabled"):
         return []
-    ms = remote.get("mcpServers")
-    return list(ms) if isinstance(ms, list) else []
+    entries = normalize_remote_entries(remote)
+    return entries_to_blocks(entries)
 
 
 def _stdio_servers() -> list[tuple[str, str, list[str]]]:

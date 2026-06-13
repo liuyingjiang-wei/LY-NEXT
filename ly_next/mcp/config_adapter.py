@@ -190,6 +190,13 @@ async def adapt_mcp_server_config_async(name: str, cfg: dict[str, Any]) -> dict[
         return cfg
     raw_args = cfg.get("args")
     args = [str(x) for x in raw_args] if isinstance(raw_args, list) else []
+    joined = " ".join([cmd, *args])
+    if "@latest" in joined.lower():
+        logger.warning(
+            "[mcp] 服务器 %s 使用 @latest，npx/uvx 每次连接可能重新解析/下载；"
+            "建议固定版本或改用 HTTP MCP",
+            name,
+        )
     new_cmd, new_args = await adapt_stdio_command_async(cmd, args)
     if new_cmd == cmd and new_args == args:
         return cfg

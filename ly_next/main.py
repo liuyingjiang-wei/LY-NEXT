@@ -48,7 +48,12 @@ from ly_next.core.service_manager import (
 )
 from ly_next.core.startup_manager import get_startup_manager
 from ly_next.core.task_manager import get_task_manager
-from ly_next.mcp.remote_bridge import load_remote_mcp_tools
+from ly_next.mcp.remote_bridge import (
+    ensure_remote_mcp_loaded,
+    load_remote_mcp_tools,
+    remote_mcp_configured,
+    remote_mcp_startup_load_enabled,
+)
 
 logger = setup_logging()
 
@@ -240,7 +245,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.debug("Registered %s built-in tools (%s total in registry)", n_bi, len(registry))
 
     try:
-        await load_remote_mcp_tools()
+        if remote_mcp_startup_load_enabled():
+            await load_remote_mcp_tools()
+        elif remote_mcp_configured():
+            logger.info(
+                "远程 MCP 已启用，将在首次对话时连接（tools.mcp.load_remote_on_startup=false，"
+                "避免每次重启触发 npx/uvx 下载）"
+            )
     except Exception as e:
         logger.warning("Remote MCP init: %s", e)
 
@@ -626,6 +637,11 @@ def run():
 
         raise SystemExit(run_doctor_cli(sys.argv[2:]))
 
+    if len(sys.argv) >= 3 and sys.argv[1] == "config" and sys.argv[2] == "migrate":
+        from ly_next.core.config_migrate import run_config_migrate_cli
+
+        raise SystemExit(run_config_migrate_cli(sys.argv[3:]))
+
     from ly_next.core.server_port import (
         ENV_PORT,
         is_port_in_use,
@@ -643,6 +659,7 @@ Examples:
   %(prog)s --host 127.0.0.1    # 仅本机监听
   %(prog)s --reload            # 开发热重载
   %(prog)s doctor              # 环境诊断（依赖、安全、配置）
+  %(prog)s config migrate      # 合并 legacy LLM 块并清理 config.yaml
   LY_NEXT_PORT=9000 %(prog)s   # 环境变量指定端口（非交互）
         """,
     )

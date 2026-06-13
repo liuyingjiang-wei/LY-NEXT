@@ -297,6 +297,16 @@ async def run_agent_stream_on_prepared(
         yield event
 
 
+async def ensure_mcp_tools_for_mode(mode: str) -> None:
+    """Connect remote MCP once per process before agent tool use (stdio may invoke npx/uvx)."""
+    if str(mode or "").strip().lower() == "chat":
+        return
+    from ly_next.mcp.remote_bridge import ensure_remote_mcp_loaded, remote_mcp_configured
+
+    if remote_mcp_configured():
+        await ensure_remote_mcp_loaded()
+
+
 async def execute_chat_turn(
     req: ChatTurnRequest,
     *,
@@ -312,6 +322,7 @@ async def execute_chat_turn(
     middleware = get_chat_middleware_chain()
     prepared = await prepare_chat_turn(req)
     mode = effective_turn_mode(prepared)
+    await ensure_mcp_tools_for_mode(mode)
     deps = build_agent_deps(
         prepared,
         temperature=temperature if temperature is not None else req.temperature,

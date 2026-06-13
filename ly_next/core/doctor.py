@@ -163,6 +163,24 @@ def _port_check() -> dict[str, Any]:
     }
 
 
+def _legacy_llm_blocks_check() -> dict[str, Any]:
+    legacy_keys = ("openai_llm", "anthropic_llm", "ollama_llm", "openai_compat_llm")
+    present = [k for k in legacy_keys if config.get(k) is not None]
+    if not present:
+        return {
+            "id": "legacy_llm_blocks",
+            "ok": True,
+            "label": "LLM 配置结构",
+            "hint": None,
+        }
+    return {
+        "id": "legacy_llm_blocks",
+        "ok": False,
+        "label": "LLM 配置结构",
+        "hint": f"检测到遗留块 {', '.join(present)}；运行 uv run ly config migrate 合并并清理",
+    }
+
+
 def _static_checks() -> list[dict[str, Any]]:
     cfg = _config_path()
     www = get_project_root() / "www" / "app.html"
@@ -181,6 +199,7 @@ def _static_checks() -> list[dict[str, Any]]:
         },
     ]
     checks.append(_first_run_key_check())
+    checks.append(_legacy_llm_blocks_check())
     checks.append(_port_check())
     checks.append(_napcat_check())
     checks.append(_telegram_check())

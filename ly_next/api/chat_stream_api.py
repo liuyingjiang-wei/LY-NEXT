@@ -94,6 +94,9 @@ async def _iter_chat_sse(req: ChatStreamRequest) -> AsyncIterator[str]:
         )
         prepared = await prepare_chat_turn(chat_req)
         mode = effective_turn_mode(prepared)
+        from ly_next.agent.chat_pipeline import ensure_mcp_tools_for_mode
+
+        await ensure_mcp_tools_for_mode(mode)
         chat_trace_info(
             "sse_prepared",
             task_id=task_id,

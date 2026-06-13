@@ -394,7 +394,7 @@ tools:
 | GET | `/api/system/settings` | 可读配置（密钥脱敏） |
 | PATCH | `/api/system/settings` | 深度合并保存 |
 | GET | `/api/system/extensions` | 插件、桥接、工具数量 |
-| GET | `/api/system/plugins/catalog` | 官方插件目录与 doctor 状态 |
+| GET | `/api/system/plugins/catalog` | 桥接插件槽位、Git 克隆设置与 doctor 状态 |
 | GET/POST/DELETE | `/api/models` | 模型注册表 |
 | POST | `/api/chat` | 对话（可选 `thread_id`） |
 | POST | `/api/threads` | 会话（需 PostgreSQL） |

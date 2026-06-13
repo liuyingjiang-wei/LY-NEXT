@@ -58,10 +58,11 @@ uv run ly --no-prompt
 
 **登录密钥：** 首次启动写在 `data/ly_next/FIRST_RUN.txt`（与 `config.yaml` 里 `auth.api_key` 一致）。工作台「访问控制」可一键同步。
 
-**还没配模型？** 顶部横幅会提示。打开「模型配置」注册 Ollama 或 OpenAI 兼容网关，或跟 [docs/QUICKSTART.md](./docs/QUICKSTART.md) 路径 ① 走一遍。
+**还没配模型？** 默认已指向本机 **Ollama**（`qwen2.5`）。先运行 `ollama serve` 并拉取模型即可聊天；或使用 OpenAI 等云端模型 — 见「模型配置」或 [docs/QUICKSTART.md](./docs/QUICKSTART.md) 路径 ①。
 
 ```bash
 uv run ly doctor          # 检查 LLM / PG / Redis / 安全项
+uv run ly config migrate  # 合并 legacy LLM 块、修正错误的 compat URL
 uv run ly --reload        # 开发时热重载
 uv run ly --port 9000     # 指定端口
 ```
@@ -70,7 +71,7 @@ uv run ly --port 9000     # 指定端口
 
 ## 工作台能做什么
 
-首次进入会引导 **配置向导**；侧栏 **入门引导** 可随时打开检查清单。
+首次进入会引导 **配置向导**；侧栏 **入门引导** 在检查清单全部完成前可见。
 
 | 你想… | 去这里 |
 |--------|--------|

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import importlib
 
+import pytest
+
+from ly_next.core.cli_select import select_option
 from ly_next.core.server_port import (
     DEFAULT_LISTEN_PORT,
     _build_port_options,
@@ -84,3 +87,18 @@ def test_load_recent_ports_invalid_file(tmp_path, monkeypatch):
     (data_root / "recent_ports.json").write_text("{not json", encoding="utf-8")
 
     assert load_recent_ports() == []
+
+
+def test_select_option_non_tty_returns_default(monkeypatch):
+    monkeypatch.setattr("ly_next.core.cli_select.sys.stdin.isatty", lambda: False)
+    assert select_option(["a", "b"], title="t", default_index=1) == 1
+
+
+def test_select_option_enter_returns_index(monkeypatch):
+    monkeypatch.setattr("ly_next.core.cli_select.sys.stdin.isatty", lambda: True)
+    keys = iter(["down", "enter"])
+    monkeypatch.setattr(
+        "ly_next.core.cli_select._read_key",
+        lambda: next(keys),
+    )
+    assert select_option(["first", "second"], title="pick", default_index=0) == 1

@@ -242,9 +242,13 @@ def _settings_effects(patch: dict[str, Any]) -> dict[str, Any]:
             hot.append(_SETTINGS_HOT_LABELS["tools"])
             mcp = fragment.get("mcp")
             if isinstance(mcp, dict) and any(
-                k in mcp for k in ("remote", "enabled", "transport", "path")
+                k in mcp
+                for k in ("remote", "enabled", "transport", "path", "load_remote_on_startup")
             ):
-                notes.append("远程 MCP 在进程启动时连接，修改后请重启 uv run ly")
+                notes.append(
+                    "远程 MCP：保存后已尝试热重载；若仍无效请重启 uv run ly。"
+                    "stdio 型（npx/uvx）建议 load_remote_on_startup=false，并固定版本号勿用 @latest"
+                )
             if "security_profile" in fragment:
                 notes.append("tools.security_profile 变更后建议重启 uv run ly")
         elif root == "auth":
@@ -256,6 +260,8 @@ def _settings_effects(patch: dict[str, Any]) -> dict[str, Any]:
         elif root == "plugins" and isinstance(fragment, dict):
             if "security_profile" in fragment:
                 notes.append("plugins.security_profile 变更后需重启 uv run ly")
+            if "git_clone" in fragment:
+                notes.append("Git 克隆设置已保存；克隆命令将按新代理/镜像规则生成")
         elif root in _SETTINGS_HOT_LABELS:
             hot.append(_SETTINGS_HOT_LABELS[root])
         elif root == "agent" and isinstance(fragment, dict):
@@ -264,10 +270,14 @@ def _settings_effects(patch: dict[str, Any]) -> dict[str, Any]:
     restart = list(dict.fromkeys(restart))
     hot = list(dict.fromkeys(hot))
     notes = list(dict.fromkeys(notes))
+    from ly_next.core.settings_apply_guide import apply_by_root_from_patch
+
+    apply_by_root = apply_by_root_from_patch(patch)
     return {
         "restart_required": restart,
         "hot_reload": hot,
         "notes": notes,
+        "apply_by_root": apply_by_root,
     }
 
 
@@ -417,7 +427,7 @@ async def get_info():
 
 @router.get("/system/plugins/catalog")
 async def get_plugin_catalog(request: Request):
-    from ly_next.core.plugin_catalog import enrich_plugin_catalog
+    from ly_next.core.plugin_catalog import enrich_git_clone_settings, enrich_plugin_catalog
 
     plugin_reg = getattr(request.app.state, "plugin_registry", None)
     ctx = getattr(request.app.state, "app_context", None)
@@ -432,6 +442,7 @@ async def get_plugin_catalog(request: Request):
 
     return {
         "catalog": enrich_plugin_catalog(plugin_info=plugin_info, bridge_info=bridge_info),
+        "git_clone": enrich_git_clone_settings(),
         "directory": _plugins_directory_status(),
     }
 
@@ -448,6 +459,35 @@ async def get_auth_key_status():
     from ly_next.core.onboarding_helpers import gather_auth_key_status
 
     return gather_auth_key_status()
+
+
+@router.get("/system/doctor")
+async def get_system_doctor():
+    from ly_next.core.doctor import gather_doctor_report
+    from ly_next.core.doctor_fixes import list_doctor_fixes
+
+    report = await gather_doctor_report()
+    report["available_fixes"] = list_doctor_fixes()
+    return report
+
+
+@router.post("/system/doctor/fix")
+async def post_system_doctor_fix(body: dict[str, Any]):
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    fix_id = str(body.get("fix_id") or "").strip()
+    if not fix_id:
+        raise HTTPException(status_code=400, detail="fix_id required")
+    from ly_next.core.doctor_fixes import apply_doctor_fix
+    from ly_next.core.system_readiness import invalidate_readiness_cache
+
+    result = apply_doctor_fix(fix_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "修复失败")
+    invalidate_readiness_cache()
+    if fix_id in ("disable_query_api_key", "enable_cookie_secure", "run_config_migrate"):
+        config.load()
+    return result
 
 
 @router.post("/system/auth/sync-first-run")
@@ -798,6 +838,24 @@ async def get_system_metrics():
     }
 
 
+@router.get("/system/settings/apply-guide")
+async def get_settings_apply_guide():
+    from ly_next.core.settings_apply_guide import settings_apply_guide_payload
+
+    return settings_apply_guide_payload()
+
+
+@router.post("/system/mcp/preflight")
+async def post_mcp_block_preflight(body: dict[str, Any]):
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    from ly_next.mcp.block_preflight import preflight_mcp_block
+
+    block = body.get("body", body)
+    probe = body.get("probe_http", True) is not False
+    return await preflight_mcp_block(block, probe_http=probe)
+
+
 @router.get("/system/settings")
 async def get_workbench_settings():
     init = config.ensure_initialized()
@@ -811,6 +869,8 @@ async def get_workbench_settings():
         rel_path = str(abs_path.relative_to(config.project_root.resolve()))
     except ValueError:
         rel_path = str(abs_path)
+    from ly_next.core.settings_apply_guide import settings_apply_guide_payload
+
     return {
         "editable": _extract_editable_settings(full),
         "config_path": rel_path,
@@ -825,6 +885,7 @@ async def get_workbench_settings():
         "registered_models": ModelRegistry.list_model_infos(),
         "agent_modes": AgentFactory.list_agent_types(),
         "tool_catalog": _tool_catalog(),
+        "apply_guide": settings_apply_guide_payload(),
     }
 
 
@@ -874,6 +935,14 @@ async def patch_workbench_settings(body: dict[str, Any]):
     refresh_ly_next_log_level_from_config()
     LLMFactory.clear_cache()
     ModelRegistry.reload()
+    tools_patch = body.get("tools")
+    if isinstance(tools_patch, dict) and isinstance(tools_patch.get("mcp"), dict):
+        try:
+            from ly_next.mcp.remote_bridge import reload_remote_mcp_tools
+
+            await reload_remote_mcp_tools()
+        except Exception as exc:
+            logger.warning("MCP hot reload after settings save failed: %s", exc)
     if _patch_affects_rag_index(body):
         reset_document_retriever()
     if _patch_affects_example_index(body):
@@ -1022,6 +1091,9 @@ async def chat(request: ChatRequest):
         )
         prepared = await prepare_chat_turn(chat_req)
         mode = effective_turn_mode(prepared)
+        from ly_next.agent.chat_pipeline import ensure_mcp_tools_for_mode
+
+        await ensure_mcp_tools_for_mode(mode)
         chat_trace_info(
             "prepared",
             task_id=task_id,

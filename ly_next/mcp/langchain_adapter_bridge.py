@@ -183,7 +183,20 @@ async def load_mcp_tools_via_langchain(registry: Any) -> int:
         set_loaded_mcp_slugs([])
         return 0
 
-    merged = await adapt_merged_mcp_servers(merged)
+    from ly_next.mcp.adapt_cache import (
+        load_adapted_cache,
+        mcp_config_fingerprint,
+        save_adapted_cache,
+    )
+
+    fingerprint = mcp_config_fingerprint(merged)
+    cached = load_adapted_cache(fingerprint)
+    if cached:
+        merged = cached
+        logger.debug("[mcp] using cached stdio command adaptation (%s)", fingerprint)
+    else:
+        merged = await adapt_merged_mcp_servers(merged)
+        save_adapted_cache(fingerprint, merged)
 
     use_prefix = bool(mcp_cfg.get("langgraph_tool_name_prefix", True))
     connections: dict[str, dict[str, Any]] = {}

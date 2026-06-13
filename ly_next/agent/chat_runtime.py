@@ -12,6 +12,7 @@ from ly_next.agent.chat_pipeline import (
     await_user_persist,
     build_agent_deps,
     effective_turn_mode,
+    ensure_mcp_tools_for_mode,
     prepare_chat_turn,
     run_agent_on_prepared,
     run_agent_stream_on_prepared,
@@ -38,6 +39,7 @@ async def begin_chat_task(name: str) -> ChatTaskHandle:
 async def prepare_turn(req: ChatTurnRequest) -> tuple[PreparedChatTurn, str]:
     prepared = await prepare_chat_turn(req)
     mode = effective_turn_mode(prepared)
+    await ensure_mcp_tools_for_mode(mode)
     return prepared, mode
 
 

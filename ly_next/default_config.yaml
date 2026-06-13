@@ -25,13 +25,35 @@ plugins:
   # development = scan plugins/ + extra_dirs (plugins/local); production = plugins.modules only
   security_profile: "development"
   trusted_module_hashes: {}
+  # 用户插件 Git 克隆：仓库地址由用户填写，无官方托管仓库（与 QQ/TG 桥接配置无关）
+  git_clone:
+    proxy_mode: "none"   # none | local | mirror | both
+    http_proxy: ""       # 本机代理，如 http://127.0.0.1:7890
+    https_proxy: ""
+    mirror_prefix: ""    # Git 加速前缀，如 https://gh-proxy.com/
+    mirror_hosts:
+      - github.com
+      - raw.githubusercontent.com
+    repo_url: ""
 
 llm:
-  default_provider: "openai"
-  default_model: "openai"
+  default_provider: "ollama"
+  default_model: "ollama"
   request_timeout: 120
   agent_request_timeout: 300
   models:
+    - name: ollama
+      format: ollama
+      model: "qwen2.5"
+      api_key: "not-needed"
+      base_url: "http://127.0.0.1:11434"
+    - name: openai_compat
+      format: openai_compat
+      model: "qwen2.5"
+      api_key: "not-needed"
+      base_url: "http://127.0.0.1:11434/v1"
+      auth_mode: "bearer"
+      model_aliases: {}
     - name: openai
       format: openai
       model: "gpt-4o-mini"
@@ -42,18 +64,6 @@ llm:
       model: "claude-3-5-haiku-20241022"
       api_key: "${ANTHROPIC_API_KEY}"
       base_url: ""
-    - name: ollama
-      format: ollama
-      model: "qwen2.5"
-      api_key: "not-needed"
-      base_url: "http://localhost:11434"
-    - name: openai_compat
-      format: openai_compat
-      model: "qwen2.5"
-      api_key: "not-needed"
-      base_url: "http://localhost:8000/v1"
-      auth_mode: "bearer"
-      model_aliases: {}
 
 rag_embedding_llm:
   model: "text-embedding-3-small"
@@ -413,6 +423,8 @@ tools:
     search_dedup:
       strategy: "prefer_builtin"
     vendor_adapt_probe: false
+    # false = 启动时不连远程 MCP，首次对话再连（避免每次重启 npx/uvx 像「重装」）
+    load_remote_on_startup: false
     remote:
       enabled: false
       mcpServers: []

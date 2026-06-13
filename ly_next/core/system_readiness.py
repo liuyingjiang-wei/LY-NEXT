@@ -67,6 +67,16 @@ def llm_provider_status(provider: str | None = None) -> dict[str, Any]:
         if fmt == "openai_compat" and api_key.lower() in ("not-needed", "not_needed"):
             ok = bool(base_url and model)
             hint = None if ok else "请填写 OpenAI 兼容网关的 Base URL 与模型"
+            if ok and base_url:
+                from ly_next.core.config_migrate import is_self_service_llm_url
+
+                port = int(config.get("server.port") or 8000)
+                if is_self_service_llm_url(base_url, port=port):
+                    ok = False
+                    hint = (
+                        f"Base URL 指向本服务 :{port}，应填 Ollama/vLLM 等上游地址"
+                        "（如 http://127.0.0.1:11434/v1），不是 LY-NEXT 自己"
+                    )
             return {
                 "ok": ok,
                 "provider": name,
@@ -240,6 +250,7 @@ async def gather_readiness(*, force_refresh: bool = False) -> dict[str, Any]:
             "postgres": {
                 "ok": db_connected,
                 "connected": db_connected,
+                "severity": "optional",
                 "persistence_enabled": persistence_enabled(),
                 "persistence_active": persistence_active() and db_connected,
                 "error": db_probe.get("error"),
@@ -250,6 +261,7 @@ async def gather_readiness(*, force_refresh: bool = False) -> dict[str, Any]:
             "redis": {
                 "ok": redis_connected,
                 "connected": redis_connected,
+                "severity": "optional",
                 "error": redis_probe.get("error"),
                 "hint": None if redis_connected else "Redis 未连接（可选）",
             },

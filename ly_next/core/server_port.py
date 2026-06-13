@@ -104,28 +104,37 @@ def _is_non_interactive() -> bool:
     return bool(not sys.stdout.isatty())
 
 
+def _port_option_label(port: int, *, default: int, last_port: int | None, host: str) -> str:
+    tags: list[str] = []
+    if last_port is not None and port == last_port:
+        tags.append("上次")
+    if port == default and port != last_port:
+        tags.append("默认")
+    if is_port_in_use(host, port):
+        tags.append("占用")
+    suffix = f" ({', '.join(tags)})" if tags else ""
+    return f"{port}{suffix}"
+
+
 def _prompt_busy_port(port: int, host: str) -> int:
-    from ly_next.core.logger import LogColors
+    from ly_next.core.cli_select import select_option
 
     alt = find_free_port(port + 1, host=host)
-    print()
-    print(
-        f"  {LogColors.YELLOW}⚠{LogColors.RESET}  端口 {LogColors.BRIGHT}{port}{LogColors.RESET} 已被占用"
+    labels = [
+        f"仍使用 {port}（可能启动失败）",
+        f"改用 {alt}",
+        "手动输入端口",
+    ]
+    choice = select_option(
+        labels,
+        title=f"端口 {port} 已被占用",
+        hint="↑↓ 移动  Enter 确认",
+        default_index=1,
     )
-    print(f"     {LogColors.DIM}[1]{LogColors.RESET} 仍使用 {port}（可能启动失败）")
-    print(f"     {LogColors.DIM}[2]{LogColors.RESET} 改用 {alt}")
-    print(f"     {LogColors.DIM}[3]{LogColors.RESET} 手动输入端口")
-    while True:
-        choice = (
-            input(f"  选择 {LogColors.CYAN}[1/2/3]{LogColors.RESET}（默认 2）: ").strip().lower()
-        )
-        if choice in ("", "2"):
-            return alt
-        if choice == "1":
-            return port
-        if choice == "3":
-            break
-        print(f"  {LogColors.RED}✖{LogColors.RESET} 请输入 1、2 或 3")
+    if choice == 0:
+        return port
+    if choice == 1:
+        return alt
     return _read_port_input("  监听端口: ", default=alt, host=host)
 
 
@@ -154,49 +163,30 @@ def _finalize_port_choice(port: int, host: str) -> int:
 
 
 def prompt_listen_port(default: int, *, host: str = "0.0.0.0") -> int:
-    from ly_next.core.logger import LogColors
+    from ly_next.core.cli_select import select_option
 
     options = _build_port_options(default)
     recent = load_recent_ports()
     last_port = recent[0] if recent else None
-
-    print()
-    print(f"  {LogColors.CYAN}◆{LogColors.RESET} {LogColors.BRIGHT}选择监听端口{LogColors.RESET}")
-
-    for index, port in enumerate(options, start=1):
-        tags: list[str] = []
-        if last_port is not None and port == last_port:
-            tags.append("上次")
-        if port == default and port != last_port:
-            tags.append("默认")
-        if is_port_in_use(host, port):
-            tags.append("占用")
-        tag_text = f" {LogColors.DIM}({', '.join(tags)}){LogColors.RESET}" if tags else ""
-        print(f"     {LogColors.DIM}[{index}]{LogColors.RESET} {port}{tag_text}")
-
-    custom_index = len(options) + 1
-    print(f"     {LogColors.DIM}[{custom_index}]{LogColors.RESET} 手动输入端口")
     quick_default = options[0] if options else default
-    print(f"  {LogColors.DIM}直接回车使用 {quick_default}{LogColors.RESET}")
 
-    while True:
-        raw = input(
-            f"  选择 {LogColors.CYAN}[1-{custom_index}]{LogColors.RESET}（默认 1）: ",
-        ).strip()
-        if not raw:
-            choice = 1
-        else:
-            if not raw.isdigit():
-                print(f"  {LogColors.RED}✖{LogColors.RESET} 请输入 1–{custom_index} 之间的数字")
-                continue
-            choice = int(raw)
-        if 1 <= choice <= len(options):
-            return _finalize_port_choice(options[choice - 1], host)
-        if choice == custom_index:
-            port = _read_port_input("  端口: ", default=quick_default, host=host)
-            remember_port(port)
-            return port
-        print(f"  {LogColors.RED}✖{LogColors.RESET} 请输入 1–{custom_index} 之间的数字")
+    labels = [
+        _port_option_label(port, default=default, last_port=last_port, host=host)
+        for port in options
+    ]
+    labels.append("手动输入端口")
+
+    choice = select_option(
+        labels,
+        title="选择监听端口",
+        hint=f"↑↓ 移动  Enter 确认  · 默认 {quick_default}",
+        default_index=0,
+    )
+    if choice < len(options):
+        return _finalize_port_choice(options[choice], host)
+    port = _read_port_input("  端口: ", default=quick_default, host=host)
+    remember_port(port)
+    return port
 
 
 def resolve_startup_port(
