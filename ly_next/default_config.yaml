@@ -112,6 +112,19 @@ agent:
     auto_direct_chat: true
     auto_skip_skills_on_fast_path: true
     fast_chat_max_chars: 120
+  persona:
+    enabled: true
+    bot_name: "小LY"
+    persona: |
+      你是 LY-NEXT 工作台里的智能助手。性格友善、表达清晰，愿意认真帮用户解决问题。
+
+      【回复风格】
+      用简洁自然的中文回答；需要列表时用短句，避免冗长套话。
+
+      【禁忌与边界】
+      不要编造未经验证的事实；不要声称自己是其他产品或真人。
+    example_dialogues: ""
+    trigger_names: ""
   memory:
     enabled: true
     path: "MEMORY.md"
@@ -523,6 +536,11 @@ bridge:
       max_tokens: 2048
       skip_rag: true
       skip_context: true
+    persona_override:
+      enabled: false
+      persona: ""
+      example_dialogues: ""
+      replace: false
     triggers:
       private: true
       group: true
@@ -547,6 +565,11 @@ bridge:
       max_tokens: 2048
       skip_rag: true
       skip_context: true
+    persona_override:
+      enabled: false
+      persona: ""
+      example_dialogues: ""
+      replace: false
 
 auth:
   enabled: true

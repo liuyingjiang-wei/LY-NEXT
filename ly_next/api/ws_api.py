@@ -289,6 +289,8 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                 raise _ChatUserCancelError()
             mcp_raw = data.get("mcp_enabled_slugs")
             mcp_enabled_slugs = mcp_raw if isinstance(mcp_raw, list) else None
+            persona_raw = data.get("persona_override")
+            persona_override = persona_raw if isinstance(persona_raw, dict) else None
             chat_req = ChatTurnRequest(
                 client_messages=list(client_messages),
                 thread_id=thread_id,
@@ -301,6 +303,7 @@ async def handle_chat(websocket: WebSocket, data: dict[str, Any]):
                 tool_call_mode=data.get("tool_call_mode"),
                 channel=str(data.get("channel") or "web"),
                 mcp_enabled_slugs=mcp_enabled_slugs,
+                persona_override=persona_override,
                 turn_meta_extra={
                     "task_id": task_id,
                     "requested_mode": requested_mode,

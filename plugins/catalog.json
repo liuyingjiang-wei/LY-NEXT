@@ -24,6 +24,18 @@
       "requirements_path": null,
       "workbench_tab": "telegram",
       "recommended_when": "bridge.telegram.enabled"
+    },
+    {
+      "id": "wechat_oc",
+      "name": "wechat-oc",
+      "label": "wechat-oc",
+      "type": "plugin",
+      "description": "用户插件：微信个人号桥接（官方 iLink / OpenClaw 协议，扫码登录，仅私聊）。克隆后由框架加载；开关在 bridge.wechat_oc 配置。",
+      "clone_path": "plugins/local/wechat_oc",
+      "config_keys": ["bridge.wechat_oc"],
+      "requirements_path": "requirements.txt",
+      "workbench_tab": "wechat",
+      "recommended_when": "bridge.wechat_oc.enabled"
     }
   ]
 }

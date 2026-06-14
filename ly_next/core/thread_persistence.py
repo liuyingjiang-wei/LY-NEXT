@@ -145,6 +145,16 @@ async def delete_thread(thread_id: str) -> bool:
     return await db.delete_session(uid)
 
 
+async def patch_thread_metadata(thread_id: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
+    uid = _parse_uuid(thread_id)
+    if uid is None:
+        return None
+    row = await db.patch_session_metadata(uid, metadata or {})
+    if row is None:
+        return None
+    return _session_to_api(row)
+
+
 async def get_message_by_id(message_id: str) -> dict[str, Any] | None:
     uid = _parse_uuid(message_id)
     if uid is None:

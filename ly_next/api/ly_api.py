@@ -22,6 +22,7 @@ from ly_next.agent.chat_pipeline import (
 )
 from ly_next.agent.factory import AgentFactory
 from ly_next.agent.image_reply import ensure_mixed_reply
+from ly_next.agent.persona import BotPersona
 from ly_next.agent.startup_memory import invalidate_startup_memory_cache
 from ly_next.core.cache import cache
 from ly_next.core.chat_trace_log import chat_info as chat_trace_info
@@ -179,9 +180,14 @@ _TELEGRAM_HOT_KEYS = frozenset(
         "approved_user_ids",
         "pairing",
         "auto_reply",
+        "persona_override",
     }
 )
 _TELEGRAM_POLLER_KEYS = frozenset({"enabled", "bot_token", "poll_timeout"})
+_WECHAT_HOT_KEYS = frozenset(
+    {"dm_policy", "allow_from", "allowed_user_ids", "auto_reply", "persona_override"}
+)
+_WECHAT_POLLER_KEYS = frozenset({"enabled"})
 
 
 def _bridge_settings_effects(fragment: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
@@ -193,12 +199,20 @@ def _bridge_settings_effects(fragment: dict[str, Any]) -> tuple[list[str], list[
     if isinstance(tg, dict) and tg:
         tg_keys = set(tg.keys())
         if tg_keys & _TELEGRAM_HOT_KEYS:
-            hot.append("Telegram 白名单/私聊策略/自动回复")
+            hot.append("Telegram 白名单/私聊策略/自动回复/渠道人设")
         if tg_keys & _TELEGRAM_POLLER_KEYS:
             notes.append("Telegram 连接参数已保存，轮询将自动重载")
         token_val = tg.get("bot_token")
         if token_val not in (None, "", _SETTINGS_MASK) and "bot_token" in tg_keys:
             notes.append("Telegram 连接参数已保存，轮询将自动重载")
+
+    wx = fragment.get("wechat_oc")
+    if isinstance(wx, dict) and wx:
+        wx_keys = set(wx.keys())
+        if wx_keys & _WECHAT_HOT_KEYS:
+            hot.append("微信私聊策略/自动回复/渠道人设")
+        if wx_keys & _WECHAT_POLLER_KEYS:
+            notes.append("微信桥接开关已保存，轮询将自动重载")
 
     ob = fragment.get("onebot11")
     if isinstance(ob, dict) and ob:
@@ -383,6 +397,7 @@ class ChatRequest(BaseModel):
     thread_id: str | None = None
     channel: str | None = "web"
     mcp_enabled_slugs: list[str] | None = None
+    persona_override: dict[str, Any] | None = None
 
 
 class TaskCreateRequest(BaseModel):
@@ -845,6 +860,64 @@ async def get_settings_apply_guide():
     return settings_apply_guide_payload()
 
 
+@router.get("/system/persona")
+async def get_system_persona():
+    from ly_next.agent.persona import (
+        load_persona,
+        persona_file_path,
+        persona_to_prompt_text,
+    )
+
+    data = load_persona()
+    return {
+        "ok": True,
+        "persona": data.model_dump(),
+        "preview": persona_to_prompt_text(data),
+        "storage": str(persona_file_path()),
+    }
+
+
+@router.put("/system/persona")
+async def put_system_persona(body: BotPersona):
+    from ly_next.agent.persona import (
+        flatten_persona_record,
+        persona_file_path,
+        persona_to_prompt_text,
+        save_persona,
+    )
+
+    data = flatten_persona_record(body.model_dump())
+    saved = save_persona(data)
+    return {
+        "ok": True,
+        "message": "人设已保存，下一条消息起立即生效",
+        "persona": saved.model_dump(),
+        "preview": persona_to_prompt_text(saved),
+        "storage": str(persona_file_path()),
+    }
+
+
+@router.get("/system/persona/preview")
+async def get_system_persona_preview(
+    channel: str | None = None,
+    thread_id: str | None = None,
+):
+    from ly_next.agent.persona import (
+        combine_native_system_prefix,
+        resolve_effective_persona,
+        resolve_persona_system_prefix,
+    )
+
+    effective = await resolve_effective_persona(channel=channel, thread_id=thread_id)
+    persona_block = await resolve_persona_system_prefix(channel=channel, thread_id=thread_id)
+    return {
+        "ok": True,
+        "persona": effective.model_dump(),
+        "persona_preview": persona_block,
+        "system_prefix_preview": combine_native_system_prefix(persona_block),
+    }
+
+
 @router.post("/system/mcp/preflight")
 async def post_mcp_block_preflight(body: dict[str, Any]):
     if not isinstance(body, dict):
@@ -928,6 +1001,15 @@ async def patch_workbench_settings(body: dict[str, Any]):
             from telegram_bot.api import reload_telegram_poller
 
             await reload_telegram_poller(bridge_patch["telegram"])
+        except ImportError:
+            pass
+        except Exception:
+            pass
+    if isinstance(bridge_patch, dict) and isinstance(bridge_patch.get("wechat_oc"), dict):
+        try:
+            from wechat_oc.api import reload_wechat_poller
+
+            await reload_wechat_poller()
         except ImportError:
             pass
         except Exception:
@@ -1083,6 +1165,7 @@ async def chat(request: ChatRequest):
             skip_vision_precaption=request.vision_precaption is False,
             channel=request.channel or "web",
             mcp_enabled_slugs=request.mcp_enabled_slugs,
+            persona_override=request.persona_override,
             turn_meta_extra={
                 "task_id": task_id,
                 "requested_mode": request.mode,

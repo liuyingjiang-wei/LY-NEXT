@@ -364,6 +364,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             logger.info("Telegram bridge enabled (plugin telegram-bot, long polling, pairing)")
 
+    if config.get("bridge.wechat_oc.enabled", False):
+        if "wechat-oc" not in plugin_names:
+            logger.warning(
+                "bridge.wechat_oc.enabled is true but wechat-oc plugin not loaded; "
+                "install wechat_oc (see plugins/README.md)"
+            )
+        else:
+            logger.info("WeChat OC bridge enabled (plugin wechat-oc, QR login, private chat only)")
+
     await print_startup_report(report)
 
     logger.info(f"LY-Next v{__version__} started successfully")

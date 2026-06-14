@@ -42,6 +42,7 @@ class ChatStreamRequest(BaseModel):
     channel: str | None = "web"
     tool_call_mode: str | None = None
     mcp_enabled_slugs: list[str] | None = None
+    persona_override: dict[str, Any] | None = None
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -90,6 +91,7 @@ async def _iter_chat_sse(req: ChatStreamRequest) -> AsyncIterator[str]:
             tool_call_mode=req.tool_call_mode,
             channel=req.channel or "web",
             mcp_enabled_slugs=req.mcp_enabled_slugs,
+            persona_override=req.persona_override,
             turn_meta_extra={"task_id": task_id, "requested_mode": req.mode, "channel": "web"},
         )
         prepared = await prepare_chat_turn(chat_req)

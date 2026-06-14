@@ -11,6 +11,7 @@ from ly_next.core.thread_persistence import (
     get_thread,
     list_thread_messages,
     list_threads,
+    patch_thread_metadata,
     persistence_active,
     persistence_enabled,
 )
@@ -20,6 +21,10 @@ router = APIRouter(prefix="/threads", tags=["threads"])
 
 class ThreadCreateRequest(BaseModel):
     name: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ThreadPatchRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -56,6 +61,17 @@ async def list_threads_endpoint(limit: int = 100, status: str | None = "active")
 async def get_thread_endpoint(thread_id: str):
     _require_persistence()
     row = await get_thread(thread_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return row
+
+
+@router.patch("/{thread_id}")
+async def patch_thread_endpoint(thread_id: str, body: ThreadPatchRequest):
+    _require_persistence()
+    if not isinstance(body.metadata, dict):
+        raise HTTPException(status_code=400, detail="metadata must be an object")
+    row = await patch_thread_metadata(thread_id, body.metadata)
     if row is None:
         raise HTTPException(status_code=404, detail="Thread not found")
     return row

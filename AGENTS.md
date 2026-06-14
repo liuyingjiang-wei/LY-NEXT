@@ -79,7 +79,7 @@
 | OpenAI 兼容 | `models/openai_compat.py` · `models/registry.py` |
 | RAG / 记忆 | `rag/document_retriever.py`、`example_selector.py`；`tools/memory_note.py` |
 | QQ / OneBot 桥接 | 独立插件 `qq-onebot` · `/api/onebot11/*` · [plugins/README.md](./plugins/README.md) |
-| OneBot 指令扩展 | `messaging/onebot_commands.py` · `register_onebot_command_handler` |
+| 微信 iLink 桥接 | 独立插件 `wechat-oc` · `/api/wechat-oc/*` · 扫码登录 |
 | Telegram 桥接 | 独立插件 `telegram_bot` · `/api/telegram/*` |
 | 桥接早期挂载 | `ly_next/core/plugin/early_bridges.py` · `bootstrap_message_bridges()` |
 

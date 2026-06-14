@@ -8,11 +8,11 @@
 
 | 类型 | 说明 | 官方目录示例 |
 |------|------|----------------|
-| **桥接** | 接入外部 IM，注册 `register_bridges` | `qq-onebot` · `telegram-bot` |
+| **桥接** | 接入外部 IM，注册 `register_bridges` | `qq-onebot` · `telegram-bot` · `wechat-oc` |
 | **能力** | HTTP 路由 + Agent 工具 + 可选 OneBot 指令 | 第三方自行发布 |
 | **示例** | core 自带演示 | `plugins/hello_plugin.py` |
 
-桥接常用配置键：`bridge.onebot11.*`、`bridge.telegram.*`。  
+桥接常用配置键：`bridge.onebot11.*`、`bridge.telegram.*`、`bridge.wechat_oc.*`。  
 能力插件可在 `data/ly_next/config.yaml` 用 `plugins.<name>` 覆盖，或使用插件自有数据目录（`data/<plugin_name>/`）。
 
 ---
@@ -161,5 +161,6 @@ curl -H "X-API-Key: …" http://127.0.0.1:8000/api/system/extensions
 |------------------|--------|------|
 | `plugins/local/qq_onebot/` | `qq-onebot` | 桥接 |
 | `plugins/local/telegram_bot/` | `telegram-bot` | 桥接 |
+| `plugins/local/wechat_oc/` | `wechat-oc` | 桥接（微信 iLink 扫码） |
 
 第三方能力插件不在此列表；安装后同样出现在 `GET /api/system/extensions`，但请阅读其独立文档。

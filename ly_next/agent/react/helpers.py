@@ -11,7 +11,7 @@ import httpx
 
 from ly_next.agent.deps import AgentDeps
 from ly_next.agent.image_reply import format_image_tool_observation, record_tool_result
-from ly_next.agent.prompt_templates import format_tool_manifest_block, get_native_system_prefix
+from ly_next.agent.prompt_templates import format_tool_manifest_block
 from ly_next.agent.tool_filter import get_filtered_tools_for_deps
 from ly_next.core.config import config
 from ly_next.core.logger import get_logger
@@ -117,8 +117,14 @@ def sanitize_dialog_messages(messages: list[dict[str, Any]]) -> list[dict[str, A
     return out
 
 
-def merge_system_instruction(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    prefix = get_native_system_prefix() + "\n\n"
+def merge_system_instruction(
+    messages: list[dict[str, Any]],
+    *,
+    persona_block: str = "",
+) -> list[dict[str, Any]]:
+    from ly_next.agent.persona import combine_native_system_prefix
+
+    prefix = combine_native_system_prefix(persona_block) + "\n\n"
     out: list[dict[str, Any]] = []
     merged = False
     for m in messages:

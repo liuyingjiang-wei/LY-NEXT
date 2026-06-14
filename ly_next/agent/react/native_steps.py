@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ly_next.agent.deps import AgentDeps
+from ly_next.agent.persona import combine_native_system_prefix
 from ly_next.agent.prompt_augment import last_user_query
-from ly_next.agent.prompt_templates import get_native_system_prefix
 from ly_next.agent.react.helpers import (
     aborted,
     assistant_turn_from_response,
@@ -121,7 +121,10 @@ class NativeReactSession:
             cap_ceiling=cumulative_budget_limit(),
             ctx_window=effective_context_window_tokens(deps.model),
         )
-        session.dialog = merge_system_instruction(sanitize_dialog_messages(list(messages)))
+        session.dialog = merge_system_instruction(
+            sanitize_dialog_messages(list(messages)),
+            persona_block=deps.persona_system_prefix or "",
+        )
         if openai_tools:
             inject_tool_manifest(session.dialog, allowed_names)
             logger.info(
@@ -187,7 +190,10 @@ class NativeReactSession:
                 f"{(m.get('role') or 'user')}: {m.get('content', '')}"
                 for m in (self.messages or [])
             ).strip()
-        prompt = f"{get_native_system_prefix()}\n\nUser request:\n{q}\n\nAnswer without tools."
+        prompt = (
+            f"{combine_native_system_prefix(deps.persona_system_prefix or '')}\n\n"
+            f"User request:\n{q}\n\nAnswer without tools."
+        )
         async for ev in iter_direct_answer(
             self.deps,
             [{"role": "user", "content": prompt}],

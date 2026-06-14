@@ -63,6 +63,7 @@ class ChatTurnRequest:
     history_limit: int | None = None
     channel: str | None = None
     mcp_enabled_slugs: list[str] | None = None
+    persona_override: dict[str, Any] | None = None
 
 
 @dataclass
@@ -73,6 +74,7 @@ class PreparedChatTurn:
     routed: ChatModelSelection
     turn_meta: dict[str, Any]
     router_payload: dict[str, Any]
+    persona_system_prefix: str = ""
     plan: TurnPlan | None = None
     _user_persist_task: asyncio.Task[None] | None = None
 
@@ -162,6 +164,14 @@ async def prepare_chat_turn(req: ChatTurnRequest) -> PreparedChatTurn:
 
     messages = await middleware.after_prepare(messages, {**mw_ctx, "plan": plan})
 
+    from ly_next.agent.persona import resolve_persona_system_prefix
+
+    persona_system_prefix = await resolve_persona_system_prefix(
+        channel=req.channel,
+        thread_id=thread_id,
+        persona_override=req.persona_override,
+    )
+
     turn_meta = {
         "mode": effective_mode,
         "requested_mode": plan.requested_mode,
@@ -195,6 +205,7 @@ async def prepare_chat_turn(req: ChatTurnRequest) -> PreparedChatTurn:
         routed=routed,
         turn_meta=turn_meta,
         router_payload=selection_payload(routed),
+        persona_system_prefix=persona_system_prefix,
         plan=plan,
         _user_persist_task=user_persist_task,
     )
@@ -253,6 +264,7 @@ def build_agent_deps(
     else:
         deps.tool_registry = None
     deps.thread_id = prepared.thread_id
+    deps.persona_system_prefix = prepared.persona_system_prefix or ""
     if prepared.plan and prepared.plan.query:
         deps.tool_router_query = prepared.plan.query
     else:
@@ -262,7 +274,9 @@ def build_agent_deps(
     from ly_next.mcp.catalog import parse_mcp_enabled_slugs
 
     if "mcp_enabled_slugs" in prepared.turn_meta:
-        deps.mcp_enabled_slugs = parse_mcp_enabled_slugs(prepared.turn_meta.get("mcp_enabled_slugs"))
+        deps.mcp_enabled_slugs = parse_mcp_enabled_slugs(
+            prepared.turn_meta.get("mcp_enabled_slugs")
+        )
     if begin_run:
         begin_agent_run(deps)
     return deps

@@ -58,6 +58,7 @@ class AgentDeps:
     stop_event: asyncio.Event | None = None
     thread_id: str | None = None
     channel: str | None = None
+    persona_system_prefix: str = ""
     collected_tool_results: list[dict[str, Any]] = field(default_factory=list)
     last_mixed_message: MixedMessage | None = None
     _filtered_tools_cache: tuple[list[Any], list[str]] | None = field(default=None, repr=False)
