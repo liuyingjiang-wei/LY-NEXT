@@ -170,24 +170,30 @@ def sync_plugin_dependencies(*, install: bool = True) -> dict[str, Any]:
         result["message"] = f"已写入清单 {rel_manifest}（共 {len(requirements)} 项）。"
         return result
 
-    if shutil.which("uv") is None:
-        raise RuntimeError("未找到 uv 命令，无法安装插件依赖")
-
-    proc = subprocess.run(
-        ["uv", "pip", "install", "-r", str(manifest)],
-        cwd=str(get_project_root()),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    proc = _install_requirements_manifest(manifest)
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip()
-        raise RuntimeError(err or f"uv pip install 失败 (exit {proc.returncode})")
+        raise RuntimeError(err or f"依赖安装失败 (exit {proc.returncode})")
 
     result["installed"] = len(requirements)
     result["message"] = f"已安装 {len(requirements)} 个插件依赖（清单：{rel_manifest}）。"
     result["stdout"] = (proc.stdout or "").strip() or None
     return result
+
+
+def _install_requirements_manifest(manifest: Path) -> subprocess.CompletedProcess[str]:
+    root = get_project_root()
+    if shutil.which("uv"):
+        cmd = ["uv", "pip", "install", "-r", str(manifest)]
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "-r", str(manifest)]
+    return subprocess.run(
+        cmd,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def run_plugin_deps_sync_cli(argv: list[str] | None = None) -> int:

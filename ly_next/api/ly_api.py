@@ -534,10 +534,12 @@ async def get_plugin_deps_preview():
 
 @router.post("/system/plugins/sync-deps")
 async def post_plugin_sync_deps():
+    import asyncio
+
     from ly_next.core.plugin_deps import sync_plugin_dependencies
 
     try:
-        return sync_plugin_dependencies(install=True)
+        return await asyncio.to_thread(sync_plugin_dependencies, install=True)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

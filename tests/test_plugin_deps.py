@@ -72,3 +72,39 @@ def test_sync_plugin_dependencies_dry_run(tmp_path, monkeypatch):
     result = sync_plugin_dependencies(install=False)
     assert result["ok"] is True
     assert result["requirements"] == ["httpx>=0.26"]
+
+
+def test_sync_plugin_dependencies_uses_pip_when_uv_missing(tmp_path, monkeypatch):
+    plugin_root = tmp_path / "plugins" / "local" / "demo"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "requirements.txt").write_text("httpx>=0.26\n", encoding="utf-8")
+
+    monkeypatch.setattr("ly_next.core.plugin_deps.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("ly_next.core.plugin_deps.get_data_root", lambda: tmp_path / "data" / "ly_next")
+    monkeypatch.setattr(
+        "ly_next.core.plugin.loader._plugin_dir",
+        lambda: tmp_path / "plugins",
+    )
+    monkeypatch.setattr(
+        "ly_next.core.plugin.loader._plugin_extra_dirs",
+        lambda: [tmp_path / "plugins" / "local"],
+    )
+    monkeypatch.setattr("ly_next.core.plugin_deps.shutil.which", lambda _name: None)
+
+    calls: list[list[str]] = []
+
+    class FakeProc:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return FakeProc()
+
+    monkeypatch.setattr("ly_next.core.plugin_deps.subprocess.run", fake_run)
+
+    result = sync_plugin_dependencies(install=True)
+    assert result["installed"] == 1
+    assert calls
+    assert calls[0][1:3] == ["-m", "pip"]
