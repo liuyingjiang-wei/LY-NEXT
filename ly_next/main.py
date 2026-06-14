@@ -650,6 +650,16 @@ def run():
 
         raise SystemExit(run_config_migrate_cli(sys.argv[3:]))
 
+    if len(sys.argv) >= 3 and sys.argv[1] == "plugins" and sys.argv[2] == "sync-deps":
+        from ly_next.core.plugin_deps import run_plugin_deps_sync_cli
+
+        raise SystemExit(run_plugin_deps_sync_cli(sys.argv[3:]))
+
+    if len(sys.argv) >= 2 and sys.argv[1] == "sync":
+        from ly_next.core.project_sync import run_sync_cli
+
+        raise SystemExit(run_sync_cli(sys.argv[2:]))
+
     from ly_next.core.server_port import (
         ENV_PORT,
         is_port_in_use,
@@ -668,6 +678,8 @@ Examples:
   %(prog)s --reload            # 开发热重载
   %(prog)s doctor              # 环境诊断（依赖、安全、配置）
   %(prog)s config migrate      # 合并 legacy LLM 块并清理 config.yaml
+  %(prog)s sync                # 等同 uv sync --inexact + 插件依赖（推荐）
+  %(prog)s plugins sync-deps   # 仅安装 plugins/local 插件 pip 依赖
   LY_NEXT_PORT=9000 %(prog)s   # 环境变量指定端口（非交互）
         """,
     )

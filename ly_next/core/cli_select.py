@@ -6,6 +6,7 @@ import sys
 
 
 def _read_key() -> str | None:
+    # Windows Python has no termios — use msvcrt in cmd, PowerShell, and Git Bash alike.
     if sys.platform == "win32":
         import msvcrt
 
@@ -60,6 +61,26 @@ def _format_row(label: str, active: bool) -> str:
     return f"  {marker} {text}"
 
 
+def _refresh_menu(
+    options: list[str],
+    *,
+    selected: int,
+    hint: str,
+) -> None:
+    """Rewrite option rows + hint in place (Git Bash / mintty safe)."""
+    from ly_next.core.logger import LogColors
+
+    n = len(options)
+    # Cursor sits on the line after hint; move up over all options + hint row.
+    sys.stdout.write(f"\033[{n + 1}A")
+    for i, label in enumerate(options):
+        sys.stdout.write("\033[2K\r")
+        print(_format_row(label, i == selected))
+    sys.stdout.write("\033[2K\r")
+    print(f"  {LogColors.DIM}{hint}{LogColors.RESET}")
+    sys.stdout.flush()
+
+
 def select_option(
     options: list[str],
     *,
@@ -76,7 +97,6 @@ def select_option(
     from ly_next.core.logger import LogColors
 
     selected = max(0, min(default_index, len(options) - 1))
-    menu_lines = len(options)
 
     print()
     print(f"  {LogColors.CYAN}◆{LogColors.RESET} {LogColors.BRIGHT}{title}{LogColors.RESET}")
@@ -96,8 +116,4 @@ def select_option(
         elif key is None:
             continue
 
-        sys.stdout.write(f"\033[{menu_lines}A")
-        for i, label in enumerate(options):
-            sys.stdout.write("\033[2K\r")
-            print(_format_row(label, i == selected))
-        sys.stdout.flush()
+        _refresh_menu(options, selected=selected, hint=hint)

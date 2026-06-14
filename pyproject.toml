@@ -59,6 +59,7 @@ default-groups = ["dev"]
 
 [project.scripts]
 ly = "ly_next.main:run"
+sync = "ly_next.core.project_sync:run_sync_cli"
 
 [build-system]
 requires = ["hatchling"]

@@ -78,21 +78,46 @@ def remember_port(port: int) -> None:
     if parsed is None:
         return
     recent = [parsed, *[p for p in load_recent_ports() if p != parsed]]
-    recent = recent[:MAX_RECENT_PORTS]
+    _save_recent_ports(recent[:MAX_RECENT_PORTS])
+
+
+def _save_recent_ports(ports: list[int]) -> None:
+    cleaned: list[int] = []
+    for item in ports:
+        port = _parse_port(item)
+        if port is not None and port not in cleaned:
+            cleaned.append(port)
+    cleaned = cleaned[:MAX_RECENT_PORTS]
     path = _recent_ports_path()
     try:
-        path.write_text(json.dumps(recent, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if cleaned:
+            path.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        elif path.is_file():
+            path.unlink()
     except OSError:
         return
 
 
-def _build_port_options(default: int) -> list[int]:
+def remove_recent_port(port: int) -> bool:
+    parsed = _parse_port(port)
+    if parsed is None:
+        return False
+    recent = load_recent_ports()
+    if parsed not in recent:
+        return False
+    _save_recent_ports([p for p in recent if p != parsed])
+    return True
+
+
+def clear_recent_ports() -> None:
+    _save_recent_ports([])
+
+
+def _build_port_options() -> list[int]:
     options: list[int] = []
     for port in load_recent_ports():
         if port not in options:
             options.append(port)
-    if default not in options:
-        options.append(default)
     return options
 
 
@@ -104,89 +129,103 @@ def _is_non_interactive() -> bool:
     return bool(not sys.stdout.isatty())
 
 
-def _port_option_label(port: int, *, default: int, last_port: int | None, host: str) -> str:
-    tags: list[str] = []
+def _port_option_label(port: int, *, last_port: int | None) -> str:
     if last_port is not None and port == last_port:
-        tags.append("上次")
-    if port == default and port != last_port:
-        tags.append("默认")
-    if is_port_in_use(host, port):
-        tags.append("占用")
-    suffix = f" ({', '.join(tags)})" if tags else ""
-    return f"{port}{suffix}"
+        return f"{port} (上次)"
+    return str(port)
 
 
-def _prompt_busy_port(port: int, host: str) -> int:
-    from ly_next.core.cli_select import select_option
-
-    alt = find_free_port(port + 1, host=host)
-    labels = [
-        f"仍使用 {port}（可能启动失败）",
-        f"改用 {alt}",
-        "手动输入端口",
-    ]
-    choice = select_option(
-        labels,
-        title=f"端口 {port} 已被占用",
-        hint="↑↓ 移动  Enter 确认",
-        default_index=1,
-    )
-    if choice == 0:
-        return port
-    if choice == 1:
-        return alt
-    return _read_port_input("  监听端口: ", default=alt, host=host)
-
-
-def _read_port_input(label: str, *, default: int, host: str) -> int:
+def _read_port_input(label: str, *, default: int | None = None) -> int:
     from ly_next.core.logger import LogColors
 
     while True:
-        raw = input(f"{label}{LogColors.DIM}[{default}]{LogColors.RESET} ").strip()
+        hint = f"{LogColors.DIM}[{default}]{LogColors.RESET} " if default is not None else ""
+        raw = input(f"{label}{hint}").strip()
         if not raw:
-            port = default
+            if default is not None:
+                port = default
+            else:
+                print(f"  {LogColors.RED}✖{LogColors.RESET} 请输入 1–65535 之间的有效端口")
+                continue
         else:
             port = _parse_port(raw)
             if port is None:
                 print(f"  {LogColors.RED}✖{LogColors.RESET} 请输入 1–65535 之间的有效端口")
                 continue
-        if is_port_in_use(host, port):
-            return _prompt_busy_port(port, host)
+        remember_port(port)
         return port
 
 
-def _finalize_port_choice(port: int, host: str) -> int:
-    if is_port_in_use(host, port):
-        port = _prompt_busy_port(port, host)
+def _finalize_port_choice(port: int) -> int:
     remember_port(port)
     return port
 
 
-def prompt_listen_port(default: int, *, host: str = "0.0.0.0") -> int:
+def _prompt_remove_recent_ports() -> None:
+    from ly_next.core.cli_select import select_option
+    from ly_next.core.logger import LogColors
+
+    while True:
+        options = _build_port_options()
+        if not options:
+            return
+
+        recent = load_recent_ports()
+        last_port = recent[0] if recent else None
+        labels = [_port_option_label(port, last_port=last_port) for port in options]
+        clear_idx = len(options)
+        back_idx = clear_idx + 1
+        labels.append("清除全部历史端口")
+        labels.append("返回")
+
+        choice = select_option(
+            labels,
+            title="删除历史端口",
+            hint="↑↓ 移动  Enter 确认",
+            default_index=back_idx,
+        )
+        if choice == back_idx:
+            return
+        if choice == clear_idx:
+            clear_recent_ports()
+            print(f"\n  {LogColors.GREEN}✓{LogColors.RESET} 已清除全部历史端口\n", flush=True)
+            return
+        port = options[choice]
+        if remove_recent_port(port):
+            print(f"\n  {LogColors.GREEN}✓{LogColors.RESET} 已删除端口 {port}\n", flush=True)
+        if not _build_port_options():
+            return
+
+
+def prompt_listen_port(*, host: str = "0.0.0.0") -> int:
+    del host  # 交互选择不做占用检测，避免 0.0.0.0/127.0.0.1 误报
     from ly_next.core.cli_select import select_option
 
-    options = _build_port_options(default)
-    recent = load_recent_ports()
-    last_port = recent[0] if recent else None
-    quick_default = options[0] if options else default
+    while True:
+        options = _build_port_options()
+        recent = load_recent_ports()
+        last_port = recent[0] if recent else None
 
-    labels = [
-        _port_option_label(port, default=default, last_port=last_port, host=host)
-        for port in options
-    ]
-    labels.append("手动输入端口")
+        if not options:
+            return _read_port_input("  端口: ", default=last_port)
 
-    choice = select_option(
-        labels,
-        title="选择监听端口",
-        hint=f"↑↓ 移动  Enter 确认  · 默认 {quick_default}",
-        default_index=0,
-    )
-    if choice < len(options):
-        return _finalize_port_choice(options[choice], host)
-    port = _read_port_input("  端口: ", default=quick_default, host=host)
-    remember_port(port)
-    return port
+        labels = [_port_option_label(port, last_port=last_port) for port in options]
+        manual_idx = len(options)
+        labels.append("手动输入端口")
+        labels.append("删除历史端口…")
+
+        hint = f"↑↓ 移动  Enter 确认  · 上次 {last_port}" if last_port else "↑↓ 移动  Enter 确认"
+        choice = select_option(
+            labels,
+            title="选择监听端口",
+            hint=hint,
+            default_index=0,
+        )
+        if choice < len(options):
+            return _finalize_port_choice(options[choice])
+        if choice == manual_idx:
+            return _read_port_input("  端口: ", default=last_port)
+        _prompt_remove_recent_ports()
 
 
 def resolve_startup_port(
@@ -197,6 +236,7 @@ def resolve_startup_port(
     interactive: bool | None = None,
 ) -> int:
     """Priority: CLI > LY_NEXT_PORT env > (interactive prompt | config default)."""
+    del host
     for candidate in (
         cli_port,
         _parse_port(os.environ.get(ENV_PORT)),
@@ -204,7 +244,7 @@ def resolve_startup_port(
         if candidate is not None:
             return candidate
 
-    default = _parse_port(config_port) or DEFAULT_LISTEN_PORT
     if interactive is False or (interactive is not True and _is_non_interactive()):
-        return default
-    return prompt_listen_port(default, host=host)
+        return _parse_port(config_port) or DEFAULT_LISTEN_PORT
+
+    return prompt_listen_port()

@@ -1,1 +1,0 @@
-import{j as o}from"./index-w86uI7oV.js";import{i}from"./app-LN2ijpQw.js";import{C as e,g as m}from"./card-PDMDN11U.js";function p({className:t="",children:s}){const a=i(),r=t.trim();return a?o.jsx(e,{className:r||void 0,children:s}):o.jsx(m,{className:r,variant:"borderless",styles:{body:{padding:0}},children:s})}export{p as S};

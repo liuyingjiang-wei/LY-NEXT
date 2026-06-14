@@ -6,10 +6,12 @@ from ly_next.core.cli_select import select_option
 from ly_next.core.server_port import (
     DEFAULT_LISTEN_PORT,
     _build_port_options,
+    clear_recent_ports,
     find_free_port,
     is_port_in_use,
     load_recent_ports,
     remember_port,
+    remove_recent_port,
     resolve_startup_port,
 )
 
@@ -34,13 +36,17 @@ def test_resolve_startup_port_config_default(monkeypatch):
     assert resolve_startup_port(None, 8123, interactive=False) == 8123
 
 
-def test_resolve_startup_port_config_not_used_in_interactive_mode(monkeypatch):
+def test_resolve_startup_port_always_prompts_in_interactive_mode(monkeypatch):
     monkeypatch.delenv("LY_NEXT_PORT", raising=False)
     monkeypatch.setattr(
-        "ly_next.core.server_port.prompt_listen_port",
-        lambda default, host="0.0.0.0": default + 1,
+        "ly_next.core.server_port.load_recent_ports",
+        lambda: [8123],
     )
-    assert resolve_startup_port(None, 8123, interactive=True) == 8123 + 1
+    monkeypatch.setattr(
+        "ly_next.core.server_port.prompt_listen_port",
+        lambda **kw: 8123 + 1,
+    )
+    assert resolve_startup_port(None, 8123, interactive=True) == 8124
 
 
 def test_resolve_startup_port_fallback(monkeypatch):
@@ -73,9 +79,9 @@ def test_build_port_options_puts_recent_first(tmp_path, monkeypatch):
     remember_port(8765)
     remember_port(7654)
 
-    options = _build_port_options(8000)
-    assert options[:2] == [7654, 8765]
-    assert 8000 in options
+    options = _build_port_options()
+    assert options == [7654, 8765]
+    assert 8000 not in options
 
 
 def test_load_recent_ports_invalid_file(tmp_path, monkeypatch):
@@ -85,6 +91,29 @@ def test_load_recent_ports_invalid_file(tmp_path, monkeypatch):
     (data_root / "recent_ports.json").write_text("{not json", encoding="utf-8")
 
     assert load_recent_ports() == []
+
+
+def test_remove_recent_port(tmp_path, monkeypatch):
+    data_root = tmp_path / "data" / "ly_next"
+    data_root.mkdir(parents=True)
+    _patch_data_root(monkeypatch, data_root)
+
+    remember_port(9000)
+    remember_port(9100)
+    assert remove_recent_port(9000) is True
+    assert load_recent_ports() == [9100]
+    assert remove_recent_port(9999) is False
+
+
+def test_clear_recent_ports(tmp_path, monkeypatch):
+    data_root = tmp_path / "data" / "ly_next"
+    data_root.mkdir(parents=True)
+    _patch_data_root(monkeypatch, data_root)
+
+    remember_port(9000)
+    clear_recent_ports()
+    assert load_recent_ports() == []
+    assert not (data_root / "recent_ports.json").is_file()
 
 
 def test_select_option_non_tty_returns_default(monkeypatch):

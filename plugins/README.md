@@ -32,7 +32,14 @@ git clone <你的仓库地址> plugins/local/qq_onebot
 默认会扫描 `plugins/` 与 `plugins/local/`（见 `config/default_config.yaml` 的 `plugins.extra_dirs`）。  
 这些目录已在根 `.gitignore` 中忽略，**提交 core 时不会带上插件**。
 
-若插件有额外 pip 依赖，在其目录执行 `uv pip install -r requirements.txt`（路径以插件 README 为准）。
+若插件有额外 pip 依赖，克隆后会自动尝试安装；也可执行：
+
+```bash
+uv run sync                  # 推荐：等同 npm install，不删插件包
+uv run ly plugins sync-deps  # 仅重装插件依赖
+```
+
+**注意：** 原生 `uv sync` 会卸载 lock 外的包。本项目请用 **`uv run sync`**（内部 `uv sync --inexact` + 插件依赖），不要直接用 `uv sync`。
 
 ### 2. pip 可编辑安装 + `plugins.modules`
 

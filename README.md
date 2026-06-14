@@ -44,7 +44,7 @@ LY-NEXT 把 **对话、工具调用、模型管理、可选 QQ/Telegram 桥接**
 ```bash
 git clone https://github.com/liuyingjiang-wei/LY-NEXT.git
 cd LY-NEXT
-uv sync
+uv run sync
 uv run ly --no-prompt
 ```
 

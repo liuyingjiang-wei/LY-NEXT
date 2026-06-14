@@ -2,6 +2,7 @@
 
 from ly_next.core.plugin_catalog import (
     apply_mirror_to_url,
+    build_git_clone_argv,
     build_git_clone_command,
     default_clone_path,
     derive_clone_subdir,
@@ -9,8 +10,11 @@ from ly_next.core.plugin_catalog import (
     enrich_plugin_catalog,
     get_git_clone_settings,
     load_plugin_catalog,
+    resolve_clone_target_path,
     resolve_plugin_repo_url,
     resolve_repo_url,
+    run_git_clone,
+    validate_git_repo_url,
 )
 
 
@@ -178,3 +182,66 @@ def test_enrich_git_clone_settings_command(monkeypatch):
     assert enriched["clone_path"] == "plugins/local/demo"
     assert enriched["clone_command"] is not None
     assert "plugins/local/demo" in enriched["clone_command"]
+
+
+def test_build_git_clone_argv_matches_command(monkeypatch):
+    monkeypatch.setattr(
+        "ly_next.core.plugin_catalog.config",
+        type(
+            "C",
+            (),
+            {
+                "get": staticmethod(
+                    lambda key, default=None: {
+                        "plugins.git_clone": {
+                            "proxy_mode": "mirror",
+                            "mirror_prefix": "https://gh-proxy.com/",
+                            "mirror_hosts": ["github.com"],
+                            "repo_url": "",
+                            "repos": {},
+                        }
+                    }.get(key, default)
+                )
+            },
+        )(),
+    )
+    argv = build_git_clone_argv(
+        "https://github.com/acme/demo.git",
+        "plugins/local/demo",
+    )
+    assert argv is not None
+    assert argv[0] == "git"
+    assert argv[-2].startswith("https://gh-proxy.com/")
+    assert argv[-1] == "plugins/local/demo"
+
+
+def test_validate_git_repo_url_rejects_non_http():
+    try:
+        validate_git_repo_url("file:///tmp/x.git")
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "http" in str(exc).lower()
+
+
+def test_resolve_clone_target_path_must_be_under_plugins_local():
+    try:
+        resolve_clone_target_path("plugins/evil", "https://github.com/a/b.git")
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "plugins/local" in str(exc)
+
+
+def test_run_git_clone_success(tmp_path, monkeypatch):
+    monkeypatch.setattr("ly_next.core.plugin_catalog.get_project_root", lambda: tmp_path)
+    monkeypatch.setattr("ly_next.core.plugin_catalog.shutil.which", lambda _: "git")
+
+    def fake_run(argv, **kwargs):
+        target = tmp_path / argv[-1]
+        target.mkdir(parents=True, exist_ok=True)
+        (target / ".git").mkdir()
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr("ly_next.core.plugin_catalog.subprocess.run", fake_run)
+    result = run_git_clone("https://github.com/acme/wechat_oc.git")
+    assert result["ok"] is True
+    assert result["clone_path"] == "plugins/local/wechat_oc"

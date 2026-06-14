@@ -15,7 +15,7 @@
    ```bash
    git clone https://github.com/liuyingjiang-wei/LY-NEXT.git
    cd LY-NEXT
-   uv sync
+   uv run sync
    uv run ly --no-prompt
    ```
 

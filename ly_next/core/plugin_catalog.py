@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -176,6 +178,105 @@ def build_git_clone_command(
             parts.extend(["-c", f"https.proxy={https_proxy}"])
     parts.extend(["clone", clone_url, rel])
     return " ".join(parts)
+
+
+def validate_git_repo_url(repo_url: str) -> str:
+    src = str(repo_url or "").strip()
+    if not src:
+        raise ValueError("repo_url 不能为空")
+    parsed = urlparse(src)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("repo_url 须为 http(s) 地址")
+    if not parsed.netloc:
+        raise ValueError("repo_url 无效")
+    return src
+
+
+def resolve_clone_target_path(clone_path: str | None, repo_url: str) -> Path:
+    rel = str(clone_path or default_clone_path(repo_url)).strip().replace("\\", "/")
+    rel = rel.lstrip("/")
+    if not rel.startswith("plugins/local/"):
+        raise ValueError("安装目录必须在 plugins/local/ 下")
+    parts = [p for p in rel.split("/") if p]
+    if ".." in parts:
+        raise ValueError("安装路径无效")
+    root = get_project_root().resolve()
+    target = (root / Path(*parts)).resolve()
+    target.relative_to(root)
+    return target
+
+
+def build_git_clone_argv(
+    repo_url: str,
+    clone_path: str,
+    settings: dict[str, Any] | None = None,
+) -> list[str] | None:
+    cfg = settings or get_git_clone_settings()
+    clone_url = apply_mirror_to_url(repo_url, cfg)
+    rel = str(clone_path or "").strip()
+    if not clone_url or not rel:
+        return None
+    mode = str(cfg.get("proxy_mode") or "none")
+    argv: list[str] = ["git"]
+    if mode in ("local", "both"):
+        http_proxy = str(cfg.get("http_proxy") or "").strip()
+        https_proxy = str(cfg.get("https_proxy") or "").strip() or http_proxy
+        if http_proxy:
+            argv.extend(["-c", f"http.proxy={http_proxy}"])
+        if https_proxy:
+            argv.extend(["-c", f"https.proxy={https_proxy}"])
+    argv.extend(["clone", clone_url, rel])
+    return argv
+
+
+def run_git_clone(
+    repo_url: str,
+    *,
+    clone_path: str | None = None,
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Clone a plugin repo into plugins/local/ (server-side)."""
+    url = validate_git_repo_url(repo_url)
+    cfg = settings or get_git_clone_settings()
+    rel_path = str(clone_path or default_clone_path(url)).strip().replace("\\", "/")
+    target = resolve_clone_target_path(rel_path, url)
+    rel_path = str(target.relative_to(get_project_root().resolve())).replace("\\", "/")
+
+    if shutil.which("git") is None:
+        raise RuntimeError("未找到 git 命令，请先安装 Git 并加入 PATH")
+
+    if target.exists():
+        if (target / ".git").is_dir():
+            raise FileExistsError(f"目录已存在且为 Git 仓库：{rel_path}")
+        if any(target.iterdir()):
+            raise FileExistsError(f"目录已存在且非空：{rel_path}")
+        target.rmdir()
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+    argv = build_git_clone_argv(url, rel_path, cfg)
+    if not argv:
+        raise ValueError("无法构建 git clone 命令")
+
+    proc = subprocess.run(
+        argv,
+        cwd=str(get_project_root()),
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip() or f"git exit {proc.returncode}"
+        raise RuntimeError(err)
+
+    return {
+        "ok": True,
+        "repo_url": url,
+        "clone_path": rel_path,
+        "clone_command": " ".join(argv),
+        "message": f"已克隆到 {rel_path}",
+    }
 
 
 def _path_installed(clone_path: str) -> bool:

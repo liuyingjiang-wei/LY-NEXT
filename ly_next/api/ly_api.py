@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from starlette.responses import FileResponse
@@ -460,6 +460,86 @@ async def get_plugin_catalog(request: Request):
         "git_clone": enrich_git_clone_settings(),
         "directory": _plugins_directory_status(),
     }
+
+
+class GitCloneRequest(BaseModel):
+    repo_url: str | None = None
+    clone_path: str | None = None
+    sync_deps: bool = True
+
+
+@router.post("/system/plugins/git-clone")
+async def post_plugin_git_clone(body: GitCloneRequest):
+    from ly_next.core.plugin_catalog import get_git_clone_settings, run_git_clone
+
+    settings = get_git_clone_settings()
+    repo_url = str(body.repo_url or settings.get("repo_url") or "").strip()
+    if not repo_url:
+        raise HTTPException(status_code=400, detail="请填写 Git 仓库地址或先在配置中保存 repo_url")
+
+    try:
+        result = run_git_clone(repo_url, clone_path=body.clone_path, settings=settings)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if body.sync_deps:
+        from ly_next.core.plugin_deps import sync_plugin_dependencies
+
+        try:
+            dep_result = sync_plugin_dependencies(install=True)
+            result["plugin_deps"] = dep_result
+            if dep_result.get("message"):
+                result["message"] = f"{result['message']} {dep_result['message']}"
+        except RuntimeError as exc:
+            result["plugin_deps_error"] = str(exc)
+
+    base = str(result.get("message") or "克隆完成").strip()
+    if "手动重启" not in base:
+        result["message"] = f"{base}；请手动重启 uv run ly 以加载新插件。"
+    return result
+
+
+@router.get("/system/plugins/deps")
+async def get_plugin_deps_preview():
+    from ly_next.core.config import get_project_root
+    from ly_next.core.plugin_deps import (
+        discover_plugin_requirements,
+        plugin_requirements_manifest_path,
+    )
+
+    discovered = discover_plugin_requirements()
+    requirements: list[str] = []
+    for item in discovered:
+        requirements.extend(item.get("requirements") or [])
+
+    manifest_path = plugin_requirements_manifest_path()
+    rel_manifest: str | None = None
+    if manifest_path.is_file():
+        try:
+            rel_manifest = str(manifest_path.relative_to(get_project_root())).replace("\\", "/")
+        except ValueError:
+            rel_manifest = str(manifest_path)
+
+    return {
+        "plugins": discovered,
+        "requirements": requirements,
+        "count": len(requirements),
+        "manifest": rel_manifest,
+    }
+
+
+@router.post("/system/plugins/sync-deps")
+async def post_plugin_sync_deps():
+    from ly_next.core.plugin_deps import sync_plugin_dependencies
+
+    try:
+        return sync_plugin_dependencies(install=True)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/system/readiness")
